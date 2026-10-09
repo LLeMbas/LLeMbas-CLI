@@ -1,0 +1,18 @@
+# Every push to main or dev, and every pull request: scripts/ci.sh, the same gate a release passes.
+name: ci
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  check:
+    # A runner of its own, registered with this label: a public repository's pull requests run
+    # here, so not on a shared runner that can reach anything else.
+    runs-on: lembas-cli-ci
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the secret scan reads the whole history
+      - run: scripts/ci.sh

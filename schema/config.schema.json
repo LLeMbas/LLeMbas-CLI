@@ -1,0 +1,1043 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "model": {
+      "description": "The model a session starts with: `connection/model`, a connection from connections.yaml and one of its models.",
+      "type": "string"
+    },
+    "small_model": {
+      "description": "`connection/model` for small jobs — session titles, commit messages. Default: the session's model. On a server that holds one model at a time (llama-swap), another model here swaps.",
+      "type": "string"
+    },
+    "titles": {
+      "description": "Session titles: model (default) — named from the first prompt, then by the model after its first reply; prompt — only from the first prompt, no extra request.",
+      "type": "string",
+      "enum": [
+        "model",
+        "prompt"
+      ]
+    },
+    "mode": {
+      "description": "The permission mode a session starts in (default manual).",
+      "type": "string",
+      "enum": [
+        "manual",
+        "edit",
+        "auto",
+        "plan"
+      ]
+    },
+    "theme": {
+      "description": "Colours: lembas (default), lembas-light, moria, shire, hermes, mono, or a themes/<name>.yaml of your own.",
+      "type": "string"
+    },
+    "theme_background": {
+      "description": "theme (default): the theme paints the whole screen; terminal: the terminal's own background shows, and the theme colours only text, panels and accents.",
+      "type": "string",
+      "enum": [
+        "theme",
+        "terminal"
+      ]
+    },
+    "skin": {
+      "description": "The old name of `theme`; still read when `theme` is not set.",
+      "type": "string"
+    },
+    "busy_input": {
+      "description": "A message sent while the agent works: steer (default) — it goes in at the next step, after the running tools finish, and the agent carries on with it; queue — it is sent as the next prompt once the task is done.",
+      "type": "string",
+      "enum": [
+        "steer",
+        "queue"
+      ]
+    },
+    "mouse": {
+      "description": "false: leave the mouse to the terminal — its own selection and Ctrl+Shift+C work without Shift, and the wheel no longer scrolls the transcript (pgup/pgdn do). Default true.",
+      "type": "boolean"
+    },
+    "icons": {
+      "description": "emoji (default), or plain: one-column symbols for a terminal font that has no emoji.",
+      "type": "string",
+      "enum": [
+        "emoji",
+        "plain"
+      ]
+    },
+    "personality": {
+      "description": "How the agent talks: concise, pragmatic, optimistic, funny, formal, socratic, custom (personality_custom's text), or empty for none (the default). The same presets as the LLeMbas web UI; appended last to the system prompt, under \"## Personality\".",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "concise",
+            "pragmatic",
+            "optimistic",
+            "funny",
+            "formal",
+            "socratic",
+            "custom"
+          ]
+        },
+        {
+          "type": "string",
+          "const": ""
+        }
+      ]
+    },
+    "personality_custom": {
+      "description": "The personality, in your own words: used when personality is custom (at most 1500 characters).",
+      "type": "string",
+      "maxLength": 1500
+    },
+    "memory": {
+      "description": "Persistent memory (MEMORY.md, USER.md in ~/.config/lembas/memory/).",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "false: no memory tool and nothing remembered in the prompt.",
+          "type": "boolean"
+        },
+        "memory_chars": {
+          "description": "Size limits in characters: memory 2200, user 1375 by default.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "user_chars": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "skills": {
+      "type": "object",
+      "properties": {
+        "external_dirs": {
+          "description": "More directories of skills, read-only; a skill of the same name elsewhere wins.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "disabled": {
+          "description": "Skill names not to offer.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "permission": {
+      "description": "Rules per tool: `tool: allow|ask|deny` or `tool: { pattern: action }`; the last match wins.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "allow",
+              "ask",
+              "deny"
+            ]
+          },
+          {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "allow",
+                "ask",
+                "deny"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "hardline_extra": {
+      "description": "Global config only: extra never-allowed bash regexes.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "hardline_disable": {
+      "description": "Global config only: ids of built-in hardline rules to switch off.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "description": "Most model steps in one prompt (default 200) — a runaway backstop, not a budget.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "bash_timeout": {
+          "description": "Seconds a bash command may run (default 120).",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "wall_seconds": {
+          "description": "Budget for one prompt: seconds of work, not counting time spent waiting for you. Past it the model answers from what it has. Unset: none.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "output_bytes": {
+          "description": "Budget for one prompt: bytes of tool output read. Unset: none.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "completion_tokens": {
+          "description": "Budget for one prompt: tokens the model writes. Unset: none.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "question": {
+      "type": "object",
+      "properties": {
+        "unattended": {
+          "description": "With nobody to answer (headless): take the recommended option, the first, or fail.",
+          "type": "string",
+          "enum": [
+            "recommended",
+            "first",
+            "fail"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "compaction": {
+      "description": "Automatic context management: past auto_at of the window, old tool outputs are pruned, then the conversation is compacted. auto_at: 1 turns it off.",
+      "type": "object",
+      "properties": {
+        "auto_at": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 1
+        },
+        "prune": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "instructions": {
+      "description": "Custom instructions: how you want to be helped, in your own words (at most 4000 characters). Appended near the end of the system prompt, under \"## How the person you are talking to wants to be helped\" — as in the LLeMbas web UI. (A list of files here, from an older config, is read as instruction_files.)",
+      "type": "string",
+      "maxLength": 4000
+    },
+    "instruction_files": {
+      "description": "More instruction files for the system prompt, besides AGENTS.md / CLAUDE.md.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "search": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "description": "Providers to try, in order; the first that answers wins. Default: those configured (webui first), then ddg. webui: the LLeMbas instance's own search.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "webui",
+              "searxng",
+              "firecrawl",
+              "ddg"
+            ]
+          }
+        },
+        "max_results": {
+          "description": "Results per search (default 8).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "searxng": {
+          "type": "object",
+          "properties": {
+            "base_url": {
+              "type": "string"
+            },
+            "api_key": {
+              "type": "string"
+            },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "ca": {
+                  "type": "string"
+                },
+                "insecure": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "categories": {
+              "type": "string"
+            },
+            "language": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "base_url"
+          ],
+          "additionalProperties": false
+        },
+        "firecrawl": {
+          "description": "API (api.firecrawl.dev, with a key) or self-hosted (its own URL, no key needed).",
+          "type": "object",
+          "properties": {
+            "base_url": {
+              "type": "string"
+            },
+            "api_key": {
+              "type": "string"
+            },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "ca": {
+                  "type": "string"
+                },
+                "insecure": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "ddg": {
+          "type": "object",
+          "properties": {
+            "region": {
+              "type": "string"
+            },
+            "safe": {
+              "type": "string",
+              "enum": [
+                "strict",
+                "moderate",
+                "off"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "webui": {
+          "description": "Search through a LLeMbas instance: its provider, its settings, its keys.",
+          "type": "object",
+          "properties": {
+            "connection": {
+              "description": "Which webui connection (default: the only one there is).",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "fetch": {
+          "description": "How web_fetch reads a page: here, through Firecrawl's scrape, or through the LLeMbas instance.",
+          "type": "string",
+          "enum": [
+            "local",
+            "firecrawl",
+            "webui"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "voice": {
+      "description": "Voice in and out. Global only — it carries endpoints and keys, like a connection.",
+      "type": "object",
+      "properties": {
+        "stt": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "description": "openai: POST {base_url}/audio/transcriptions (OpenAI, whisper.cpp's server with its OpenAI path, faster-whisper servers). whispercpp: POST {base_url}/inference (whisper.cpp's own). webui: the LLeMbas instance's.",
+              "type": "string",
+              "enum": [
+                "openai",
+                "whispercpp",
+                "webui"
+              ]
+            },
+            "base_url": {
+              "type": "string"
+            },
+            "api_key": {
+              "type": "string"
+            },
+            "key_cmd": {
+              "type": "string"
+            },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "ca": {
+                  "type": "string"
+                },
+                "insecure": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "timeout": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "connection": {
+              "description": "webui: which webui connection (default: the only one there is).",
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "language": {
+              "type": "string"
+            },
+            "prompt": {
+              "description": "Words it should expect: names, jargon.",
+              "type": "string"
+            },
+            "fallback": {
+              "description": "Used when the provider above cannot be reached — for webui, when the instance is down. Same fields.",
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "description": "openai: POST {base_url}/audio/transcriptions (OpenAI, whisper.cpp's server with its OpenAI path, faster-whisper servers). whispercpp: POST {base_url}/inference (whisper.cpp's own). webui: the LLeMbas instance's.",
+                  "type": "string",
+                  "enum": [
+                    "openai",
+                    "whispercpp",
+                    "webui"
+                  ]
+                },
+                "base_url": {
+                  "type": "string"
+                },
+                "api_key": {
+                  "type": "string"
+                },
+                "key_cmd": {
+                  "type": "string"
+                },
+                "tls": {
+                  "type": "object",
+                  "properties": {
+                    "ca": {
+                      "type": "string"
+                    },
+                    "insecure": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "timeout": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "connection": {
+                  "description": "webui: which webui connection (default: the only one there is).",
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "language": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "description": "Words it should expect: names, jargon.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "tts": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "description": "openai: POST {base_url}/audio/speech (OpenAI, Kokoro-FastAPI). piper-http: POST {base_url} with {text} (piper's http_server). piper-cli: the piper program. webui: the LLeMbas instance's, in the account's voice.",
+              "type": "string",
+              "enum": [
+                "openai",
+                "piper-http",
+                "piper-cli",
+                "webui"
+              ]
+            },
+            "base_url": {
+              "type": "string"
+            },
+            "api_key": {
+              "type": "string"
+            },
+            "key_cmd": {
+              "type": "string"
+            },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "ca": {
+                  "type": "string"
+                },
+                "insecure": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "timeout": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "connection": {
+              "description": "webui: which webui connection (default: the only one there is).",
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "voice": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "number",
+              "minimum": 0.25,
+              "maximum": 4
+            },
+            "command": {
+              "description": "piper-cli: the program (default piper) and the voice model file (.onnx).",
+              "type": "string"
+            },
+            "model_path": {
+              "type": "string"
+            },
+            "fallback": {
+              "description": "Used when the provider above cannot be reached — for webui, when the instance is down. Same fields.",
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "description": "openai: POST {base_url}/audio/speech (OpenAI, Kokoro-FastAPI). piper-http: POST {base_url} with {text} (piper's http_server). piper-cli: the piper program. webui: the LLeMbas instance's, in the account's voice.",
+                  "type": "string",
+                  "enum": [
+                    "openai",
+                    "piper-http",
+                    "piper-cli",
+                    "webui"
+                  ]
+                },
+                "base_url": {
+                  "type": "string"
+                },
+                "api_key": {
+                  "type": "string"
+                },
+                "key_cmd": {
+                  "type": "string"
+                },
+                "tls": {
+                  "type": "object",
+                  "properties": {
+                    "ca": {
+                      "type": "string"
+                    },
+                    "insecure": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "timeout": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "connection": {
+                  "description": "webui: which webui connection (default: the only one there is).",
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "voice": {
+                  "type": "string"
+                },
+                "speed": {
+                  "type": "number",
+                  "minimum": 0.25,
+                  "maximum": 4
+                },
+                "command": {
+                  "description": "piper-cli: the program (default piper) and the voice model file (.onnx).",
+                  "type": "string"
+                },
+                "model_path": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "record_key": {
+          "description": "The key that starts and stops recording (default ctrl+t).",
+          "type": "string"
+        },
+        "record_mode": {
+          "description": "toggle (default): press to start, press again (or silence) to stop. hold: also stops when the key is let go, in terminals that report it (the kitty keyboard protocol).",
+          "type": "string",
+          "enum": [
+            "toggle",
+            "hold"
+          ]
+        },
+        "submit": {
+          "description": "What happens to what you said: draft (default) puts it in the prompt to check; send sends it.",
+          "type": "string",
+          "enum": [
+            "draft",
+            "send"
+          ]
+        },
+        "speak": {
+          "description": "Speak every reply (default false; /speak toggles it).",
+          "type": "boolean"
+        },
+        "silence_seconds": {
+          "description": "Seconds of silence after speech that end a recording (default 3), and the longest one (120).",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "silence_threshold": {
+          "description": "Loudness (RMS of 16-bit samples) below which it counts as silence (default 200).",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "recorder": {
+          "description": "auto, or a program: arecord, pw-record, parec, sox, ffmpeg. `recorder_command` instead: any command printing raw 16 kHz mono signed 16-bit little-endian audio to stdout.",
+          "type": "string",
+          "enum": [
+            "auto",
+            "arecord",
+            "pw-record",
+            "parec",
+            "sox",
+            "ffmpeg"
+          ]
+        },
+        "recorder_command": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "player": {
+          "description": "auto, or a program: pw-play, paplay, aplay, ffplay, mpv, afplay. `player_command` instead: any command; the WAV file's path is added at the end.",
+          "type": "string",
+          "enum": [
+            "auto",
+            "pw-play",
+            "paplay",
+            "aplay",
+            "ffplay",
+            "mpv",
+            "afplay"
+          ]
+        },
+        "player_command": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp": {
+      "description": "MCP servers by name. `{env:}`/`{file:}` are filled in per server (a missing one disables that server only). A project's servers count only once the project is trusted.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "description": "A local server: the program (and its arguments, as a list). Either this or url.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env": {
+            "description": "Environment for the local server; {env:}/{file:} work here.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "url": {
+            "description": "A remote server: its streamable HTTP (or SSE) address. Either this or command.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "Extra HTTP headers, e.g. Authorization: Bearer {env:TOKEN}.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "transport": {
+            "description": "http (default: streamable HTTP, falling back to SSE) or sse.",
+            "type": "string",
+            "enum": [
+              "http",
+              "sse"
+            ]
+          },
+          "oauth": {
+            "description": "OAuth for a remote server: on by default when the server asks for it; false turns it off.",
+            "anyOf": [
+              {
+                "type": "boolean",
+                "const": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "client_secret": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "callback_port": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "tls": {
+            "type": "object",
+            "properties": {
+              "ca": {
+                "type": "string"
+              },
+              "insecure": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "enabled": {
+            "description": "false: configured but not started (/mcp on starts it).",
+            "type": "boolean"
+          },
+          "timeout": {
+            "description": "Seconds: one tool call (default 120), connecting (default 30).",
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "connect_timeout": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "tools": {
+            "description": "Which of its tools to offer: include wins; names or globs (`create_*`).",
+            "type": "object",
+            "properties": {
+              "include": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "exclude": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "prompts": {
+            "description": "Offer its prompts as /server:prompt commands (default true).",
+            "type": "boolean"
+          },
+          "resources": {
+            "description": "Offer list/read tools for its resources, if it has any (default true).",
+            "type": "boolean"
+          },
+          "instructions": {
+            "description": "Put the server's own instructions into the system prompt (default true).",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "knowledge": {
+      "description": "The knowledge bases searched (lembas kb); absent: all of them. A project's own config narrows it to what that project needs.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "embedding": {
+      "description": "Global config only. connection/model of an embedding model (OpenAI-shaped /embeddings, or Ollama): knowledge bases are then searched by meaning as well as by words. lembas kb reindex after changing it.",
+      "type": "string"
+    },
+    "effort": {
+      "description": "The effort a session starts with, when the model takes it; otherwise the model's own default.",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "off"
+        }
+      ]
+    },
+    "settings_tool": {
+      "description": "Global config only. The agent's settings tool: ask (default) — each change is approved like any tool call; allow — changes go through without asking (a less strict mode still asks); off — no settings tool.",
+      "type": "string",
+      "enum": [
+        "ask",
+        "allow",
+        "off"
+      ]
+    },
+    "update": {
+      "description": "Global config only. Updating LLeMbas CLI itself.",
+      "type": "object",
+      "properties": {
+        "channel": {
+          "description": "stable (default): releases vX.Y.Z only. beta: also vX.Y.Z-beta.N — whichever is newest.",
+          "type": "string",
+          "enum": [
+            "stable",
+            "beta"
+          ]
+        },
+        "auto": {
+          "description": "On start: install (default) — fetch, verify and install a newer release, then say so; notify — only say one is out; off — never look.",
+          "type": "string",
+          "enum": [
+            "install",
+            "notify",
+            "off"
+          ]
+        },
+        "source": {
+          "description": "Default: the public LLeMbas CLI releases on GitHub.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "github",
+                "gitea",
+                "static"
+              ],
+              "description": "github or gitea (Forgejo too): their releases API. static: any web directory with files `stable` and `beta` naming a tag, and the assets under <tag>/."
+            },
+            "url": {
+              "description": "gitea: the forge (https://git.example.org). github: the API (default https://api.github.com). static: the directory.",
+              "type": "string"
+            },
+            "repo": {
+              "description": "owner/name, for github and gitea.",
+              "type": "string",
+              "pattern": "^(?!\\.\\.?\\/)[\\w.-]+\\/(?!\\.\\.?$)[\\w.-]+$"
+            },
+            "token": {
+              "description": "For a private repository: {env:NAME} or {file:~/path}, never pasted. Or key_cmd.",
+              "type": "string"
+            },
+            "key_cmd": {
+              "type": "string"
+            },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "ca": {
+                  "type": "string"
+                },
+                "insecure": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        "public_key": {
+          "description": "The ssh-ed25519 key(s) a release's SHA256SUMS.sig must be signed with — instead of LLeMbas CLI's own. For your own builds.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "verify": {
+          "description": "signature (default): SHA256SUMS must carry a valid signature. checksum: checksums only — for a source of your own that does not sign.",
+          "type": "string",
+          "enum": [
+            "signature",
+            "checksum"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "library": {
+      "description": "Global config only. local (default): memory, notes, skills and knowledge on this machine. lembas: the account's on the LLeMbas instance you are logged in to, through its /mcp — the same tools its chats have (needs a login with the library scope).",
+      "type": "string",
+      "enum": [
+        "local",
+        "lembas"
+      ]
+    },
+    "remote": {
+      "description": "Global config only. What a LLeMbas instance may ask of this machine over the link: the device decides, never the server.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Accept work from a LLeMbas instance this machine is logged in to (lembas service). Default false.",
+          "type": "boolean"
+        },
+        "roots": {
+          "description": "The directories a remote session may be opened in, and anything under them. Empty: none.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "max_mode": {
+          "description": "The most permissive mode a remote session may run in (default edit). auto only when set here.",
+          "type": "string",
+          "enum": [
+            "manual",
+            "edit",
+            "auto",
+            "plan"
+          ]
+        },
+        "approval_timeout": {
+          "description": "Seconds an approval waits for an answer from the web before it counts as a denial (default 600).",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "require_trust": {
+          "description": "Only projects trusted on this machine (default true).",
+          "type": "boolean"
+        },
+        "terminal": {
+          "description": "Let the web UI open a terminal here (LLeMbas's terminal panel on a chat on this device): a login shell as this user, in a directory remote sessions may use. Default false.",
+          "type": "boolean"
+        },
+        "terminal_integration": {
+          "description": "Shell integration in those terminals (bash, zsh, fish): after your own startup files, the shell marks each prompt, command and exit status (OSC 133) and its directory (OSC 7), so the web UI shows the directory, a mark beside each finished command, and can jump between commands. false: the shell starts as it is. Default true.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "title": "LLeMbas CLI config.yaml",
+  "description": "~/.config/lembas/config.yaml, or a project's .agent/config.yaml. Strings may be {env:NAME} or {file:path}."
+}

@@ -1,0 +1,75 @@
+data: {"choices":[{"delta":{"reasoning_content":"━━━━━"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"\n"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"llama"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"-swap"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":" load"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"ing m"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"odel:"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":" bons"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"ai"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"\n"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"\n"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"Multi"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"plyin"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"g mat"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"ricie"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"s wit"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"h the"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":" enth"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"usias"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"m of "}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"a tee"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"nager"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":" doin"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"g cho"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"res"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":" "}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"."}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"."}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"\n"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"Done!"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":" (3.3"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"7s)"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"\n"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"━━━━━"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"\n"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":" "}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"\n"}}]}
+
+{"error":{"code":500,"message":"\n------------\nWhile executing CallExpression at line 49, column 28 in source:\n...', 'low') %}↵        {{- raise_exception('Unexpected reasoning effort ' ~ reason...\n                                           ^\nError: Jinja Exception: Unexpected reasoning effort high. Supported types are xhigh (default), medium, and low.","type":"server_error"}}

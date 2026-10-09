@@ -1,0 +1,40 @@
+{
+  "name": "lembas-cli",
+  "version": "1.0.0",
+  "description": "LLeMbas CLI: a terminal coding agent and project manager — OpenTUI, any LLM API, memory, skills, MCP, git-native.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "lembas": "./src/cli.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "bun run scripts/build.ts",
+    "smoke": "bun run scripts/build.ts && bun run scripts/smoke.ts",
+    "schema": "bun run scripts/schema.ts",
+    "dist": "bun run scripts/dist.ts",
+    "licenses": "bun run scripts/licenses.ts",
+    "harness": "bun run scripts/harness.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.1",
+    "@opentui/core": "0.5.12",
+    "@opentui/solid": "0.5.12",
+    "diff": "9.0.0",
+    "fuzzysort": "3.1.0",
+    "solid-js": "1.9.15",
+    "turndown": "7.2.4",
+    "yaml": "2.9.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "@types/turndown": "5.0.6",
+    "@xterm/addon-unicode11": "0.9.0",
+    "@xterm/headless": "6.0.0",
+    "typescript": "7.0.2"
+  }
+}

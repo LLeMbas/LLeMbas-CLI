@@ -1,0 +1,4 @@
+# A made-up Stripe-shaped key that tests/memory.test.ts feeds the memory threat scanner, which must
+# catch it. Not a credential. (gitleaks fingerprints: the commit that added it, and the file now.)
+4625d26e94f900833e053346619f2b212f6416e6:tests/memory.test.ts:stripe-access-token:95
+tests/memory.test.ts:stripe-access-token:95

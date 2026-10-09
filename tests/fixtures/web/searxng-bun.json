@@ -1,0 +1,41 @@
+{
+  "query": "bun runtime",
+  "results": [
+    {
+      "title": "Bun — A fast all-in-one JavaScript runtime",
+      "url": "https://bun.com/",
+      "content": "Bundle, install, and run JavaScript & TypeScript — all in Bun. Bun is a fast JavaScript runtime & toolkit with a bundler, test runner, and npm-compatible package manager built in.",
+      "engine": "google cse"
+    },
+    {
+      "title": "Bun Runtime | Bun Docs",
+      "url": "https://bun.com/docs/runtime",
+      "content": "Bun Runtime Execute JavaScript/TypeScript files, package.json scripts, and executable packages with Bun's fast runtime. The Bun Runtime is designed to start fast and run fast. Bun uses the JavaScriptCore engine, developed by Apple for Safari. JavaScriptCore usually starts and runs faster than V8, the engine used by Node.js and Chromium-based ...",
+      "engine": "google cse"
+    },
+    {
+      "title": "GitHub - oven-sh/bun: Incredibly fast JavaScript runtime, bundler, test ...",
+      "url": "https://github.com/oven-sh/bun",
+      "content": "What is Bun? Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called bun . At its core is the Bun runtime, a ...",
+      "engine": "google cse"
+    },
+    {
+      "title": "How to Get Started with Bun Runtime - oneuptime.com",
+      "url": "https://oneuptime.com/blog/post/2026-01-31-bun-getting-started/view",
+      "content": "Bun is an all-in-one JavaScript runtime designed for speed and developer experience. Unlike Node.js, which relies on V8 and requires separate tools for bundling, transpiling, and package management, Bun provides all of these features out of the box.",
+      "engine": "brave"
+    },
+    {
+      "title": "Bun in 100 Seconds - YouTube",
+      "url": "https://www.youtube.com/watch?v=M4TufsFlv_o",
+      "content": "Bun is a mega-fast JavaScript runtime for developers who want to nope out of their node modules folder. Let's run bun run. #coding #programming #softwaredeve...",
+      "engine": "google cse"
+    },
+    {
+      "title": "Bun Guide: Install, Configure & Deploy the Fast JS Runtime | DeployHQ",
+      "url": "https://www.deployhq.com/guides/bun",
+      "content": "Bun: The Complete Guide to the All-in-One JavaScript Runtime Bun is an all-in-one JavaScript runtime built from the ground up to be fast. Written in Zig and using JavaScriptCore (the engine powering Safari) instead of V8, Bun combines a runtime, package manager, bundler, and test runner into a single executable.",
+      "engine": "brave"
+    }
+  ]
+}

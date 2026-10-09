@@ -1,0 +1,12 @@
+preload = ["@opentui/solid/preload"]
+
+[install]
+exact = true
+# Supply-chain guard, as OpenCode does: only resolve versions published at least 3 days ago.
+minimumReleaseAge = 259200
+
+[test]
+# On a small machine running several sessions at once, 5 s per test is too tight.
+timeout = 20000
+preload = ["@opentui/solid/preload", "./tests/setup.ts"]
+root = "./tests"

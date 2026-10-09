@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+# LLeMbas CLI's own per-user project state (.agent, or .lembas beside another tool's .agent)
+.agent/local/
+.lembas/local/

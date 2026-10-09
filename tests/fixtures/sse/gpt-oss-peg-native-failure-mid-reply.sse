@@ -1,0 +1,42 @@
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","content":null}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"The"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" average"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" divides"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" by"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" len"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"(values"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":")-"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"1"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" instead"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" of"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" len"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"."}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" Also"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" test"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"?"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" Let's"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" view"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" tests"}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"."}}],"created":1790676404,"id":"chatcmpl-UQaAIhPQH8MKuBscNwnmQONVUo7rqWtd","model":"gpt-oss","object":"chat.completion.chunk"}
+
+data: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+

@@ -1,0 +1,65 @@
+# The GitHub Release for a tag, made from the Gitea release of the same tag. LLeMbas CLI is developed
+# on Gitea (git.houmeres.sk/LLeMbas/LLeMbas-CLI), which mirrors its commits and tags here; a mirror carries no Releases,
+# and GitHub's are what get.sh and the updater read by default. So when a tag arrives this waits for
+# Gitea's release to have its files, checks them exactly as get.sh would — SHA256SUMS signed by the
+# release key, naming this version, every file matching — and publishes the same files and notes.
+# Nothing is built here: the binaries are the ones signed on Gitea.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  # By hand, for a tag that arrived without starting this (the first mirror push brings every tag at
+  # once, and GitHub starts no workflow for more than three tags in one push).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag, e.g. v1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GITEA: https://git.houmeres.sk
+      # The repository on Gitea (the same name as on GitHub, $GITHUB_REPOSITORY).
+      REPO: LLeMbas/LLeMbas-CLI
+      TAG: ${{ inputs.tag || github.ref_name }}
+      PUBKEY: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDSZO3Byow7R3ZpOH3MCvpPIga2pZBzhfX5wXfNP1cLa"
+    steps:
+      - name: Wait for the Gitea release and its files
+        run: |
+          # The tag is mirrored as soon as it is pushed; the release and its files come minutes later.
+          for i in $(seq 1 50); do
+            if curl -fsSL "$GITEA/api/v1/repos/$REPO/releases/tags/$TAG" -o release.json &&
+               jq -e '[.assets[].name] | index("SHA256SUMS.sig") and index("SHA256SUMS") and index("lembas-linux-x64.gz")' release.json >/dev/null; then
+              exit 0
+            fi
+            sleep 60
+          done
+          echo "no Gitea release for $TAG with its files after 50 minutes" >&2
+          exit 1
+      - name: Download and check the files
+        run: |
+          mkdir files
+          for name in $(jq -r '.assets[].name' release.json); do
+            curl -fsSL -o "files/$name" "$GITEA/$REPO/releases/download/$TAG/$name"
+          done
+          cd files
+          # Signed in the namespace lembas-release.
+          printf 'lembas-release %s\n' "$PUBKEY" > ../allowed
+          ssh-keygen -Y verify -f ../allowed -I lembas-release -n lembas-release -s SHA256SUMS.sig < SHA256SUMS || { echo "SHA256SUMS is not signed by the release key" >&2; exit 1; }
+          [ "$(sed -n -E 's/^# lembas //p' SHA256SUMS | head -n1)" = "${TAG#v}" ] || { echo "SHA256SUMS is not for $TAG" >&2; exit 1; }
+          grep -v '^#' SHA256SUMS | sha256sum -c --strict -
+          for f in *; do case "$f" in SHA256SUMS | SHA256SUMS.sig) continue ;; esac; grep -q "  $f\$" SHA256SUMS || { echo "$f is not in SHA256SUMS" >&2; exit 1; }; done
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jq -r .body release.json > notes.md
+          pre=""
+          case "$TAG" in *-beta.*) pre="--prerelease" ;; esac
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$(jq -r .name release.json)" --notes-file notes.md $pre files/*
