@@ -32,9 +32,10 @@ Usage:
                                   settings (the same as /settings in the TUI)
   lembas config schema [--link]
                                   write JSON Schemas for editors (--link: point the files at them)
-  lembas login [address] [--ca file] [--default] [--keep-services]
+  lembas login [address] [--ca file] [--default] [--keep-services] [--json]
                                   sign in to a LLeMbas instance: its models, voice and search
-                                  (again: read them now; --default pins its default model)
+                                  (again: read them now; --default pins its default model;
+                                  --json: one JSON object per line, for a program to read)
   lembas logout [connection]      sign out of one, and remove what login wrote
   lembas serve --stdio            an ACP agent on stdin/stdout, for an editor that speaks ACP
   lembas service install | uninstall | status | logs [-f] | run
@@ -70,13 +71,15 @@ function fail(msg: string, code = 1): never {
 }
 
 async function loginCommand(cmd: "login" | "logout", args: string[]) {
-  const { codeInstructions, instances, isWebuiEntry, login, loginSummary, logout, sync, LembasError } = await import("./lembas/login.ts")
+  const { codeEvent, codeInstructions, doneEvent, instances, isWebuiEntry, login, loginSummary, logout, sync, LembasError } = await import("./lembas/login.ts")
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { ca: { type: "string" }, default: { type: "boolean" }, "keep-services": { type: "boolean" } },
+    options: { ca: { type: "string" }, default: { type: "boolean" }, "keep-services": { type: "boolean" }, json: { type: "boolean" } },
   })
   const known = instances()
+  const json = cmd === "login" && values.json
+  const emit = (o: object) => console.log(JSON.stringify(o))
   try {
     if (cmd === "logout") {
       const name = positionals[0] ?? (Object.keys(known).length === 1 ? Object.keys(known)[0]! : "")
@@ -91,14 +94,15 @@ async function loginCommand(cmd: "login" | "logout", args: string[]) {
     const again = address ? Object.values(known).find((i) => i.base_url.replace(/^https?:\/\//, "") === address.replace(/^https?:\/\//, "").replace(/\/+$/, "")) : Object.keys(known).length === 1 ? Object.values(known)[0] : undefined
     if (again && !values.ca && isWebuiEntry(again.connection)) {
       const r = await sync(again.connection, { setDefault: values.default })
-      console.log(loginSummary(r, false).join("\n"))
+      if (json) emit(doneEvent(r, false))
+      else console.log(loginSummary(r, false).join("\n"))
       return
     }
     // An older kind of login (the models copied into connections.yaml) is replaced by signing in
     // again, at the address it had.
     if (again && !address) address = again.base_url
     if (!address) {
-      if (!process.stdin.isTTY) fail("usage: lembas login <instance address>", 2)
+      if (!process.stdin.isTTY || json) fail("usage: lembas login <instance address>", 2)
       process.stdout.write("LLeMbas instance address: ")
       for await (const line of console) {
         address = line.trim()
@@ -110,11 +114,15 @@ async function loginCommand(cmd: "login" | "logout", args: string[]) {
       ca: values.ca ?? again?.ca,
       setDefault: values.default,
       keepServices: values["keep-services"],
-      onCode: (start, d) => console.log(`\n${codeInstructions(start, d)}\n`),
+      onCode: (start, d) => (json ? emit(codeEvent(start, d)) : console.log(`\n${codeInstructions(start, d)}\n`)),
     })
-    console.log(loginSummary(r, true).join("\n"))
+    if (json) emit(doneEvent(r, true))
+    else console.log(loginSummary(r, true).join("\n"))
   } catch (e) {
-    if (e instanceof LembasError) fail(e.message)
+    if (e instanceof LembasError) {
+      if (json) emit({ event: "error", message: e.message })
+      fail(e.message)
+    }
     throw e
   }
 }

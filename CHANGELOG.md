@@ -6,6 +6,11 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `lembas login --json` prints the code to approve and the outcome as one JSON object per line,
+  for a program that drives the login (LLeMbas Desktop).
+
 ## [1.0.0] — 2026-10-09
 
 The first public release of LLeMbas CLI: a terminal coding agent and project manager for any LLM

@@ -313,6 +313,31 @@ export function codeInstructions(start: DeviceStart, d: Discovery): string {
   ].join("\n")
 }
 
+/** `lembas login --json`: what a program driving the login (LLeMbas Desktop) reads, one JSON
+ *  object per line on stdout — the code to approve, then the outcome. */
+export function codeEvent(start: DeviceStart, d: Discovery) {
+  return {
+    event: "code" as const,
+    user_code: start.user_code,
+    verification_uri: start.verification_uri,
+    verification_uri_complete: start.verification_uri_complete ?? start.verification_uri,
+    expires_in: start.expires_in,
+    instance: { name: d.name ?? null, version: d.version, base_url: d.base_url },
+  }
+}
+
+export function doneEvent(r: LoginResult, fresh: boolean) {
+  return {
+    event: "done" as const,
+    fresh,
+    connection: r.connection,
+    base_url: r.instance.base_url,
+    version: r.version,
+    models: r.models.length,
+    changes: r.changes,
+  }
+}
+
 /** Whether a login's connection is already the webui kind — not an older kind of entry, with
  *  the models copied in, which a login again replaces. */
 export function isWebuiEntry(connection: string): boolean {

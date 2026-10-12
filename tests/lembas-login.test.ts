@@ -9,7 +9,7 @@ import { parse } from "yaml"
 import { loadConfig } from "../src/config/load.ts"
 import { paths } from "../src/config/paths.ts"
 import { normalise, PROTOCOL } from "../src/lembas/client.ts"
-import { codeInstructions, instances, keyFile, login, logout, specFor, sync } from "../src/lembas/login.ts"
+import { codeEvent, codeInstructions, doneEvent, instances, keyFile, login, logout, specFor, sync } from "../src/lembas/login.ts"
 import { cacheFile, refreshWebui } from "../src/lembas/webui.ts"
 import { resolveModel } from "../src/provider/index.ts"
 import { search } from "../src/search/index.ts"
@@ -151,6 +151,20 @@ test("the code is shown as a link and as a code for User → Security → Device
   expect(shown).toContain(`Found Example (LLeMbas 1.21.0) at ${fake.url}`)
   expect(shown).toContain(`1. Click the link: ${fake.url}/device?code=CDFG-HJKM`)
   expect(shown).toContain("2. Copy the code CDFG-HJKM into User → Security → Devices")
+})
+
+test("--json: the code and the outcome, each one line a program can read", async () => {
+  fake = lembas()
+  const lines: string[] = []
+  const r = await login(fake.url, { ...quick, onCode: (s, d) => lines.push(JSON.stringify(codeEvent(s, d))) })
+  lines.push(JSON.stringify(doneEvent(r, true)))
+  const [code, done] = lines.map((l) => JSON.parse(l))
+  expect(lines.every((l) => !l.includes("\n"))).toBe(true)
+  expect(code).toMatchObject({ event: "code", user_code: "CDFG-HJKM", verification_uri_complete: `${fake.url}/device?code=CDFG-HJKM` })
+  expect(code.instance).toEqual({ name: "Example", version: "1.21.0", base_url: fake.url })
+  expect(done).toMatchObject({ event: "done", fresh: true, connection: "example", base_url: fake.url, models: 2 })
+  // The key never appears in what is printed.
+  expect(lines.join("")).not.toContain("lmb_secret")
 })
 
 test("login writes one webui connection named after the instance, and no models", async () => {
