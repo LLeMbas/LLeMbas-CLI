@@ -6,6 +6,8 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-14
+
 ### Added
 
 - `lembas login --json` prints the code to approve and the outcome as one JSON object per line,
