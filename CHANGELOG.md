@@ -6,6 +6,8 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-14
+
 ### Added
 
 - `lembas remote list | add <dir>… | remove <dir>… | enable | disable | mode <m> | terminal <on|off>`
