@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AcpAgent, clampMode, underRoots, type Limits } from "../src/acp/agent.ts"
-import { LinkError, runLink } from "../src/acp/link.ts"
+import { runLink } from "../src/acp/link.ts"
 import { Peer, type Transport } from "../src/acp/rpc.ts"
 import { paths } from "../src/config/paths.ts"
 import { setTrust } from "../src/project/root.ts"
@@ -298,14 +298,6 @@ test("an approval nobody answers is a denial", async () => {
   const u = updates.find((x) => x.sessionUpdate === "tool_call_update" && x.toolCallId === "t1")
   expect(u.status).toBe("failed")
   expect(fake.requests[1].messages.at(-1).content).toContain("Nobody answered")
-})
-
-test("the link: off unless the device says so", async () => {
-  mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "config.yaml"), "")
-  await expect(runLink()).rejects.toBeInstanceOf(LinkError)
-  writeFileSync(join(paths.config, "config.yaml"), "remote:\n  enabled: true\n")
-  await expect(runLink()).rejects.toThrow("remote.roots is empty")
 })
 
 test("the link dials out with the token, says hello, is driven, and stops when refused", async () => {

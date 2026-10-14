@@ -170,6 +170,7 @@ export async function run(instance?: string): Promise<number> {
   // The hub: the terminals on this machine share their sessions through the service. A
   // terminal that holds the link itself for /remote keeps it until it closes; one link per device,
   // so the service waits for it rather than knocking it off.
+  // The limits are live: `lembas remote …` applies to this process within seconds (link.ts).
   const hub = new Hub({ service: true, limits: limitsFromConfig() })
   let said = false
   while (!stop.signal.aborted && !(await hub.listen())) {
@@ -198,6 +199,8 @@ export async function run(instance?: string): Promise<number> {
       }, 30_000)
   watch?.unref?.()
   try {
+    // Remote work off or no roots: linked all the same, telling the instance `roots: []` and
+    // refusing every session; `lembas remote add <dir>` or `enable` makes it serve, no restart.
     const end = await runLink({
       instance,
       hub,
@@ -212,8 +215,8 @@ export async function run(instance?: string): Promise<number> {
     return updated ? RESTART_FOR_UPDATE : 0
   } catch (e) {
     console.error(`lembas service: ${(e as Error).message}`)
-    // A configuration that cannot work is not fixed by restarting: exit 0 so Restart=on-failure
-    // leaves it, and the journal says why.
+    // A configuration that cannot work (not logged in) is not fixed by restarting: exit 0 so
+    // Restart=on-failure leaves it, and the journal says why.
     return e instanceof LinkError ? 0 : 1
   } finally {
     clearInterval(watch)

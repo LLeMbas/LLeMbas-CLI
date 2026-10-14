@@ -40,6 +40,12 @@ Usage:
   lembas serve --stdio            an ACP agent on stdin/stdout, for an editor that speaks ACP
   lembas service install | uninstall | status | logs [-f] | run
                                   work from a LLeMbas instance as a background service (remote:)
+  lembas remote list | add <dir>… | remove <dir>… | enable | disable
+         | mode <manual|edit|auto|plan> | terminal <on|off>  [--json]
+                                  what the instance may do here (remote:): the directories it may
+                                  work in (add turns remote work on), the most permissive mode,
+                                  terminals; a running service applies a change within seconds
+                                  (--json: one object, {enabled, roots, max_mode, terminal})
   lembas mcp [list]               connect the MCP servers and list their tools and prompts
   lembas mcp auth <server>        sign in to a remote MCP server (OAuth)
   lembas mcp logout <server>      forget a server's stored sign-in
@@ -167,6 +173,8 @@ async function main() {
   if (cmd === "--version" || cmd === "-v") return void console.log(VERSION)
 
   if (cmd === "login" || cmd === "logout") return void (await loginCommand(cmd, argv.slice(1)))
+
+  if (cmd === "remote") process.exit((await import("./remote.ts")).remoteCommand(argv.slice(1)))
 
   // A webui connection's models are the instance's as they are now: read before anything that
   // loads the configuration to use it. A few seconds at most; an instance that does not answer

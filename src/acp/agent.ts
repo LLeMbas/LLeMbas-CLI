@@ -58,6 +58,9 @@ export interface Limits {
   /** Its shell marks prompts, commands and the directory (`remote.terminal_integration`).
    *  Absent: yes. */
   terminalIntegration?: boolean
+  /** `remote.enabled`, where the limits are the device's (the link, the service's hub). False:
+   *  nothing new is opened or shared, whatever the roots say. Absent: not judged here. */
+  enabled?: boolean
   /** The link a terminal holds for /remote on a machine whose remote work is off: only
    *  the sessions shared from that terminal can be reached; the web UI opens none of its own. */
   sharedOnly?: boolean
@@ -67,6 +70,8 @@ export interface Limits {
 export function refusalFor(L: Limits | undefined, dir: string): string | undefined {
   if (!L) return undefined
   if (L.sharedOnly) return "remote work is off on this machine (remote.enabled); only the sessions its terminal shares (/remote) can be reached"
+  if (L.enabled === false) return "remote work is off on this machine — lembas remote enable there (remote.enabled)"
+  if (!L.roots.length) return "this device allows no folders for remote work yet — lembas remote add <dir> there (remote.roots)"
   if (!underRoots(dir, L.roots)) return `${dir} is outside the directories this device accepts remote work in (remote.roots)`
   if (L.requireTrust && trustOf(findProject(dir).root) !== "trusted" && !trustedWithin(real(dir)))
     return `${dir} is not in a trusted project on this device — trust it there first (lembas trust)`
@@ -95,6 +100,7 @@ export { REMOTE_META }
 export function deletableFor(L: Limits | undefined, root: string, shown: boolean): string | undefined {
   if (!L || shown) return undefined
   if (L.sharedOnly) return "remote work is off on this machine (remote.enabled); only the sessions its terminal shares (/remote) can be reached"
+  if (L.enabled === false) return "remote work is off on this machine — lembas remote enable there (remote.enabled)"
   if (!underRoots(root, L.roots)) return `${root} is outside the directories this device accepts remote work in (remote.roots)`
   return undefined
 }
