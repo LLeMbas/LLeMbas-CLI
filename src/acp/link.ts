@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { hostname } from "node:os"
 import { remoteBlock } from "../config/remote.ts"
+import { refusedLocally } from "../project/local.ts"
 import type { Mode } from "../config/schema.ts"
 import { HARNESS_VERSION } from "../harness.ts"
 import { instances, keyFile, rememberProtocols, type Instance } from "../lembas/login.ts"
@@ -124,6 +125,8 @@ export interface LinkOptions {
  *  `roots: []` and can tell a device that allows no folder yet from one that is not running, and a
  *  `lembas remote add` or `enable` makes it serve, without a restart. */
 export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
+  const local = refusedLocally("the link to a LLeMbas instance (lembas service, /remote)")
+  if (local) throw new LinkError(local)
   const limits = limitsFromConfig({ sharedOnly: o.sharedOnly })
   const poll = o.pollMs ?? 2000
   const instance = pickInstance(o.instance)

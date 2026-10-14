@@ -6,8 +6,10 @@ import { createApp } from "./app.ts"
 import { attachmentsFor } from "./project/attach.ts"
 import { ConfigError, loadConfig } from "./config/load.ts"
 import { asMode, EFFORTS, MODES, type Effort, type Mode } from "./config/schema.ts"
+import { isLocal, localRoot } from "./config/paths.ts"
 import { SettingError } from "./config/settings.ts"
 import { renderJson, renderPlain, terminalAsker } from "./headless.ts"
+import { enterLocal, localFor, LocalError, localRefusal, localTmp, LOCAL_FLAGS } from "./project/local.ts"
 import { findProject, setTrust, trustOf } from "./project/root.ts"
 import { effortsFor } from "./provider/effort.ts"
 import { clientFor, ModelError, resolveModel } from "./provider/index.ts"
@@ -18,7 +20,7 @@ import { VERSION } from "./version.ts"
 const HELP = `lembas ${VERSION} — terminal coding agent and project manager
 
 Usage:
-  lembas [-m model] [--mode M] [-c | -s id]
+  lembas [-l] [-m model] [--mode M] [-c | -s id]
                                   the TUI (-c continues the last session here, -s resumes one)
   lembas run [options] "…"        one prompt, headless
   lembas models [--discover]      list configured models
@@ -60,6 +62,21 @@ Usage:
                                   remove LLeMbas CLI (--purge: settings, sessions and memory too)
   lembas --version
   lembas --licenses               the licences of everything this binary contains
+
+Local mode:
+  lembas -l | --local [command …]
+                                  keep everything in this project: config, sessions, memory, skills,
+                                  the library, snapshots, worktrees, caches and trust live in
+                                  .agent/local/lembas/ (git-ignored), and nothing is written outside
+                                  it. Your logins and connections.yaml are read, never written; your
+                                  config.yaml is not read (the local one is used; lembas -l config set
+                                  … writes it). A LLeMbas instance is used only for its models, chat,
+                                  speech in and out (/v1/audio) and the balance: no link, /remote or
+                                  service, no sessions or deletes sent to it, no server library,
+                                  search, fetch or embeddings, no account personalization, and no
+                                  self-update. The instance still records the usage of each request,
+                                  as any API does. The project is not trusted by -l itself: the first
+                                  start asks, and the answer is kept in the local directory.
 
 Options for run:
   -m, --model conn/model    model to use (default: config.yaml \`model\`)
@@ -134,8 +151,33 @@ async function loginCommand(cmd: "login" | "logout", args: string[]) {
 }
 
 async function main() {
-  const argv = process.argv.slice(2)
+  // The environment as it was given, before local mode sets anything in it.
+  const startEnv = { ...process.env }
+  let argv = process.argv.slice(2)
+  // -l / --local: before the command, or anywhere among the TUI's options.
+  let local = false
+  while (LOCAL_FLAGS.includes(argv[0] ?? "")) {
+    local = true
+    argv = argv.slice(1)
+  }
+  if ((!argv[0] || argv[0].startsWith("-")) && argv.some((a) => LOCAL_FLAGS.includes(a))) {
+    local = true
+    argv = argv.filter((a) => !LOCAL_FLAGS.includes(a))
+  }
   const cmd = argv[0]
+  if (local && (cmd === "-h" || cmd === "--help" || cmd === "help"))
+    return void process.stdout.write(`Local mode here keeps everything in ${localFor(process.cwd()).root}\n\n${HELP}`)
+  if (local && !["-v", "--version", "--licenses", "licenses", "-h", "--help", "help"].includes(cmd ?? "")) {
+    try {
+      for (const note of enterLocal(process.cwd()).notes) process.stderr.write(`${note}\n`)
+    } catch (e) {
+      if (e instanceof LocalError) fail(e.message)
+      throw e
+    }
+    // What local mode turns off, said in one line.
+    const off: Record<string, string> = { service: "lembas service", update: "lembas update", uninstall: "lembas uninstall (run it without -l)", remote: "lembas remote" }
+    if (cmd && off[cmd]) fail(localRefusal(off[cmd]))
+  }
   // install.sh asks where the three directories are before it writes anything into them.
   // Internal, so not in --help; it prints where each one is, and install.sh writes where it says.
   if (cmd === "__paths") {
@@ -157,6 +199,12 @@ async function main() {
       },
     })
     if (!process.stdin.isTTY || !process.stdout.isTTY) fail('the TUI needs a terminal; use: lembas run "…"', 2)
+    // Local mode: the TUI starts again with TMPDIR inside the project, which the runtime reads
+    // only as it starts (the native library it unpacks goes there). The user's TMPDIR is passed on
+    // for the commands the agent runs.
+    const root = localRoot()
+    if (root && process.env.TMPDIR !== localTmp(root))
+      await (await import("./reload.ts")).restart(["-l", ...argv], { ...startEnv, TMPDIR: localTmp(root), LEMBAS_OUTER_TMPDIR: startEnv.TMPDIR ?? "" })
     if (values.mode && !asMode(values.mode)) fail(`--mode must be one of ${MODES.join(", ")}`, 2)
     await (await import("./lembas/webui.ts")).refreshWebui({ timeoutMs: 3000 })
     const { runTui } = await import("./tui/index.tsx")
@@ -399,15 +447,16 @@ async function main() {
         if (key === "model" || key === "small_model") resolveModel(loadConfig(), String(v))
       },
     })
+    const label = (src: string) => (src === "global" && isLocal() ? "local" : src)
     if (argv[1] === "list") {
-      for (const e of settings.list()) console.log(`${e.def.key} = ${show(e.value) || `(${e.def.fallback ?? "unset"})`}${e.source === "default" ? "" : `  [${e.source}]`}${e.note ? `  (${e.note})` : ""}`)
+      for (const e of settings.list()) console.log(`${e.def.key} = ${show(e.value) || `(${e.def.fallback ?? "unset"})`}${e.source === "default" ? "" : `  [${label(e.source)}]`}${e.note ? `  (${e.note})` : ""}`)
       return
     }
     const [key, ...rest] = args
     if (!key) fail(`usage: lembas config ${argv[1]} <key>${argv[1] === "set" ? " <value> [--project]" : ""}`, 2)
     if (argv[1] === "get") {
       const e = settings.get(key)
-      console.log(`${key} = ${show(e.value) || `(${e.def.fallback ?? "unset"})`}${e.source === "default" ? "" : `  [${e.source}]`}`)
+      console.log(`${key} = ${show(e.value) || `(${e.def.fallback ?? "unset"})`}${e.source === "default" ? "" : `  [${label(e.source)}]`}`)
       if (e.note) console.log(`⚠ ${e.note}`)
       const d = describe(e.def)
       if (d) console.log(d)

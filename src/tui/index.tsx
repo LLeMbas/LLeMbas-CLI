@@ -5,6 +5,7 @@ import { createApp, type AppOptions, type App } from "../app.ts"
 import { ConfigError, loadConfig } from "../config/load.ts"
 import { ModelError } from "../provider/index.ts"
 import { autoUpdate } from "../update/index.ts"
+import { isLocal } from "../config/paths.ts"
 import { Setup } from "./components/setup.tsx"
 import { Bus } from "../bus/index.ts"
 import { findProject, trustOf } from "../project/root.ts"
@@ -78,8 +79,9 @@ export function Boot(p: { options: TuiOptions; onQuit: () => void; onReload?: (a
     setApp(a)
     p.onApp?.(a)
     // An update, looked for once the session is up, and only said when there is something to say.
+    // Not in local mode: an update writes outside the project.
     const update = a.loaded.config.update
-    void autoUpdate({ config: update }).then((r) => {
+    if (!isLocal()) void autoUpdate({ config: update }).then((r) => {
       if (r.kind === "installed") {
         view.info(`Updated to ${r.version} — /reload to restart in the latest ${update?.channel ?? "stable"}`)
         bus.emit({ type: "flash", text: `updated to ${r.version} · /reload` })

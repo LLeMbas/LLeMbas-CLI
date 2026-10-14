@@ -14,10 +14,10 @@
 // LLeMbas CLI speaks to it as an ordinary openai-chat connection at <url>/v1. What the instance said
 // last is kept in the state directory, so a start without the network still knows the models; a
 // start that can reach the instance reads them again first (`refreshWebui`).
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { parse } from "yaml"
-import { paths } from "../config/paths.ts"
+import { connectionFiles, isLocal, paths } from "../config/paths.ts"
 import type { Connection, ModelSpec, WebuiConnection } from "../config/schema.ts"
 import { runKeyCmd, substituteDeep } from "../config/substitute.ts"
 import { instanceInfo, LembasError, models as listModels, normalise, personalization, type InstanceInfo, type Personalization, type ServedModel, type Tls } from "./client.ts"
@@ -170,7 +170,8 @@ export async function fetchWebui(name: string, url: string, token: string, tls: 
     listModels({ api: { openai: `${base}/v1` } }, token, tls, timeoutMs),
     instanceInfo(base, token, tls, timeoutMs),
     // Best-effort: an instance may not have it, and a failure here must not cost the models.
-    personalization(base, token, tls, timeoutMs).catch(() => undefined),
+    // Not in local mode: the account's settings are not taken into the project.
+    isLocal() ? undefined : personalization(base, token, tls, timeoutMs).catch(() => undefined),
   ])
   const cache: Cache = { fetched_at: new Date().toISOString(), url: base, ...(instance ? { instance } : {}), models: served, ...(personal ? { personalization: personal } : {}) }
   writeCache(name, cache)
@@ -192,14 +193,12 @@ export interface Refreshed {
  *  first, so the models are the instance's as they are now. Never throws: an instance that cannot
  *  be reached leaves what was read last, and says so. */
 export async function refreshWebui(o: { timeoutMs?: number; only?: string } = {}): Promise<Refreshed[]> {
-  const file = join(paths.config, "connections.yaml")
-  if (!existsSync(file)) return []
-  let raw: Record<string, unknown>
-  try {
-    raw = ((parse(readFileSync(file, "utf8")) ?? {}) as { connections?: Record<string, unknown> }).connections ?? {}
-  } catch {
-    return []
-  }
+  // In local mode the user's own connections too, read only; the local file's entries win.
+  const raw: Record<string, unknown> = {}
+  for (const file of connectionFiles())
+    try {
+      Object.assign(raw, ((parse(readFileSync(file, "utf8")) ?? {}) as { connections?: Record<string, unknown> }).connections ?? {})
+    } catch {}
   const entries = Object.entries(raw).filter(([name, c]) => (!o.only || o.only === name) && (c as { type?: string })?.type === "webui")
   return Promise.all(
     entries.map(async ([name, c]): Promise<Refreshed> => {

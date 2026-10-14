@@ -20,7 +20,7 @@
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs"
 import { connect, createServer, type Server, type Socket } from "node:net"
 import { join } from "node:path"
-import { paths } from "../config/paths.ts"
+import { isLocal, paths } from "../config/paths.ts"
 import type { Mode } from "../config/schema.ts"
 import type { CommandInfo } from "../session/commands.ts"
 import { clampMode, refusalFor, type AcpAgent, type Limits } from "./agent.ts"
@@ -77,7 +77,8 @@ export function answers(path = hubSocket(), timeoutMs = 1000): Promise<boolean> 
 
 /** Connect to the hub, if one runs. */
 export function connectHub(path = hubSocket()): Promise<Peer | undefined> {
-  if (!existsSync(path)) return Promise.resolve(undefined)
+  // Local mode shares nothing: no hub is reached, and none is held.
+  if (isLocal() || !existsSync(path)) return Promise.resolve(undefined)
   return new Promise((resolve) => {
     const sock = connect(path)
     const timer = setTimeout(() => (sock.destroy(), resolve(undefined)), 2000)
@@ -138,6 +139,7 @@ export class Hub {
 
   /** Take the socket. False: another hub is alive on it. */
   async listen(path = hubSocket()): Promise<boolean> {
+    if (isLocal()) return false
     mkdirSync(paths.state, { recursive: true })
     if (existsSync(path)) {
       if (await answers(path)) return false

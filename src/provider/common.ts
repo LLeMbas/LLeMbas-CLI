@@ -2,7 +2,8 @@
 // llama-swap's loading banner.
 import type { ReasoningPart, StreamEvent, TextPart, ToolCallPart, Message } from "./types.ts"
 import { ProviderError } from "./types.ts"
-import { env } from "../config/paths.ts"
+import { resolve } from "node:path"
+import { env, localRoot } from "../config/paths.ts"
 
 type Assistant = Extract<Message, { role: "assistant" }>
 
@@ -71,12 +72,21 @@ export function statusOf(err: any): number | undefined {
   return undefined
 }
 
+/** LEMBAS_RECORD, where it may be written: in local mode only inside the project's local root. */
+function recordDir(): string | undefined {
+  const dir = env("RECORD")
+  const root = localRoot()
+  if (!dir || !root) return dir
+  const abs = resolve(dir)
+  return abs === root || abs.startsWith(`${root}/`) ? abs : undefined
+}
+
 export function recordName(ref: string) {
-  return `${env("RECORD")}/${new Date().toISOString().replace(/[:.]/g, "-")}-${ref.replace(/[^\w.-]+/g, "_")}`
+  return `${recordDir()}/${new Date().toISOString().replace(/[:.]/g, "-")}-${ref.replace(/[^\w.-]+/g, "_")}`
 }
 
 export function recordFailure(ref: string, request: unknown, e: unknown) {
-  if (!env("RECORD")) return
+  if (!recordDir()) return
   const name = recordName(ref)
   void Bun.write(`${name}.request.json`, JSON.stringify(request, null, 2))
   const err = e as ProviderError
@@ -85,7 +95,7 @@ export function recordFailure(ref: string, request: unknown, e: unknown) {
 
 /** LEMBAS_RECORD=<dir>: keep each request body and its raw SSE, to become test fixtures. */
 export function record(body: ReadableStream<Uint8Array>, ref: string, request: unknown): ReadableStream<Uint8Array> {
-  const dir = env("RECORD")
+  const dir = recordDir()
   if (!dir) return body
   const [a, b] = body.tee()
   const name = recordName(ref)

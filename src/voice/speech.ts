@@ -1,11 +1,10 @@
 // Speech to text and text to speech, over the providers voice.stt / voice.tts name. `webui` is a
 // LLeMbas instance's own (OpenAI's shapes at <url>/v1, filled in by the loader); a half with a
 // `fallback` uses it when its provider cannot be reached.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import type { Voice } from "../config/schema.ts"
-import { expandHome } from "../config/paths.ts"
+import { expandHome, makeTempDir } from "../config/paths.ts"
 import { runKeyCmd } from "../config/substitute.ts"
 import { joinUrl, request, tlsFor } from "../provider/http.ts"
 
@@ -83,7 +82,7 @@ async function synthesizeWith(t: Tts, text: string, signal?: AbortSignal): Promi
   const provider = t.provider ?? "openai"
   if (provider === "piper-cli") {
     if (!t.model_path) throw new Error("voice.tts.model_path (a piper .onnx voice) is not set")
-    const dir = mkdtempSync(join(tmpdir(), "lembas-piper-"))
+    const dir = makeTempDir("lembas-piper-")
     const out = join(dir, "say.wav")
     try {
       const args = [t.command ?? "piper", "-m", expandHome(t.model_path), "-f", out, ...(t.speed && t.speed !== 1 ? ["--length-scale", String(1 / t.speed)] : [])]

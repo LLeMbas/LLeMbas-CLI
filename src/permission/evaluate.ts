@@ -3,6 +3,7 @@
 import { lstatSync, readlinkSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
+import { localRoot } from "../config/paths.ts"
 import type { Action, Mode, PermissionConfig } from "../config/schema.ts"
 import { prefix } from "./arity.ts"
 import { splitCommand, words } from "./bash.ts"
@@ -222,6 +223,11 @@ function evaluateRules(req: PermissionRequest, ctx: Context): Decision {
   }
   // Where each path really is: a symlink is judged by what it points to.
   const root = realPath(ctx.root)
+  // Local mode's own files are inside the project but not of it: judged as ~/.config is
+  // otherwise, as outside — save its worktrees, where a session works.
+  const own = localRoot()
+  const local = own === undefined ? undefined : realPath(own)
+  const inRoot = (p: string) => inside(p, root) && !(local && inside(p, local) && !inside(p, join(local, "data", "worktrees")))
   const real = (req.paths ?? []).map(realPath)
   if (req.class === "write") {
     for (const [i, p] of real.entries()) {
@@ -259,12 +265,12 @@ function evaluateRules(req: PermissionRequest, ctx: Context): Decision {
   // Reading a file by another tool (grep, glob, list) or a command follows the read rules too.
   if (req.permission !== "read" && (req.class === "read" || req.command !== undefined))
     for (const p of [...(req.command === undefined ? real : []), ...named])
-      if (inside(p, root)) ruled = strictest(ruled, lookup("read", relative(root, p) || ".", ctx.rules))
+      if (inRoot(p)) ruled = strictest(ruled, lookup("read", relative(root, p) || ".", ctx.rules))
   // And read by where it really is: a link named notes.txt that points at .env reads .env.
   if (req.permission === "read")
-    for (const p of real) if (inside(p, root)) ruled = strictest(ruled, lookup("read", relative(root, p) || ".", ctx.rules))
+    for (const p of real) if (inRoot(p)) ruled = strictest(ruled, lookup("read", relative(root, p) || ".", ctx.rules))
 
-  const external = [...real, ...named].filter((p) => !inside(p, root))
+  const external = [...real, ...named].filter((p) => !inRoot(p))
   let externalAction: Action = "allow"
   for (const p of external) externalAction = strictest(externalAction, lookup("external_directory", p, ctx.rules))
 

@@ -10,11 +10,14 @@ export function selfCommand(args: string[]): string[] {
   return compiled ? [process.execPath, ...args] : [process.execPath, Bun.main, ...args]
 }
 
-function execv(argv: string[]): Error {
+/** execv, or execve with `env` when given (local mode's start: TMPDIR must be set before the
+ *  runtime reads it). */
+function execv(argv: string[], env?: Record<string, string | undefined>): Error {
   try {
     const { dlopen, FFIType, ptr } = require("bun:ffi") as typeof import("bun:ffi")
     const libc = dlopen("libc.so.6", {
       execv: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+      execve: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
       fcntl: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
     })
     // Everything above stdio closes on exec: an open database, an MCP server's pipe would otherwise
@@ -35,10 +38,17 @@ function execv(argv: string[]): Error {
         libc.symbols.fcntl(fd, F_SETFD, FD_CLOEXEC)
       } catch {}
     }
-    const strings = argv.map((a) => Buffer.from(`${a}\0`))
-    const table = new BigUint64Array(strings.length + 1)
-    strings.forEach((s, i) => (table[i] = BigInt(ptr(s))))
-    libc.symbols.execv(ptr(strings[0]!), ptr(table))
+    const table = (items: string[]) => {
+      const strings = items.map((a) => Buffer.from(`${a}\0`))
+      const t = new BigUint64Array(strings.length + 1)
+      strings.forEach((s, i) => (t[i] = BigInt(ptr(s))))
+      return { strings, t }
+    }
+    const args = table(argv)
+    if (env) {
+      const vars = table(Object.entries(env).flatMap(([k, v]) => (v === undefined ? [] : [`${k}=${v}`])))
+      libc.symbols.execve(ptr(args.strings[0]!), ptr(args.t), ptr(vars.t))
+    } else libc.symbols.execv(ptr(args.strings[0]!), ptr(args.t))
     // execv returns only when it failed.
     return new Error("execv failed")
   } catch (e) {
@@ -47,9 +57,9 @@ function execv(argv: string[]): Error {
 }
 
 /** Never returns: the new program runs, in this process or a child this one waits for. */
-export async function restart(args: string[]): Promise<never> {
+export async function restart(args: string[], env?: Record<string, string | undefined>): Promise<never> {
   const argv = selfCommand(args)
-  execv(argv)
-  const child = Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"] })
+  execv(argv, env)
+  const child = Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"], ...(env ? { env } : {}) })
   process.exit(await child.exited)
 }

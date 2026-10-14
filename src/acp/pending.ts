@@ -14,7 +14,7 @@
 // out of anybody's mind.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { paths } from "../config/paths.ts"
+import { isLocal, paths } from "../config/paths.ts"
 
 export const DELETED_MAX = 500
 
@@ -43,7 +43,8 @@ function write(ids: string[]) {
  *  directory that cannot be written to only loses the word. */
 export function addPendingDeleted(ids: string[]) {
   const add = ids.filter(Boolean)
-  if (!add.length) return
+  // Local mode tells the instance nothing, now or later.
+  if (!add.length || isLocal()) return
   try {
     // An id already waiting moves to the end: it is the newest word about it.
     const list = [...pendingDeleted().filter((x) => !add.includes(x)), ...new Set(add)]

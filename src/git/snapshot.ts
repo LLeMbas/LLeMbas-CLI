@@ -1,6 +1,7 @@
 // Snapshots of the working tree in a shadow git repository — the idea of OpenCode's
-// snapshot/index.ts, written small. The shadow repo lives in ~/.local/share/lembas/snapshot/,
-// never inside the project, and works whether or not the project itself uses git.
+// snapshot/index.ts, written small. The shadow repo lives in ~/.local/share/lembas/snapshot/ —
+// in local mode (-l) in the project's git-ignored local directory, which it leaves out of every
+// snapshot — and works whether or not the project itself uses git.
 //
 //   track()            → a tree hash for the working tree as it is now
 //   changed(a, b)      → paths that differ between two trees

@@ -2,8 +2,8 @@
 // project config can re-enable. Patterns ported from Hermes Agent tools/approval_detection.py
 // HARDLINE_PATTERNS (MIT, © 2025 Nous Research), plus LLeMbas CLI's own (force-push to main).
 import { homedir } from "node:os"
-import { basename, posix, resolve } from "node:path"
-import { paths } from "../config/paths.ts"
+import { basename, join, posix, resolve } from "node:path"
+import { globalPaths, localRoot, paths } from "../config/paths.ts"
 import { splitCommand, words } from "./bash.ts"
 import SPEC from "../../harness/permission/hardline.json"
 
@@ -162,13 +162,22 @@ export function substitutions(line: string): string[] {
   return out
 }
 
-/** Paths no tool may write, whatever the mode (the spec's, plus LLeMbas CLI's own connections.yaml). */
+/** Paths no tool may write, whatever the mode (the spec's, plus LLeMbas CLI's own connections.yaml).
+ *  `<config>/` is guarded in the user's config directory and, in local mode, in the local one too. */
 export function protectedPath(abs: string): string | undefined {
   const home = homedir()
-  const guarded: [string, string][] = SPEC.protected_paths.map((g) => [
-    g.path.startsWith("<config>/") ? resolve(paths.config, g.path.slice("<config>/".length)) : g.path.startsWith("~/") ? resolve(home, g.path.slice(2)) : g.path,
-    g.label ?? g.path,
-  ])
+  const configs = [...new Set([paths.config, globalPaths.config])]
+  const guarded: [string, string][] = SPEC.protected_paths.flatMap((g) =>
+    g.path.startsWith("<config>/")
+      ? configs.map((c): [string, string] => [resolve(c, g.path.slice("<config>/".length)), g.label ?? g.path])
+      : [[g.path.startsWith("~/") ? resolve(home, g.path.slice(2)) : g.path, g.label ?? g.path] as [string, string]],
+  )
   for (const [p, label] of guarded) if (abs === p || abs.startsWith(p + "/")) return label
+  // Local mode keeps its config, keys, trust and sessions inside the project, where edit mode would
+  // otherwise let a tool rewrite them: no tool writes there — the program does, as it does in
+  // ~/.config. Except the worktrees, which are where a session may work.
+  const root = localRoot()
+  const inside = (p: string) => abs === p || abs.startsWith(p + "/")
+  if (root && inside(root) && !inside(join(root, "data", "worktrees"))) return "local mode's own files"
   return undefined
 }

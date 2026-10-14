@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { join } from "node:path"
 import { isScalar, parse, parseDocument } from "yaml"
 import { z } from "zod"
-import { paths } from "./paths.ts"
+import { connectionFiles, isLocal, paths } from "./paths.ts"
 import { asMode, Config, Connection, ConnectionsFile, McpServer, PERSONALITIES, renamePermissionKeys, WebuiConnection, type PermissionConfig } from "./schema.ts"
 import { runKeyCmd, substituteDeep } from "./substitute.ts"
 import { expandWebui, refreshFailures, type WebuiMark } from "../lembas/webui.ts"
@@ -260,37 +260,38 @@ export function loadConfig(opts: { projectConfigDir?: string; trusted?: boolean 
     warnings.push("config: `skin` is now called `theme`; rename it (the value is used meanwhile)")
   }
 
-  const connFile = join(paths.config, "connections.yaml")
   const connections: Loaded["connections"] = {}
   const broken: Record<string, string> = {}
-  if (existsSync(connFile)) {
+  // Validate each raw file, then substitute each connection on its own: a missing variable for one
+  // connection must not stop the others from working. In local mode, the user's own file first
+  // (read, never written), then the local one, whose entries win by name.
+  const raw: Record<string, unknown> = {}
+  for (const connFile of connectionFiles()) {
     files.push(connFile)
     const mode = statSync(connFile).mode & 0o777
     if (mode & 0o077) warnings.push(`${connFile} is mode ${mode.toString(8)}; chmod 600 it — it references credentials`)
-    // Validate the raw file, then substitute each connection on its own: a missing
-    // variable for one connection must not stop the others from working.
-    const raw = validate(ConnectionsFile, readYaml(connFile), connFile).connections
-    for (const [name, c] of Object.entries(raw)) {
-      try {
-        if ((c as { type?: string }).type === "webui") {
-          const w = WebuiConnection.safeParse(substituteDeep(c, `connections.${name}`))
-          if (w.success) {
-            const c = (connections[name] = expandWebui(name, w.data))
-            if (refreshFailures[name])
-              warnings.push(
-                `${name}: the instance could not be asked for its models (${refreshFailures[name]}); ${c.webui.fetched_at ? `using what it said at ${c.webui.fetched_at.slice(0, 16).replace("T", " ")}` : "none known yet"}`,
-              )
-          }
-          else broken[name] = `once {env:}/{file:} are filled in: ${w.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
-          continue
+    Object.assign(raw, validate(ConnectionsFile, readYaml(connFile), connFile).connections)
+  }
+  for (const [name, c] of Object.entries(raw)) {
+    try {
+      if ((c as { type?: string }).type === "webui") {
+        const w = WebuiConnection.safeParse(substituteDeep(c, `connections.${name}`))
+        if (w.success) {
+          const c = (connections[name] = expandWebui(name, w.data))
+          if (refreshFailures[name])
+            warnings.push(
+              `${name}: the instance could not be asked for its models (${refreshFailures[name]}); ${c.webui.fetched_at ? `using what it said at ${c.webui.fetched_at.slice(0, 16).replace("T", " ")}` : "none known yet"}`,
+            )
         }
-        // Again once filled in: "{env:LLM_URL}" passed as a placeholder; what it became must be a URL.
-        const r = Connection.safeParse(substituteDeep(c, `connections.${name}`))
-        if (r.success) connections[name] = r.data
-        else broken[name] = `once {env:}/{file:} are filled in: ${r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
-      } catch (e) {
-        broken[name] = (e as Error).message
+        else broken[name] = `once {env:}/{file:} are filled in: ${w.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
+        continue
       }
+      // Again once filled in: "{env:LLM_URL}" passed as a placeholder; what it became must be a URL.
+      const r = Connection.safeParse(substituteDeep(c, `connections.${name}`))
+      if (r.success) connections[name] = r.data
+      else broken[name] = `once {env:}/{file:} are filled in: ${r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
+    } catch (e) {
+      broken[name] = (e as Error).message
     }
   }
 
@@ -388,11 +389,16 @@ export function loadConfig(opts: { projectConfigDir?: string; trusted?: boolean 
     config = { ...config, search: sr }
   }
 
+  // Local mode: an instance serves models, chat, speech and the balance, and nothing that is kept
+  // or shown there — no search or fetch through it, no embeddings, no library, no personalization
+  // (the local keys apply) — and the whole hardline stays.
+  if (isLocal()) config = localOnly(config, connections, warnings)
+
   // Logged in to one instance: the account's personalization in place of the local keys,
   // where the instance offers it; and its library when nobody chose one.
-  const personal = withInstancePersonalization(config)
+  const personal = isLocal() ? { config } : withInstancePersonalization(config)
   config = personal.config
-  if (config.library === undefined && defaultLibrary()) config = { ...config, library: "lembas" }
+  if (config.library === undefined && !isLocal() && defaultLibrary()) config = { ...config, library: "lembas" }
 
   // An instance that speaks protocol 2 serves `<provider>/<model>` ids.
   const logins = instances()
@@ -439,6 +445,31 @@ function migrateRef(file: string, key: string, old: string, now: string) {
     mkdirSync(paths.state, { recursive: true })
     writeFileSync(record, JSON.stringify(done, null, 2) + "\n")
   } catch {}
+}
+
+/** What local mode takes out of a loaded config, saying so where something was asked for. */
+function localOnly(config: Config, connections: Loaded["connections"], warnings: string[]): Config {
+  const out = { ...config }
+  if (out.search) {
+    const sr = { ...out.search }
+    if (sr.order?.includes("webui") || sr.webui || sr.fetch === "webui") warnings.push("local mode: web search and fetch do not go through the LLeMbas instance")
+    if (sr.order) sr.order = sr.order.filter((p) => p !== "webui")
+    delete sr.webui
+    if (sr.fetch === "webui") sr.fetch = "local"
+    out.search = sr
+  }
+  if (out.library === "lembas") warnings.push("local mode: library: lembas is ignored; this project's own library is used")
+  out.library = "local"
+  const emb = out.embedding?.split("/")[0]
+  if (out.embedding && emb && connections[emb]?.webui) {
+    warnings.push(`local mode: embedding ${out.embedding} would go through the LLeMbas instance; the library is searched by words only`)
+    delete out.embedding
+  }
+  if (out.hardline_disable?.length) {
+    warnings.push("local mode: hardline_disable is ignored; the whole hardline applies")
+    delete out.hardline_disable
+  }
+  return out
 }
 
 /** The API key for a connection: `api_key` (already substituted) or the output of `key_cmd`. */

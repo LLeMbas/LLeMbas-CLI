@@ -18,6 +18,8 @@ import { clampMode, effortOf, markRemote, permissionParams, planParams, planRepl
 import { sessionTurnFile, sessionTurns, type TurnLog } from "./turns.ts"
 import { dropAttachments, preparePrompt } from "./prompt.ts"
 import { connectHub, Hub } from "./hub.ts"
+import { isLocal } from "../config/paths.ts"
+import { localRefusal, refusedLocally } from "../project/local.ts"
 import { addPendingDeleted } from "./pending.ts"
 import { REMOTE_META, type Store } from "../session/store.ts"
 import { limitsFromConfig, runLink } from "./link.ts"
@@ -193,6 +195,7 @@ export class Share {
   }
 
   status(): string {
+    if (isLocal()) return localRefusal("sharing with the web UI")
     if (this.sharedId) return `this session is shared with the web UI ${this.own ? "— the link is held by this terminal, so it lasts as long as the terminal does" : "through the service"}`
     if (this.hub && this.service) return "not shared: this session is outside what the service shares (remote.roots, trust) — /remote shares it anyway"
     if (this.hub) return "not shared — /remote shares it"
@@ -342,6 +345,8 @@ export class Share {
 
   /** Hold the link in this terminal, for /remote while no service runs. Returns why not, if not. */
   private async becomeHub(): Promise<string | undefined> {
+    const local = refusedLocally("/remote")
+    if (local) return local
     const { instances } = await import("../lembas/login.ts")
     if (!Object.keys(instances()).length) return "not logged in to a LLeMbas instance — /login first"
     const hub = new Hub({ service: false, limits: limitsFromConfig() })

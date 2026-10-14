@@ -3,6 +3,7 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { jobNote, onJobExit } from "../tool/jobs.ts"
 import { stricterMode, type App as Runtime } from "../app.ts"
+import { isLocal } from "../config/paths.ts"
 import type { Effort, Mode } from "../config/schema.ts"
 import { COMMANDS, findCommand, type CommandCtx } from "./commands.ts"
 import { Dialog, type DialogSpec } from "./components/dialog.tsx"
@@ -178,7 +179,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
       if (!p.onReload) return view.info("/reload is not available here", "warn")
       // Back on this session, with what it was using; everything else comes from the files again.
       const e = app.engine
-      const args = [...(e.sessionId ? ["-s", e.sessionId] : []), "-m", e.model.ref, "--mode", e.mode, "-e", e.effort ?? "off"]
+      const args = [...(isLocal() ? ["-l"] : []), ...(e.sessionId ? ["-s", e.sessionId] : []), "-m", e.model.ref, "--mode", e.mode, "-e", e.effort ?? "off"]
       void app
         .close()
         .catch(() => {})

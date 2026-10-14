@@ -14,8 +14,15 @@ const GIT_SAFE: [string, string][] = [
   ["core.pager", "cat"],
   ["safe.bareRepository", "explicit"],
 ]
+// Local mode starts the TUI with TMPDIR inside the project, for this program's own files; the
+// commands keep the TMPDIR they had (LEMBAS_OUTER_TMPDIR, empty when there was none).
+const { LEMBAS_OUTER_TMPDIR: outerTmp, ...startEnv } = process.env
+if (outerTmp !== undefined) {
+  if (outerTmp) startEnv.TMPDIR = outerTmp
+  else delete startEnv.TMPDIR
+}
 const ENV = {
-  ...process.env,
+  ...startEnv,
   // A command can tell it runs under the agent.
   LEMBAS: "1",
   GIT_PAGER: "cat",

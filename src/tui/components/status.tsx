@@ -1,5 +1,6 @@
 import { basename } from "node:path"
 import { Show } from "solid-js"
+import { isLocal } from "../../config/paths.ts"
 import { useTui } from "../context.ts"
 
 const MODE_LABEL = { manual: "manual", edit: "edit", auto: "AUTO", plan: "plan" } as const
@@ -41,7 +42,9 @@ export function StatusBar(p: { mode: () => string; model: () => string; effort: 
             <span style={{ fg: c().statusDim }}>{view.state.rate ? `${Math.round(view.state.rate)} tok/s · ` : ""}</span>
             <span style={{ fg: c().statusText }}>{p.credits?.() ? `${p.credits()} · ` : ""}</span>
             <span style={{ fg: ctx().color }}>{ctx().text}</span>
-            <span style={{ fg: c().statusDim }}> · {basename(app.project.root)}{p.branch ? `@${p.branch}` : ""}</span>
+            <span style={{ fg: c().statusDim }}> · </span>
+            <span style={{ fg: c().info }}>{isLocal() ? "local " : ""}</span>
+            <span style={{ fg: c().statusDim }}>{basename(app.project.root)}{p.branch ? `@${p.branch}` : ""}</span>
           </text>
         }
       >

@@ -2,7 +2,7 @@
 // Smoke test of the COMPILED binary — what `bun test` cannot see: that the bundle, OpenTUI's
 // native library and bun:sqlite FTS5 all survive `bun build --compile`.
 //   bun run scripts/smoke.ts [path/to/binary]
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { delta, fakeProvider, toolCall, usage } from "../tests/fake-provider.ts"
@@ -190,6 +190,48 @@ for (const [cols, rows] of [
   f.stop()
   check("/reload: started again, back on the same session", answered && back && kept && code === 0, `answered=${answered} back=${back} kept=${kept} exit=${code}\n${screen.join("\n")}`)
   check("/reload: the terminal is given back on quit", modes.mouse === "none" && !modes.altScreen, JSON.stringify(modes))
+}
+
+// 6. local mode (-l): everything in the project, nothing written anywhere else — the user's
+// directories, HOME and TMPDIR are checked file by file before and after a whole session.
+{
+  const { fake: f, home: h, cwd } = fakeHome([
+    { chunks: [delta({ content: "Writing it." }), toolCall(0, "c1", "bash", '{"command":"echo local > out.txt","description":"Write out.txt"}'), usage(900, 40)] },
+    { chunks: [delta({ content: "local done" }), usage(1200, 20)] },
+  ])
+  const tmp = mkdtempSync(join(tmpdir(), "lembas-smoke-tmp-"))
+  const listing = (dir: string): string[] => {
+    const out: string[] = []
+    for (const e of readdirSync(dir, { withFileTypes: true, recursive: true })) out.push(join(e.parentPath, e.name))
+    return out.sort()
+  }
+  const before = { home: listing(h), tmp: listing(tmp) }
+  const d = await drive({ cols: 100, rows: 30, bin, home: h, cwd, args: ["-l"], env: { HOME: h, TMPDIR: tmp, XDG_CONFIG_HOME: join(h, ".config"), XDG_DATA_HOME: join(h, ".local/share"), XDG_STATE_HOME: join(h, ".local/state") } })
+  const firstRun = await d.waitFor("Trust this directory?")
+  await d.key("\r")
+  const drawn = await d.waitFor("☤ LLeMbas", 15000)
+  await d.type("make a file")
+  await d.key("\r")
+  const asked = await d.waitFor("Allow once")
+  await d.key("y")
+  const answered = await d.waitFor("local done")
+  await d.type("/remote")
+  await d.key("\r")
+  const refused = await d.waitFor("off in local mode")
+  const screen = d.screen()
+  await d.key("\x03")
+  await d.key("\x03")
+  const code = await d.close()
+  f.stop()
+  const after = { home: listing(h), tmp: listing(tmp) }
+  const grew = [...after.home.filter((p) => !before.home.includes(p)), ...after.tmp.filter((p) => !before.tmp.includes(p))]
+  const kept = ["data/sessions.db", "state/trust.json"].every((p) => existsSync(join(cwd, ".agent/local/lembas", p)))
+  check(
+    "local mode: a whole session works from the project",
+    firstRun && drawn && asked && answered && refused && kept && code === 0 && (screen[29] ?? "").includes("local"),
+    `firstRun=${firstRun} drawn=${drawn} asked=${asked} answered=${answered} refused=${refused} kept=${kept} exit=${code}\n${screen.join("\n")}`,
+  )
+  check("local mode: nothing written outside the project (home, XDG dirs, TMPDIR)", grew.length === 0, grew.join(", "))
 }
 
 process.exit(failed ? 1 : 0)

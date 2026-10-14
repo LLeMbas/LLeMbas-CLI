@@ -10,6 +10,7 @@
 //   library — with no `library:` written anywhere, a login whose token has the `library` scope
 //     means the account's library (`lembas`); `library: local` written keeps this machine's.
 import { existsSync, readFileSync } from "node:fs"
+import { isLocal } from "../config/paths.ts"
 import type { Config } from "../config/schema.ts"
 import { PERSONALITIES } from "../config/schema.ts"
 import { LembasError, savePersonalization, usage, type Personalization, type Usage } from "./client.ts"
@@ -59,6 +60,7 @@ export function withInstancePersonalization(config: Config): { config: Config; c
  *  web UI has), and a PUT of the session's copy would wipe them. The cache takes what the instance
  *  answered. */
 export async function pushPersonalization(key: (typeof PERSONAL_KEYS)[number], value: string): Promise<Personalization | undefined> {
+  if (isLocal()) throw new LembasError("local mode (-l) keeps settings in the project, not in the account")
   const one = soleInstance()
   if (!one) throw new LembasError("not logged in to one LLeMbas instance")
   const saved = await savePersonalization(one.instance.base_url, one.token, one.instance.ca ? { ca: one.instance.ca } : undefined, { enabled: true, [key]: value })

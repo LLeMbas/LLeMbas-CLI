@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import { assertProjectFile } from "./project/safe.ts"
 import { dirname, join } from "node:path"
 import { findSetting, globalConfigFile, legacyInstructionFiles, parseValue, readRaw, SettingError, SETTINGS, show, sourceOf, writeKey, type Entry, type Scope, type SettingDef } from "./config/settings.ts"
+import { isLocal } from "./config/paths.ts"
 
 export interface SettingsHost {
   /** The project's config.yaml, when the project is trusted (else project scope is refused). */
@@ -87,7 +88,7 @@ export class Settings {
     }
     if (!def.reload) this.host.apply(key, value)
 
-    const where = scope === "session" ? "for this session" : elsewhere ? "for your account" : scope === "global" ? "in the global config" : "in this project's config"
+    const where = scope === "session" ? "for this session" : elsewhere ? "for your account" : scope === "global" ? (isLocal() ? "in local mode's config" : "in the global config") : "in this project's config"
     let message = `${key} = ${show(value)} ${where}`
     if (def.reload) message += "; it takes effect from the next start (/reload)"
     for (const n of notes) message += `; ${n}`

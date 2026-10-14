@@ -3,8 +3,8 @@
 // it comes (the level meter, and stopping on silence, as Hermes Agent's voice mode does:
 // tools/voice_mode.py, MIT, © Nous Research) and the WAV file is written here.
 import { spawn, type ChildProcess } from "node:child_process"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { rmSync, writeFileSync } from "node:fs"
+import { makeTempDir } from "../config/paths.ts"
 import { join } from "node:path"
 import type { Voice } from "../config/schema.ts"
 
@@ -270,7 +270,7 @@ export class Recorder {
 
 /** Play a WAV; `stop()` cuts it off. */
 export function play(command: string[], audio: Uint8Array): { done: Promise<void>; stop(): void } {
-  const dir = mkdtempSync(join(tmpdir(), "lembas-say-"))
+  const dir = makeTempDir("lembas-say-")
   tempDirs.add(dir)
   const clean = () => {
     tempDirs.delete(dir)

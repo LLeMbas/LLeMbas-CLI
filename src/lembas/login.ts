@@ -11,7 +11,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { parseDocument } from "yaml"
-import { paths } from "../config/paths.ts"
+import { globalPaths, isLocal, paths } from "../config/paths.ts"
 import { awaitToken, discover, LembasError, signOut, spoken, startDevice, type DeviceStart, type Discovery, type InstanceInfo, type ServedModel, type Tls } from "./client.ts"
 import { dropCache, fetchWebui, isChatModel, readCache, specFor } from "./webui.ts"
 
@@ -36,25 +36,45 @@ interface Index {
   instances: Record<string, Instance>
 }
 
-const indexFile = () => join(paths.config, "lembas.json")
+const indexFile = (dir = paths.config) => join(dir, "lembas.json")
 const keyDir = () => join(paths.config, "lembas")
-export const keyFile = (connection: string) => join(keyDir(), `${connection}.key`)
+/** Where a login made here keeps its key. */
+const ownKeyFile = (connection: string) => join(keyDir(), `${connection}.key`)
+/** The key of a login: this mode's own, or — in local mode, for a login made outside it — the
+ *  user's, read where it is. */
+export const keyFile = (connection: string) => {
+  const own = ownKeyFile(connection)
+  if (!isLocal() || existsSync(own)) return own
+  const theirs = join(globalPaths.config, "lembas", `${connection}.key`)
+  return existsSync(theirs) ? theirs : own
+}
 
-/** What a later look at the instance said it speaks, kept with the login. */
+/** What a later look at the instance said it speaks, kept with the login (not for a login local
+ *  mode only reads). */
 export function rememberProtocols(connection: string, protocols: number[]) {
-  const all = instances()
+  const all = ownInstances()
   const one = all[connection]
   if (!one || JSON.stringify(one.protocols) === JSON.stringify(protocols)) return
   saveIndex({ ...all, [connection]: { ...one, protocols } })
 }
 
-export function instances(): Record<string, Instance> {
+function readIndex(dir: string): Record<string, Instance> {
   try {
-    const parsed = JSON.parse(readFileSync(indexFile(), "utf8")) as Index
+    const parsed = JSON.parse(readFileSync(indexFile(dir), "utf8")) as Index
     return parsed.instances ?? {}
   } catch {
     return {}
   }
+}
+
+/** Every login in force: in local mode the user's own (read only) and the ones made here. */
+export function instances(): Record<string, Instance> {
+  return isLocal() ? { ...readIndex(globalPaths.config), ...readIndex(paths.config) } : readIndex(paths.config)
+}
+
+/** The logins this mode wrote, and may change: all of them, or in local mode the local ones. */
+export function ownInstances(): Record<string, Instance> {
+  return readIndex(paths.config)
 }
 
 function saveIndex(all: Record<string, Instance>) {
@@ -99,7 +119,7 @@ export function writeConnection(connection: string, d: Discovery, tls: Tls | und
   const entry: Record<string, unknown> = {
     type: "webui",
     url: d.base_url,
-    api_key: `{file:${keyFile(connection)}}`,
+    api_key: `{file:${ownKeyFile(connection)}}`,
     ...(tls?.ca ? { tls: { ca: tls.ca } } : {}),
   }
   doc.setIn(["connections", connection], doc.createNode(entry))
@@ -125,7 +145,7 @@ function replaceOld(old: string, now: string, instanceDefault: string | undefine
     conns.deleteIn(["connections", old])
     writeYamlDoc(connectionsFile(), conns, 0o600)
   }
-  rmSync(keyFile(old), { force: true })
+  rmSync(ownKeyFile(old), { force: true })
   dropCache(old)
   said.push(`the connection ${old} from an earlier login is now ${now}`)
   if (!existsSync(configFile())) return said
@@ -176,7 +196,8 @@ export function useServices(connection: string, services: InstanceInfo["services
     cfg.setIn(["voice", half], cfg.createNode({ provider: "webui", ...named, ...(now ? { fallback: before } : {}) }))
     said.push(`${words} through ${connection}${now ? ` (what was set up stays as its fallback)` : ""}`)
   }
-  if (services.search) {
+  // Local mode searches without the instance (loadConfig would take it out again).
+  if (services.search && !isLocal()) {
     const search = plain(["search"]) ?? {}
     const order = Array.isArray(search.order) ? (search.order as string[]) : undefined
     if (!order?.includes("webui")) {
@@ -232,7 +253,8 @@ function dropServices(connection: string, several: boolean): void {
  *  already made with it are only found again with it. Returns what changed, in words. */
 export function useEmbedding(connection: string, models: ServedModel[]): string[] {
   const first = models.find((m) => m.kind === "embedding")
-  if (!first) return []
+  // Local mode embeds nothing through the instance.
+  if (!first || isLocal()) return []
   const cfg = readYamlDoc(configFile())
   const now = cfg.get("embedding")
   if (typeof now === "string" && now.trim()) return []
@@ -375,17 +397,19 @@ export async function login(address: string, o: LoginOptions): Promise<LoginResu
 
   const connection = connectionNameFor(discovery.base_url, discovery.connection)
   mkdirSync(keyDir(), { recursive: true, mode: 0o700 })
-  writeFileSync(keyFile(connection), granted.access_token + "\n", { mode: 0o600 })
-  chmodSync(keyFile(connection), 0o600)
+  writeFileSync(ownKeyFile(connection), granted.access_token + "\n", { mode: 0o600 })
+  chmodSync(ownKeyFile(connection), 0o600)
   const fetched = await fetchWebui(connection, discovery.base_url, granted.access_token, tls)
   const instanceDefault = fetched.instance?.default_model ?? fetched.models.find((m) => m.default)?.id ?? undefined
 
   const changes: string[] = []
-  const known = instances()
+  // Only logins this mode made: in local mode, the user's own login to the same instance is not
+  // signed out or replaced — it is not this project's.
+  const known = ownInstances()
   for (const [name, old] of Object.entries(known))
     if (name !== connection && old.base_url === discovery.base_url) {
       // The old token is signed out too: this machine holds one, the new one.
-      if (existsSync(keyFile(name))) await signOut(old.base_url, readFileSync(keyFile(name), "utf8").trim(), old.ca ? { ca: old.ca } : undefined)
+      if (existsSync(ownKeyFile(name))) await signOut(old.base_url, readFileSync(ownKeyFile(name), "utf8").trim(), old.ca ? { ca: old.ca } : undefined)
       changes.push(...replaceOld(name, connection, instanceDefault))
       delete known[name]
     }
@@ -454,7 +478,9 @@ export interface LogoutResult {
 }
 
 export async function logout(connection: string): Promise<LogoutResult> {
-  const all = instances()
+  const all = ownInstances()
+  if (!all[connection] && instances()[connection])
+    throw new LembasError(`${connection} was signed in outside local mode, and local mode only reads that sign-in — lembas logout without -l signs it out`)
   const instance = all[connection]
   if (!instance) throw new LembasError(`${connection} was not made by lembas login${Object.keys(all).length ? ` — logged in: ${Object.keys(all).join(", ")}` : ""}`)
   // Whether config.yaml starts on one of its models — by provider (`deepseek/x`) the ref
@@ -468,9 +494,9 @@ export async function logout(connection: string): Promise<LogoutResult> {
     ours = Boolean(m && findRef(loaded.connections, loaded.refs, m)?.connection === connection)
   } catch {}
   let revoked = false
-  if (existsSync(keyFile(connection))) {
+  if (existsSync(ownKeyFile(connection))) {
     revoked = await signOut(instance.base_url, tokenOf(connection), instance.ca ? { ca: instance.ca } : undefined)
-    rmSync(keyFile(connection), { force: true })
+    rmSync(ownKeyFile(connection), { force: true })
   }
   const several = webuiCount() > 1
   const doc = readYamlDoc(connectionsFile())

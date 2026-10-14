@@ -14,6 +14,20 @@ All notable changes to LLeMbas CLI. The format follows
   (nothing is written), and turns remote work on. `--json` prints one object,
   `{"enabled", "roots", "max_mode", "terminal"}`, with the defaults applied — for a program such as
   LLeMbas Desktop.
+- `lembas -l` / `lembas --local`: local mode. Config, sessions, memory, skills, the library,
+  snapshots, worktrees, caches, trust and history live in the project's git-ignored
+  `.agent/local/lembas/` (`.lembas/` where `.agent` is another tool's), and nothing is written
+  anywhere else — not even temporary files: the TUI starts with TMPDIR there, and the TUI library's
+  cache goes there too (the commands the agent runs keep your TMPDIR). Your logins and
+  connections.yaml are read, never written; your config.yaml is not read. A LLeMbas instance is
+  used for its models, chat, speech in and out and the balance only: no link, `/remote`, service or
+  hub, no deletes sent, no server library, no search, fetch or embeddings through it, no account
+  personalization, and no self-update. The instance still records each request's usage, as any API
+  does. `-l` does not trust the project by itself; the first start asks, and the answer is kept in
+  the local directory. A local directory the repository carries is refused, `hardline_disable` is
+  ignored, and tools treat the local directory as outside the project: no tool writes there (but
+  in its worktrees), and reading it asks as anything outside the project does. The status bar says
+  `local`, and `lembas -l --help` explains it.
 
 ### Changed
 

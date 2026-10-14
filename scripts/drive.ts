@@ -20,11 +20,11 @@ export interface Driver {
   modes(): { mouse: string; altScreen: boolean; cursorHidden: boolean }
 }
 
-export async function drive(opts: { cols: number; rows: number; bin?: string; home: string; cwd: string; args?: string[] }): Promise<Driver> {
+export async function drive(opts: { cols: number; rows: number; bin?: string; home: string; cwd: string; args?: string[]; env?: Record<string, string> }): Promise<Driver> {
   const cmd = opts.bin ? resolve(opts.bin) : `bun --config=${resolve(import.meta.dir, "../bunfig.toml")} ${resolve(import.meta.dir, "../src/cli.ts")}`
   const p = Bun.spawn(["script", "-qfec", `stty cols ${opts.cols} rows ${opts.rows}; exec ${cmd} ${(opts.args ?? []).join(" ")}`, "/dev/null"], {
     cwd: opts.cwd,
-    env: { ...process.env, LEMBAS_HOME: opts.home, TERM: "xterm-256color" },
+    env: { ...process.env, LEMBAS_HOME: opts.home, TERM: "xterm-256color", ...opts.env },
     stdin: "pipe",
     stdout: "pipe",
   })
