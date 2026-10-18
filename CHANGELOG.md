@@ -6,6 +6,8 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-18
+
 Harness spec 1.1.0: planning as one structure shared with LLeMbas.
 
 ### Added
