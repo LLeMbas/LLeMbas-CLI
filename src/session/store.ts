@@ -123,10 +123,11 @@ export class Store {
     return rows.find((r) => (JSON.parse(r.json) as Message).role === "user" && (JSON.parse(r.json) as { turnId?: string }).turnId === turnId)?.id
   }
 
-  /** How many turns start at row `fromId` or after it: the visible user messages that carry a turn id. */
-  turnsFrom(sessionId: string, fromId: number): number {
-    const rows = this.db.query("SELECT json FROM messages WHERE session_id = ? AND role = 'user' AND kind = 'message' AND id >= ?").all(sessionId, fromId) as { json: string }[]
-    return rows.filter((r) => typeof (JSON.parse(r.json) as { turnId?: string }).turnId === "string").length
+  /** The turns that start at row `fromId` or after it, oldest first: the ids the visible user
+   *  messages carry. */
+  turnIdsFrom(sessionId: string, fromId: number): string[] {
+    const rows = this.db.query("SELECT json FROM messages WHERE session_id = ? AND role = 'user' AND kind = 'message' AND id >= ? ORDER BY id").all(sessionId, fromId) as { json: string }[]
+    return rows.map((r) => (JSON.parse(r.json) as { turnId?: string }).turnId).filter((id): id is string => typeof id === "string")
   }
 
   /** Record a compaction: what the model sees from here on starts with this summary. */

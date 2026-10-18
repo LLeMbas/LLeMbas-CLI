@@ -511,9 +511,10 @@ export class Share {
       const turnId = String(p?.turnId ?? "")
       const reverted = this.app.turns.rewind(turnId)
       if (reverted === undefined) throw new RpcError(INVALID_PARAMS, `this session has no turn ${turnId}`)
+      this.turns.forget(reverted)
       this.hooks.rewound?.()
-      this.hooks.notice(`the web UI rewound ${reverted} turn${reverted === 1 ? "" : "s"} — the files they changed stay as they are`)
-      return { reverted }
+      this.hooks.notice(`the web UI rewound ${reverted.length} turn${reverted.length === 1 ? "" : "s"} — the files they changed stay as they are`)
+      return { reverted: reverted.length }
     })
     peer.handle("hub/steer", (p) => {
       this.mine(p)

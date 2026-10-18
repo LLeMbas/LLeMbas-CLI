@@ -383,7 +383,10 @@ test("rewind: the turn and every later one leave the conversation; the next prom
   // Gone from the history and from what the model is sent; the file is as it was.
   const h: any = await c.request("_lembas/session/history", { sessionId: s.sessionId })
   expect(h.turns.filter((t: any) => t.role === "user").map((t: any) => t.text)).toEqual(["one"])
-  await prompt("four", "T4")
+  // The reverted ids are forgotten: the same id sent again runs anew instead of answering what
+  // the reverted turn answered (LLeMbas re-sends a turn under the id of the edited message).
+  await prompt("four", "T2")
+  expect(fake.requests.length).toBe(4)
   const sent = JSON.stringify(fake.requests[3].messages)
   expect(sent).toContain("first answer")
   expect(sent).not.toContain("second answer")

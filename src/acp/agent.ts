@@ -1008,7 +1008,8 @@ export class AcpAgent {
     if (s.prompting || s.turns.queued().length) throw new RpcError(INVALID_PARAMS, "this session is working — rewind it when the reply is done")
     const reverted = s.app.turns.rewind(turnId)
     if (reverted === undefined) throw new RpcError(INVALID_PARAMS, `this session has no turn ${turnId}`)
-    return { reverted }
+    s.turns.forget(reverted)
+    return { reverted: reverted.length }
   }
 
   /** `_lembas/session/delete`: the chat was deleted in the web UI, so the session is too —

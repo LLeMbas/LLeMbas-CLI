@@ -118,9 +118,10 @@ export class Turns {
   /** `_lembas/session/rewind`: the turn `turnId` and every later one leave the conversation the
    *  model sees and the history — their rows re-kinded as /undo re-kinds a turn's, the messages
    *  dropped — and the files are left as they are (the client says so beside its control). The
-   *  number of turns reverted, or undefined for a turn this session does not have. Not while a
-   *  prompt runs: the caller checks. */
-  rewind(turnId: string): number | undefined {
+   *  ids of the turns reverted, oldest first, or undefined for a turn this session does not have;
+   *  the caller forgets them from its turn log, or a client re-sending one would get the old
+   *  answer. Not while a prompt runs: the caller checks. */
+  rewind(turnId: string): string[] | undefined {
     const sessionId = this.engine.sessionId
     const i = this.done.findIndex((t) => t.turnId === turnId)
     if (i >= 0) {
@@ -130,20 +131,20 @@ export class Turns {
       this.engine.messages.splice(first.at)
       if (this.store && sessionId && last.lastRow >= first.firstRow) this.store.setKind(sessionId, first.firstRow, last.lastRow, "reverted")
       this.undone = []
-      return dropped.length
+      return dropped.map((t) => t.turnId)
     }
     // A turn run before this process had the session (opened from the store): by its row. Every
     // turn run here came after it, so they all go too.
     if (!this.store || !sessionId) return undefined
     const row = this.store.turnRow(sessionId, turnId)
     if (row === undefined) return undefined
-    const count = this.store.turnsFrom(sessionId, row)
+    const ids = this.store.turnIdsFrom(sessionId, row)
     this.store.setKind(sessionId, row, Number.MAX_SAFE_INTEGER, "reverted")
     const at = this.engine.messages.findIndex((m) => m.role === "user" && m.turnId === turnId)
     if (at >= 0) this.engine.messages.splice(at)
     this.done = []
     this.undone = []
-    return count
+    return ids
   }
 
   /** Everything changed since the session's first prompt, as a unified diff. */

@@ -30,6 +30,8 @@ const TURN_FILE_DAYS = 30
 export interface TurnStore<R> {
   load(): [string, R | null][]
   save(done: [string, R | null][]): void
+  /** Turns a rewind took out: gone from the file too, or the next load would bring them back. */
+  forget?(ids: string[]): void
 }
 
 /** The file's entries, those that are entries: a damaged file is an empty one, never a crash. */
@@ -58,6 +60,16 @@ export function turnFile<R>(file: string): TurnStore<R> & { drop(): void } {
           merged.set(id, v ?? had ?? null)
         }
         const kept = [...merged].slice(-TURNS_KEPT)
+        mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
+        const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+        writeFileSync(tmp, JSON.stringify(kept), { mode: 0o600 })
+        renameSync(tmp, file)
+      } catch {}
+    },
+    forget(ids) {
+      try {
+        const gone = new Set(ids)
+        const kept = readEntries<R>(file).filter(([id]) => !gone.has(id))
         mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
         const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
         writeFileSync(tmp, JSON.stringify(kept), { mode: 0o600 })
@@ -176,6 +188,21 @@ export class TurnLog<R = unknown> {
       this.trim()
     }
     this.running = id
+  }
+
+  /** Turns a rewind took out of the conversation: forgotten, so the same id sent again runs
+   *  anew instead of answering what the reverted turn answered. */
+  forget(ids: Iterable<string>) {
+    const gone: string[] = []
+    for (const id of ids) {
+      if (this.entries.get(id)?.state === "done") {
+        this.entries.delete(id)
+        this.values.delete(id)
+        if (this.last === id) this.last = undefined
+        gone.push(id)
+      }
+    }
+    if (gone.length) this.store?.forget?.(gone)
   }
 
   ended(id: string) {

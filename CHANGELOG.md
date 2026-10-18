@@ -33,7 +33,7 @@ Harness spec 1.1.0: planning as one structure shared with LLeMbas.
 - `_lembas/session/rewind` (capability `rewind`): the web UI editing or regenerating from a turn
   takes that turn and every later one out of the conversation and the history — as `/undo`
   does, through the same store marking — without touching the files; a session a terminal runs
-  is rewound there, and its transcript redrawn.
+  is rewound there, and its transcript redrawn. A rewound turn's id is forgotten, so the web UI re-sending it runs the turn anew rather than being answered what the reverted turn said.
 - Prototypes in the terminal: a completed `prototype-chat` / `prototype-page` fence in a reply
   is saved as a file — the model's output as it is, under
   `~/.local/state/lembas/prototypes/<session>/<n>-<slug>.html`, never in the project — and drawn
