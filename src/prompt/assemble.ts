@@ -3,6 +3,8 @@ import { platform, release } from "node:os"
 import { dirname, join, resolve, sep } from "node:path"
 import type { Mode } from "../config/schema.ts"
 import { expandHome, paths } from "../config/paths.ts"
+import { render, type Plan } from "../plan/plan.ts"
+import { fillPrompt } from "./fill.ts"
 import defaultSystem from "../../harness/prompts/system/default.md" with { type: "text" }
 import identity from "../../harness/prompts/system/identity.md" with { type: "text" }
 import blockMemory from "../../harness/prompts/blocks/memory.md" with { type: "text" }
@@ -11,6 +13,8 @@ import blockSkillsEmpty from "../../harness/prompts/blocks/skills-empty.md" with
 import blockAgentsMissing from "../../harness/prompts/blocks/agents-missing.md" with { type: "text" }
 import blockAgentsGit from "../../harness/prompts/blocks/agents-git.md" with { type: "text" }
 import blockAgentsKeep from "../../harness/prompts/blocks/agents-keep.md" with { type: "text" }
+import blockLibrary from "../../harness/prompts/blocks/library.md" with { type: "text" }
+import blockPrototypes from "../../harness/prompts/blocks/prototypes.md" with { type: "text" }
 import modeManual from "../../harness/prompts/modes/manual.md" with { type: "text" }
 import modeEdit from "../../harness/prompts/modes/edit.md" with { type: "text" }
 import modeAuto from "../../harness/prompts/modes/auto.md" with { type: "text" }
@@ -43,6 +47,8 @@ const BUILTIN: Record<string, string> = {
   "blocks/agents-missing.md": blockAgentsMissing,
   "blocks/agents-git.md": blockAgentsGit,
   "blocks/agents-keep.md": blockAgentsKeep,
+  "blocks/library.md": blockLibrary,
+  "blocks/prototypes.md": blockPrototypes,
   "modes/manual.md": modeManual,
   "modes/edit.md": modeEdit,
   "modes/auto.md": modeAuto,
@@ -75,8 +81,39 @@ export function promptText(rel: string): string {
   return raw.replace(/<!--[\s\S]*?-->\n?/g, "").trim()
 }
 
+/** A plain replace, for the CLI's own task texts (compact, review) whose variables are whole
+ *  sections. A spec text with variables goes through fillPrompt (fill.ts), which also drops a
+ *  bullet whose variable is empty and refuses one left unfilled. */
 export function fill(text: string, vars: Record<string, string>): string {
   return text.replace(/\{\{(\w+)\}\}/g, (m, k: string) => (Object.hasOwn(vars, k) ? vars[k]! : m))
+}
+
+// What the CLI fills into system/default.md (harness/prompts/index.json says what each means):
+// the facts the two projects differ in, not the design.
+const INTRO = "Use the instructions below and the tools you have to help with software engineering and with running the project."
+const SURFACE = "Your output is shown in a terminal and rendered as GitHub-flavoured markdown in a monospace font."
+const FILE_TOOLS = "Use the dedicated tools for files: read (not cat), edit and write (not sed or heredocs), grep and glob (not find or grep in bash)."
+const BACKGROUND = "A long-running command (a server, a watcher) runs with bash `background: true`; check it with bash_output and stop it with bash_kill."
+const GIT_SECTION = [
+  "# Git",
+  "- How git is used in this project — whether you commit on your own, and on which branch — is in the \"## Git\" section of its AGENTS.md. Follow it. Where nothing says, only commit, amend, push, tag or create branches when the user asks.",
+  "- Before a commit, look at `git status`, `git diff` and recent `git log`, stage files by name, and write a message in the repository's style.",
+  "- Never change git config, skip hooks, force-push or rewrite history unless the user explicitly asks.",
+].join("\n")
+/** Where a prototype is seen from a terminal (blocks/prototypes.md's {{prototype_surface}}). */
+export const PROTOTYPE_SURFACE = "It is saved as a file you can open, and the LLeMbas web UI renders it live."
+
+/** `{{plan_context}}`: the plan with its ids under a heading, and the sentence to work to it. */
+export function planContext(plan: Plan | undefined): string {
+  if (!plan) return ""
+  return `### The current plan\n\n${render(plan)}\n\nThis is the plan as it stands now. Work to it, and quote the ids above rather than restating the plan in your answer.`
+}
+
+/** `{{knowledge_scope}}` (blocks/library.md): the sentence naming the bases a session may search,
+ *  or "" where it may search them all. */
+export function knowledgeScope(names: string[] | undefined): string {
+  if (!names || !names.length) return ""
+  return `Knowledge searches here cover only: ${names.join(", ")}. Finding nothing there means nothing is there, not that the library is empty.`
 }
 
 /** Instruction files: the global AGENTS.md, then the nearest project AGENTS.md or CLAUDE.md
@@ -162,21 +199,44 @@ export interface PromptContext {
   mcp?: string
   /** The other configured models, one line each (with their notes). */
   roster?: string
+  /** The session's plan (plan_write / plan_update), put into the prompt while it exists. */
+  plan?: Plan
+  /** An instance's own instructions for this session (the chat's authored prompt, over the link),
+   *  appended after the shared text under `## Instructions from <name>`. */
+  instance?: { name: string; instructions: string }
+  /** The library block (blocks/library.md): set when knowledge tools are offered or the instance
+   *  library is in use; `scope` the sentence naming the bases in scope, or "" for all of them. */
+  library?: { scope: string }
+  /** Prototypes are offered (blocks/prototypes.md); `sources` the sentence saying what a page
+   *  may load, or "" where nothing says. */
+  prototypes?: { sources: string }
 }
 
 const MAX_INSTRUCTION_CHARS = 40_000
 
 export function assembleSystem(ctx: PromptContext): string {
-  const vars = { agent_name: ctx.agentName ?? "LLeMbas", plan_dir: ctx.planDir }
+  const vars = {
+    agent_name: ctx.agentName ?? "LLeMbas",
+    plan_dir: ctx.planDir,
+    intro: INTRO,
+    surface: SURFACE,
+    tool_list: "",
+    file_tools: FILE_TOOLS,
+    background: BACKGROUND,
+    git: GIT_SECTION,
+    plan_context: planContext(ctx.plan),
+  }
   const sections: string[] = []
   // Who: the built-in line.
-  sections.push(fill(promptText("system/identity.md"), vars))
+  sections.push(fillPrompt(promptText("system/identity.md"), vars))
   // One shared base, then what this model family needs on top (see the wiki: Prompts-provenance).
   // A user may still replace the whole base for a family with prompts/system/<family>.md.
   const own = `system/${ctx.family}.md`
-  sections.push(fill(promptText(existsSync(join(paths.config, "prompts", own)) ? own : "system/default.md"), vars))
+  sections.push(fillPrompt(promptText(existsSync(join(paths.config, "prompts", own)) ? own : "system/default.md"), vars).trim())
   const overlay = `family/${ctx.family}.md`
-  if (BUILTIN[overlay] || existsSync(join(paths.config, "prompts", overlay))) sections.push(fill(promptText(overlay), vars))
+  if (BUILTIN[overlay] || existsSync(join(paths.config, "prompts", overlay))) sections.push(fillPrompt(promptText(overlay), vars))
+  // What the instance holds for this session (over the link): the chat's authored prompt.
+  if (ctx.instance?.instructions.trim()) sections.push(`## Instructions from ${ctx.instance.name}\n\n${ctx.instance.instructions.trim()}`)
 
   sections.push(
     [
@@ -214,7 +274,7 @@ export function assembleSystem(ctx: PromptContext): string {
   }
   if (ctx.skills)
     sections.push(
-      fill(promptText("blocks/skills.md"), {
+      fillPrompt(promptText("blocks/skills.md"), {
         skills: ctx.skills,
         manage:
           ctx.manageSkills && !ctx.subagent
@@ -223,13 +283,17 @@ export function assembleSystem(ctx: PromptContext): string {
       }).replace(/\n{3,}/g, "\n\n"),
     )
   else if (ctx.manageSkills && !ctx.subagent) sections.push(promptText("blocks/skills-empty.md"))
+  // The library and prototypes (shared blocks): the library whenever its tools are offered, named
+  // to the bases in scope; prototypes only where they are offered, with where the page is seen.
+  if (ctx.library && !ctx.subagent) sections.push(fillPrompt(promptText("blocks/library.md"), { knowledge_scope: ctx.library.scope }))
+  if (ctx.prototypes && !ctx.subagent) sections.push(fillPrompt(promptText("blocks/prototypes.md"), { prototype_sources: ctx.prototypes.sources, prototype_surface: PROTOTYPE_SURFACE }))
 
   if (ctx.subagent)
     sections.push(
       `You are the "${ctx.subagent.name}" subagent. You work for the main agent, not for the user directly, on one task it gave you; you cannot ask anyone anything. ${ctx.subagent.instructions}\n\nOnly your final reply reaches the main agent — make it complete on its own: the result, then the evidence (file:line), then anything you could not settle.${ctx.mode === "plan" ? " You can read and search; you cannot change anything." : ""}`,
     )
-  else sections.push(fill(promptText(`modes/${ctx.mode}.md`), vars))
-  if (ctx.unattended) sections.push(fill(promptText("modes/unattended.md"), { ...vars, refused: ctx.unattended }))
+  else sections.push(fillPrompt(promptText(`modes/${ctx.mode}.md`), vars))
+  if (ctx.unattended) sections.push(fillPrompt(promptText("modes/unattended.md"), { ...vars, refused: ctx.unattended }))
   // What the person said about themselves goes last, under the web UI's headings and in its order.
   // Not for a subagent: it answers the main agent, not the person.
   if (ctx.userInstructions && !ctx.subagent) sections.push(`## How the person you are talking to wants to be helped\n\n${ctx.userInstructions}`)
@@ -246,7 +310,7 @@ const GIT_QUESTION_NO_REPO = "this folder is not a git repository yet — should
 function agentsBlock(ctx: PromptContext, files: { path: string; text: string }[]): string {
   const own = files.find((f) => f.path !== join(paths.config, "AGENTS.md"))
   const vars = { root: ctx.root, git_question: ctx.isGit ? GIT_QUESTION : GIT_QUESTION_NO_REPO }
-  if (!own) return fill(promptText("blocks/agents-missing.md"), vars)
+  if (!own) return fillPrompt(promptText("blocks/agents-missing.md"), vars)
   const keep = promptText("blocks/agents-keep.md")
-  return /^#{1,3}\s*git\b/im.test(own.text) ? keep : `${fill(promptText("blocks/agents-git.md"), vars)}\n\n${keep}`
+  return /^#{1,3}\s*git\b/im.test(own.text) ? keep : `${fillPrompt(promptText("blocks/agents-git.md"), vars)}\n\n${keep}`
 }

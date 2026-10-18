@@ -65,7 +65,7 @@ export function Setup(p: { error: Error; onRetry: () => void; onQuit: () => void
   return (
     <box flexDirection="column" width="100%" height="100%" paddingLeft={2} paddingTop={1} paddingRight={2} gap={1}>
       <text fg={c().title} attributes={TextAttributes.BOLD}>
-        ☤ {theme().branding.agentName} — {noModel() ? "no model to talk to yet" : "the configuration has a mistake"}
+        {theme().branding.agentName} — {noModel() ? "no model to talk to yet" : "the configuration has a mistake"}
       </text>
       {/* "No model configured" is what the rest of the screen explains; anything else (a model
           that does not exist, a file that does not parse) is shown as it is. */}

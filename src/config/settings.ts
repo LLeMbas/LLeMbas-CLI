@@ -15,7 +15,6 @@ import { asMode, Config, EFFORTS, MODES, PERSONALITIES, UPDATE_CHANNELS } from "
 export class SettingError extends Error {}
 
 export type Scope = "session" | "global" | "project"
-export const SCOPES: Scope[] = ["session", "global", "project"]
 export type Source = "default" | "global" | "project" | "session"
 
 export interface SettingDef {
@@ -48,7 +47,7 @@ export const SETTINGS: SettingDef[] = [
   { key: "personality", kind: "enum", values: ["none", ...PERSONALITIES], agent: false, scopes: ALL, fallback: "none" },
   { key: "personality_custom", kind: "string", agent: false, scopes: USER, fallback: "none" },
   { key: "instructions", kind: "string", agent: false, scopes: USER, fallback: "none" },
-  { key: "theme", kind: "string", agent: true, scopes: USER, fallback: "lembas" },
+  { key: "theme", kind: "string", agent: true, scopes: USER, fallback: "moria" },
   { key: "theme_background", kind: "enum", values: ["theme", "terminal"], agent: true, scopes: USER, fallback: "theme" },
   { key: "busy_input", kind: "enum", values: ["steer", "queue"], agent: true, scopes: USER, fallback: "steer" },
   { key: "icons", kind: "enum", values: ["emoji", "plain"], agent: true, scopes: USER, fallback: "emoji" },

@@ -60,9 +60,6 @@ const result = await Bun.build({
   },
   define: {
     LEMBAS_VERSION: JSON.stringify(version),
-    // Reserved: an instance a build could offer on its first-run screen. Empty, and read by
-    // nothing yet — rule 1, nothing predefined, holds for every build this script makes.
-    LEMBAS_DEFAULT_INSTANCE: JSON.stringify(""),
   },
 })
 

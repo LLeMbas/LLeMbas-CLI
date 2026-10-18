@@ -103,7 +103,7 @@ for (const [cols, rows] of [
   // A fresh directory opens with the first-run question; trust it (the default), then work.
   const firstRun = await d.waitFor("Trust this directory?")
   await d.key("\r")
-  const drawn = await d.waitFor("☤ LLeMbas")
+  const drawn = await d.waitFor("shift+tab mode · /help")
   await d.type("make a file")
   await d.key("\r")
   const asked = await d.waitFor("Allow once")
@@ -175,7 +175,7 @@ for (const [cols, rows] of [
   await d.key("\r")
   // The new program draws its welcome box again, with the conversation loaded under it.
   await Bun.sleep(300)
-  const back = await d.waitFor("☤ LLeMbas")
+  const back = await d.waitFor("shift+tab mode · /help")
   // The new program's next request carries the conversation from before the reload.
   await d.type("again")
   await d.key("\r")
@@ -209,7 +209,7 @@ for (const [cols, rows] of [
   const d = await drive({ cols: 100, rows: 30, bin, home: h, cwd, args: ["-l"], env: { HOME: h, TMPDIR: tmp, XDG_CONFIG_HOME: join(h, ".config"), XDG_DATA_HOME: join(h, ".local/share"), XDG_STATE_HOME: join(h, ".local/state") } })
   const firstRun = await d.waitFor("Trust this directory?")
   await d.key("\r")
-  const drawn = await d.waitFor("☤ LLeMbas", 15000)
+  const drawn = await d.waitFor("shift+tab mode · /help", 15000)
   await d.type("make a file")
   await d.key("\r")
   const asked = await d.waitFor("Allow once")

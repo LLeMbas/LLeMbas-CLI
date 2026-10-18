@@ -184,7 +184,7 @@ function merge<T extends Record<string, unknown>>(a: T, b: Partial<T>): T {
 // instructions and a custom personality's text are the person's own words, put last in the system
 // prompt as theirs: a repository writing them would speak in the user's voice.
 // A personality preset's name is only a choice among the shipped texts, and stays a project's to make.
-const GLOBAL_ONLY = ["hardline_extra", "hardline_disable", "voice", "update", "settings_tool", "embedding", "remote", "library", "instructions", "personality_custom"] as const
+const GLOBAL_ONLY = ["hardline_extra", "hardline_disable", "voice", "update", "settings_tool", "embedding", "remote", "library", "prototypes", "instructions", "personality_custom"] as const
 
 export function loadConfig(opts: { projectConfigDir?: string; trusted?: boolean } = {}): Loaded {
   const warnings: string[] = []

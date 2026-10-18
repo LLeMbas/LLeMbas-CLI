@@ -32,7 +32,7 @@ test("every tool that can ask takes a purpose; bash says it in description; tool
   for (const name of ["edit", "write", "read", "web_fetch", "skill_manage", "task"]) expect(spec(name).properties.purpose?.description).toContain("what this call is for")
   expect(spec("bash").properties.purpose).toBeUndefined()
   expect(spec("bash").properties.description?.description).toContain("what this command is for")
-  for (const name of ["ask_user", "todo", "plan_submit", "bash_output", "bash_list", "notes_search", "note_view", "note_manage"]) expect(spec(name).properties.purpose).toBeUndefined()
+  for (const name of ["ask_user", "plan_write", "plan_update", "plan_submit", "bash_output", "bash_list", "notes_search", "note_view", "note_manage"]) expect(spec(name).properties.purpose).toBeUndefined()
 })
 
 test("split: taken out of the arguments; a server's own `purpose` stays its own", () => {

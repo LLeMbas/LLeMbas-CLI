@@ -16,7 +16,7 @@ import { hardlineRules } from "./permission/hardline.ts"
 import { defaultEffort } from "./provider/effort.ts"
 import { clientFor, familyOf, resolveModel } from "./provider/index.ts"
 import { discoverContext, unload } from "./provider/discover.ts"
-import { assembleSystem, instructionFiles } from "./prompt/assemble.ts"
+import { assembleSystem, instructionFiles, knowledgeScope } from "./prompt/assemble.ts"
 import { describeRepo, repoState } from "./git/repo.ts"
 import { findProject, persistProjectRule, trustOf, type Project } from "./project/root.ts"
 import type { Message } from "./provider/types.ts"
@@ -38,6 +38,7 @@ import { Settings } from "./settings.ts"
 import { Library, type Embedder } from "./library/store.ts"
 import { instances as lembasInstances, keyFile as lembasKeyFile } from "./lembas/login.ts"
 import { PERSONAL_KEYS, personalConfig, pushPersonalization } from "./lembas/personal.ts"
+import type { Plan } from "./plan/plan.ts"
 import { LIBRARY_SERVER } from "./mcp/index.ts"
 import type { McpServer } from "./config/schema.ts"
 import { embedderFor } from "./library/embed.ts"
@@ -70,6 +71,21 @@ const UNATTENDED: Record<Mode, string | undefined> = {
   edit: "any command not already allowed, and anything outside the project",
   plan: "anything but reading and the plan file",
   auto: undefined,
+}
+
+/** What only a client knows about a session (harness/acp.md, `Context` in `session/new` and
+ *  `session/prompt`'s `_meta.lembas`): the pieces of the prompt an instance holds, read into the
+ *  prompt this device composes from the spec's texts. Each is absent where nothing was said. */
+export interface SessionContext {
+  /** The chat's authored prompt, under `## Instructions from <instance>`. */
+  instructions?: string
+  /** The account's personalization, in place of this device's; null: the device's own. */
+  personalization?: { personality: string; personality_custom: string; instructions: string } | null
+  /** The knowledge bases this session may search (named to the model, and the scope sent on
+   *  every library call); an empty list: the account's whole library. */
+  library?: { bases: { id: string; name: string }[] }
+  /** Whether the model may write a prototype, and what a page may load. */
+  prototypes?: { offered: boolean; sources: string }
 }
 
 export interface App {
@@ -119,6 +135,10 @@ export interface App {
   embedder?: Embedder
   /** Stop whatever runs: the model's reply. */
   cancel(): void
+  /** What the client holds for this session (the link): read into every prompt from now on. */
+  context: SessionContext
+  /** Replace it (`{}`: none), naming the instance it came from for the prompt's heading. */
+  setContext(ctx: SessionContext, from?: string): void
 }
 
 /** This machine's library tools, which `library: lembas` replaces with the instance's. */
@@ -243,6 +263,9 @@ export function createApp(o: AppOptions): App {
     loaded.warnings.push((e as Error).message)
   }
   const libraryCtx = { lib: library, project: project.root, bases: loaded.config.knowledge, embedder }
+  // The client's context for this session (setContext), and whose it is.
+  let context: SessionContext = {}
+  let contextFrom = "the instance"
 
   // library: lembas — the account's library through the instance's /mcp, in place of this
   // machine's. Needs the one instance logged in to, with a token that has the library scope.
@@ -279,7 +302,20 @@ export function createApp(o: AppOptions): App {
     sessions: store ? { store, current: () => engine.sessionId } : undefined,
     settings: { get: (k: string) => settings.get(k), list: () => settings.list(), set: (k: string, v: unknown, sc?: "session" | "global" | "project") => settings.set(k, v, sc), models: () => modelRefs() },
   })
-  const system = (m: Mode, current: ResolvedModel, subagent?: { name: string; instructions: string }, at?: { cwd: string; root: string }) =>
+  /** Whether knowledge_search is offered (engine.offered's rule): a base with documents in scope,
+   *  or the instance's library standing in for this machine's. */
+  const knowledgeOffered = () => Boolean(lembasLibrary) || library.bases().some((b) => b.documents > 0 && (!libraryCtx.bases || libraryCtx.bases.includes(b.name)))
+  /** The library block's scope: the client's bases over the link, else this machine's `knowledge:`. */
+  const libraryBlock = () => {
+    if (!knowledgeOffered()) return undefined
+    const names = lembasLibrary ? context.library?.bases.map((b) => b.name) : libraryCtx.bases
+    return { scope: knowledgeScope(names) }
+  }
+  /** Prototypes: offered by the client for this session, or by `prototypes: true` for a terminal's. */
+  const prototypesBlock = () => (context.prototypes?.offered || (!context.prototypes && loaded.config.prototypes === true) ? { sources: context.prototypes?.sources ?? "" } : undefined)
+  /** The three personal keys this session uses: the client's for it, else the config's. */
+  const personal = () => (context.personalization ? personalConfig({ enabled: true, available: true, ...context.personalization }) : loaded.config)
+  const system = (m: Mode, current: ResolvedModel, subagent?: { name: string; instructions: string }, at?: { cwd: string; root: string }, plan?: Plan) =>
     assembleSystem({
       modelRef: current.ref,
       family: familyOf(current),
@@ -300,9 +336,13 @@ export function createApp(o: AppOptions): App {
       skills: frozen.skills,
       manageSkills: true,
       // Read on every prompt: /personality and /settings change it without a restart.
-      ...personalityOf(loaded.config),
+      ...personalityOf(personal()),
       mcp: mcp.instructions(),
       roster: roster(current.ref),
+      plan,
+      ...(context.instructions ? { instance: { name: contextFrom, instructions: context.instructions } } : {}),
+      library: libraryBlock(),
+      prototypes: prototypesBlock(),
     })
   // The other configured models, for the task tool's `model`, or a switch.
   const roster = (current: string) =>
@@ -394,7 +434,7 @@ export function createApp(o: AppOptions): App {
       compaction,
       perm: childPerm,
       toolCtx: at ? { ...baseToolCtx(), root: at.root, cwd: at.cwd, projectDir: undefined } : baseToolCtx(),
-      system: (mode, current) =>
+      system: (mode, current, plan) =>
         system(
           mode,
           current,
@@ -405,6 +445,7 @@ export function createApp(o: AppOptions): App {
               : spec.instructions,
           },
           at,
+          plan,
         ),
     })
     const onAbort = () => child.cancel()
@@ -438,7 +479,7 @@ export function createApp(o: AppOptions): App {
     compaction,
     perm,
     toolCtx: baseToolCtx(),
-    system: (m, current) => system(m, current),
+    system: (m, current, plan) => system(m, current, undefined, undefined, plan),
     persistRule: trusted ? (rule) => persistProjectRule(project, rule) : undefined,
     spawn,
     fallback(current, tried) {
@@ -633,6 +674,16 @@ export function createApp(o: AppOptions): App {
     embedder,
     cancel() {
       engine.cancel()
+    },
+    get context() {
+      return context
+    },
+    setContext(ctx, from) {
+      context = ctx
+      if (from) contextFrom = from
+      // The instance library answers within the chat's scope: the session's id rides on every
+      // call to it while the client has said what the session may search.
+      engine.o.toolCtx.libraryScope = ctx.library ? engine.sessionId : undefined
     },
     rename(title) {
       const id = engine.sessionId

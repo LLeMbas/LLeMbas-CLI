@@ -45,7 +45,7 @@ export function FirstRun(p: { project: Project; onDone: (r: FirstRunResult) => v
   return (
     <box flexDirection="column" width="100%" height="100%" paddingLeft={2} paddingTop={1}>
       <text fg={c().title} attributes={TextAttributes.BOLD}>
-        ☤ {theme().branding.agentName} — first time here
+        {theme().branding.agentName} — first time here
       </text>
       <text fg={c().text} wrapMode="word">
         {p.project.root}

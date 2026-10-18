@@ -102,4 +102,3 @@ export class Settings {
   }
 }
 
-export const projectConfigFile = (dir: string) => join(dir, "config.yaml")

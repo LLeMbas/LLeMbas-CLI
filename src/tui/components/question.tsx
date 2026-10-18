@@ -1,7 +1,7 @@
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import { createSignal, For, Show } from "solid-js"
-import type { Answer } from "../../tool/question.ts"
+import type { Answer } from "../../tool/ask_user.ts"
 import { useTui } from "../context.ts"
 import type { PendingQuestion } from "../state.ts"
 

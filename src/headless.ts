@@ -2,8 +2,8 @@
 // (so the answer can be piped), or everything as JSON lines with --json.
 import { createInterface } from "node:readline/promises"
 import type { Asker, AskReply, Bus, Event } from "./bus/index.ts"
-import { unattendedReply, type Answer, type QuestionReply, type QuestionRequest } from "./tool/question.ts"
-import type { PlanReply } from "./tool/plan_exit.ts"
+import { unattendedReply, type Answer, type QuestionReply, type QuestionRequest } from "./tool/ask_user.ts"
+import type { PlanReply, PlanRequest } from "./tool/plan_submit.ts"
 import type { IconSet } from "./tui/icons.ts"
 import { loadTheme, type Theme } from "./tui/palette.ts"
 import { duration } from "./duration.ts"
@@ -92,13 +92,13 @@ export function renderJson(bus: Bus) {
 export function terminalAsker(opts: { yes: boolean; unattended?: "recommended" | "first" | "fail"; theme?: string }): Asker {
   const C = escapes(loadTheme(opts.theme).theme)
   return {
-    // With nobody at a terminal there is no plan method at all: plan_exit then saves and stops.
+    // With nobody at a terminal there is no plan method at all: plan_submit then saves and stops.
     ...(process.stdin.isTTY && !opts.yes
       ? {
-          async plan(req: { path: string; text: string }): Promise<PlanReply> {
+          async plan(req: PlanRequest): Promise<PlanReply> {
             const rl = createInterface({ input: process.stdin, output: process.stderr })
             try {
-              process.stderr.write(`\n${C.label}── plan: ${req.path} ──${C.reset}\n${req.text}\n${C.label}──${C.reset}\n`)
+              process.stderr.write(`\n${C.label}── plan · ${req.plan.title}${req.path ? ` (${req.path})` : ""} ──${C.reset}\n${req.text}\n${C.label}──${C.reset}\n`)
               const a = (await rl.question("  [a]pprove (edit mode)  [m]anual mode  [r]evise…  [?] ask back…  [enter] keep planning › ")).trim().toLowerCase()
               if (a === "a") return { kind: "approve", mode: "edit" }
               if (a === "m") return { kind: "approve", mode: "manual" }

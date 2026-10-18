@@ -18,10 +18,13 @@ import type { Ctx } from "./context.ts"
 import type { DialogSpec } from "./components/dialog.tsx"
 import { deleteEverywhere } from "../acp/share.ts"
 import { themeNames } from "./theme.ts"
+import { render } from "../plan/plan.ts"
+import { planTitle } from "../tool/plan_write.ts"
 import { findSetting, show, type Scope } from "../config/settings.ts"
 import { ingest } from "../library/ingest.ts"
 import { findSkill, skillMessage, slug } from "../skill/index.ts"
 import { PERSONALITIES, personalityText } from "../prompt/personality.ts"
+import { listPrototypes } from "../prototype/store.ts"
 import { keyMatcher } from "../voice/index.ts"
 import { PLAYER_NAMES, playerFor, recorderFor } from "../voice/audio.ts"
 
@@ -221,9 +224,18 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "plan",
-    args: "[task]",
+    args: "[task | show | clear]",
     description: "plan mode — read, investigate, write a plan for approval; with a task, start on it",
     run(c, arg) {
+      if (arg === "show") {
+        const plan = c.app.engine.plan
+        return c.view.info(plan ? render(plan) : "no plan in this session — the model writes one with plan_write")
+      }
+      if (arg === "clear") {
+        if (!c.app.engine.plan) return c.view.info("no plan in this session")
+        c.app.engine.setPlan(null)
+        return c.view.info("plan cleared")
+      }
       c.setMode("plan")
       if (arg) c.send?.(arg)
       else c.view.info("plan mode: the model reads and plans, then asks you to approve the plan. shift+tab leaves it.")
@@ -231,16 +243,35 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "plans",
-    description: "this project's plans",
+    description: "this project's plans, and this session's",
     run(c) {
+      const live = c.app.engine.plan
       const dir = c.app.engine.o.toolCtx.planDir
       const files = dir && existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).sort().reverse() : []
-      if (!files.length) return c.view.info("no plans yet — /plan <task> writes one")
+      const here = live ? `this session: ${live.title} (${planTitle(live)}) — /plan show` : "this session has no plan"
+      if (!files.length) return c.view.info(`${here}\nno plans saved yet — /plan <task> writes one`)
+      c.view.info(here)
       c.openDialog({
         title: "Plans",
         options: files.map((f) => ({ label: f, value: f, description: readFileSync(join(dir!, f), "utf8").split("\n").find((l) => l.startsWith("#"))?.replace(/^#+\s*/, "") ?? "" })),
         onSelect: (f) => c.view.info(`${f}\n\n${readFileSync(join(dir!, f), "utf8")}`),
       })
+    },
+  },
+  {
+    name: "prototype",
+    args: "[n]",
+    description: "this session's prototypes — HTML pages the model wrote, saved as files; with a number, that one's path",
+    run(c, arg) {
+      const id = c.app.engine.sessionId
+      const list = id ? listPrototypes(id) : []
+      if (!list.length) return c.view.info("no prototypes in this session yet")
+      const wanted = arg.trim()
+      if (wanted) {
+        const one = list.find((p) => String(p.n) === wanted)
+        return one ? c.view.info(one.path) : c.view.info(`no prototype ${wanted} here — ${list.map((p) => p.n).join(", ")}`, "warn")
+      }
+      c.view.info(list.map((p) => `${p.n}  ${p.path}`).join("\n"))
     },
   },
   {

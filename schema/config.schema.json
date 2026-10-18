@@ -29,7 +29,7 @@
       ]
     },
     "theme": {
-      "description": "Colours: lembas (default), lembas-light, moria, shire, hermes, mono, or a themes/<name>.yaml of your own.",
+      "description": "Colours: moria (default), shire, lembas, lembas-light, hermes, mono, or a themes/<name>.yaml of your own.",
       "type": "string"
     },
     "theme_background": {
@@ -981,6 +981,10 @@
         }
       },
       "additionalProperties": false
+    },
+    "prototypes": {
+      "description": "Global config only. Offer the model prototypes: a complete HTML page in a `prototype-chat` or `prototype-page` fence, saved as a file under the state directory (prototypes/<session>/) and listed by /prototype; the LLeMbas web UI renders the same fences live. Default false.",
+      "type": "boolean"
     },
     "library": {
       "description": "Global config only. local (default): memory, notes, skills and knowledge on this machine. lembas: the account's on the LLeMbas instance you are logged in to, through its /mcp — the same tools its chats have (needs a login with the library scope).",

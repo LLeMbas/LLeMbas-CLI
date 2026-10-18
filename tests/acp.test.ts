@@ -233,7 +233,7 @@ test("the terminal: a real shell through the link, only where remote.terminal sa
   config(fake.url)
   const root = project()
   const off = await client({ roots: [root], maxMode: "edit", approvalTimeoutMs: 50, requireTrust: true })
-  expect(off.init._meta.lembas.capabilities).toEqual(["directories", "configure", "steer", "sessions", "status", "delete", "compact", "title", "files", "commands", "attachments", "ask", "plan", "model", "turns"])
+  expect(off.init._meta.lembas.capabilities).toEqual(["directories", "configure", "steer", "sessions", "status", "delete", "compact", "title", "files", "commands", "attachments", "ask", "plan", "model", "turns", "context", "library", "prototypes", "plan_state", "rewind"])
   await expect(off.c.request("_lembas/terminal/open", { cwd: root })).rejects.toThrow("remote.terminal is off")
 
   const { c, init } = await client({ roots: [root], maxMode: "edit", approvalTimeoutMs: 50, requireTrust: true, terminal: true })

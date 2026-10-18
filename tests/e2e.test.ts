@@ -50,7 +50,7 @@ describe("end to end", () => {
     expect(fake!.requests[0].messages[0].content).toContain("Permission mode: edit")
     // knowledge_search/get are offered once any knowledge base has documents, and the suite shares
     // one LEMBAS_HOME: another file's base must not decide this list (found in the full run).
-    expect(fake!.requests[0].tools.map((t: any) => t.function.name).filter((n: string) => !n.startsWith("knowledge_"))).toEqual(["read", "write", "edit", "multiedit", "apply_patch", "glob", "grep", "list", "bash", "bash_output", "bash_list", "bash_kill", "web_search", "web_fetch", "task", "todo", "ask_user", "memory", "session_search", "notes_search", "note_view", "note_manage", "skills_list", "skill_view", "skill_manage", "settings"])
+    expect(fake!.requests[0].tools.map((t: any) => t.function.name).filter((n: string) => !n.startsWith("knowledge_"))).toEqual(["read", "write", "edit", "multiedit", "apply_patch", "glob", "grep", "list", "bash", "bash_output", "bash_list", "bash_kill", "web_search", "web_fetch", "task", "plan_write", "plan_update", "ask_user", "memory", "session_search", "notes_search", "note_view", "note_manage", "skills_list", "skill_view", "skill_manage", "settings"])
     const ends = events.filter((e) => e.type === "tool_end")
     expect(ends.map((e) => e.type === "tool_end" && e.result.title)).toEqual(["hello.txt · 1–1 of 1", "hello.txt +1 −1"])
     const sid = store.sessions(1)[0]!.id

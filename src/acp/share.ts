@@ -12,9 +12,10 @@ import type { AskReply, Asker, AttachmentInfo, Event } from "../bus/index.ts"
 import { asMode, type Mode } from "../config/schema.ts"
 import type { ImagePart } from "../provider/types.ts"
 import { commandSet, sourcesOf } from "../session/commands.ts"
-import type { PlanReply } from "../tool/plan_exit.ts"
-import type { QuestionReply, QuestionRequest } from "../tool/question.ts"
+import type { PlanReply, PlanRequest } from "../tool/plan_submit.ts"
+import type { QuestionReply, QuestionRequest } from "../tool/ask_user.ts"
 import { clampMode, effortOf, markRemote, permissionParams, planParams, planReplyFrom, questionParams, questionReplyFrom, replyFrom, STOP, type PromptResult } from "./agent.ts"
+import type { SessionContext } from "../app.ts"
 import { sessionTurnFile, sessionTurns, type TurnLog } from "./turns.ts"
 import { dropAttachments, preparePrompt } from "./prompt.ts"
 import { connectHub, Hub } from "./hub.ts"
@@ -60,6 +61,8 @@ export interface ShareHooks {
   deleted(): void
   /** Shared or not, mode, model or effort changed: redraw. */
   changed(): void
+  /** The web UI rewound the session (`_lembas/session/rewind`): the conversation is shorter now. */
+  rewound?(): void
 }
 
 let current: Share | undefined
@@ -259,7 +262,7 @@ export class Share {
   }
 
   /** plan_submit in the shared session, likewise. */
-  plan(req: { path: string; text: string }, callId: string | undefined, local: LocalAsk<PlanReply>): Promise<PlanReply> {
+  plan(req: PlanRequest, callId: string | undefined, local: LocalAsk<PlanReply>): Promise<PlanReply> {
     return this.card(local, "hub/plan", (id) => planParams(id, req, callId, { patient: true }), (a) => planReplyFrom(a), (r) => (r.kind === "approve" ? `approved (${r.mode})` : r.kind === "revise" ? "to be revised" : "not decided"))
   }
 
@@ -465,6 +468,9 @@ export class Share {
       const turnId = typeof p?.turnId === "string" && p.turnId ? p.turnId : crypto.randomUUID()
       // A turn id taken already: the original's answer.
       if (this.turns.has(turnId)) return this.turns.run(turnId, () => Promise.reject(new Error("unreachable")))
+      // What the client holds for the session (its instructions, personalization, library scope,
+      // prototypes), passed on by the hub: read into the prompt here as the service would.
+      if (p?.context && typeof p.context === "object") this.app.setContext(p.context as SessionContext, typeof p?.instance === "string" ? p.instance : undefined)
       // The blocks, expanded here as this terminal's keyboard would; `text` from a hub of
       // an earlier build.
       const blocks = Array.isArray(p?.prompt) ? p.prompt : [{ type: "text", text: String(p?.text ?? "") }]
@@ -495,7 +501,19 @@ export class Share {
     // The terminal's turns: `_lembas/session/status` for a shared session asks here.
     peer.handle("hub/status", (p) => {
       this.mine(p)
-      return { ...(this.turns.running ? { turnId: this.turns.running } : {}), queued: this.turns.queued(), ...(this.turns.last ? { lastTurnId: this.turns.last } : {}) }
+      return { ...(this.turns.running ? { turnId: this.turns.running } : {}), queued: this.turns.queued(), ...(this.turns.last ? { lastTurnId: this.turns.last } : {}), plan: this.app.engine.plan ?? null }
+    })
+    // The web UI is editing or regenerating from a turn: that turn and the later ones go, as /undo
+    // drops one — the files stay.
+    peer.handle("hub/rewind", (p) => {
+      this.mine(p)
+      if (this.app.turns.current) throw new RpcError(INVALID_PARAMS, "this session is working — rewind it when the reply is done")
+      const turnId = String(p?.turnId ?? "")
+      const reverted = this.app.turns.rewind(turnId)
+      if (reverted === undefined) throw new RpcError(INVALID_PARAMS, `this session has no turn ${turnId}`)
+      this.hooks.rewound?.()
+      this.hooks.notice(`the web UI rewound ${reverted} turn${reverted === 1 ? "" : "s"} — the files they changed stay as they are`)
+      return { reverted }
     })
     peer.handle("hub/steer", (p) => {
       this.mine(p)

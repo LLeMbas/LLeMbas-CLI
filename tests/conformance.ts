@@ -12,6 +12,10 @@ import { replace } from "../src/tool/replace.ts"
 import { applyUnified, parseUnified } from "../src/tool/unidiff.ts"
 import { derive, joinBom, parse } from "../src/tool/patch.ts"
 import type { Mode, PermissionConfig } from "../src/config/schema.ts"
+import { apply, fromTodos, normalise, type Plan } from "../src/plan/plan.ts"
+import { ToolCallAccumulator } from "../src/provider/openai-chat.ts"
+import { parseInfo, titleFor } from "../src/prototype/fence.ts"
+import { resolveBase } from "../src/library/store.ts"
 
 type Case = Record<string, unknown>
 
@@ -56,6 +60,23 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
     } catch (e) {
       return { error: (e as Error).message }
     }
+  },
+  plan: (c) => {
+    if (c.op === "normalise") return normalise(c.plan)
+    if (c.op === "update") return apply(c.plan as Plan, c.changes)
+    if (c.op === "todos") return fromTodos(c.todos)
+    throw new Error(`plan: unknown op ${String(c.op)}`)
+  },
+  prototype: (c) => {
+    const info = parseInfo(c.info as string)
+    return info ? { kind: info.kind, title: titleFor(c.code as string, info.title) } : null
+  },
+  library_scope: (c) => resolveBase(c.bases as { id: string; name: string }[], c.base as string | null),
+  toolcall_index: (c) => {
+    // The deltas as the OpenAI stream carries them: `function.name` and `function.arguments`.
+    const acc = new ToolCallAccumulator()
+    acc.feed((c.deltas as Record<string, unknown>[]).map(({ index, id, name, arguments: args }) => ({ index, id, function: { name, arguments: args } })))
+    return acc.result().map((p) => ({ id: p.id, name: p.name, arguments: p.args }))
   },
   envelope: (c) => {
     // planPatch's logic without the filesystem: every file followed through the patch in memory.

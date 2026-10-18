@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { MODE_ALIASES, MODES, type Mode } from "../src/config/schema.ts"
 import { promptText } from "../src/prompt/assemble.ts"
+import { normalise, type Plan } from "../src/plan/plan.ts"
 import { canonicalToolNames, resolveCall } from "../src/tool/names.ts"
 import { BUILTIN_TOOLS } from "../src/tool/registry.ts"
 import { purposeKey, type Tool, type ToolContext } from "../src/tool/tool.ts"
@@ -58,7 +59,9 @@ test("the spec has a version, and one file per tool, named as the tool", () => {
 })
 
 test("every tool says how it is shown (block), from the spec's list", () => {
-  const kinds = ["shell", "edit", "read", "search", "web", "task", "hidden", "tool"]
+  const kinds = ["shell", "edit", "read", "search", "web", "task", "plan", "hidden", "tool"]
+  // A plan change is not drawn as a call: the plan card refreshes instead.
+  for (const name of ["plan_write", "plan_update"]) expect(TOOL_SPECS[name]!.block).toBe("plan")
   for (const s of Object.values(TOOL_SPECS)) expect(kinds).toContain(s.block)
   // The ones that carry their change carry its diff: the web UI draws it from result.meta.diff.
   for (const name of ["edit", "multiedit", "apply_patch", "write"]) expect(TOOL_SPECS[name]!.block).toBe("edit")
@@ -125,9 +128,13 @@ test("prompts/index.json lists every prompt text, each with a scope", () => {
 
 test("the execution tools are the CLI's alone; the web UI runs no agent", () => {
   // LLeMbas removed its SSH workplace, so nothing that runs a command or touches a file is shared.
-  const exec = ["apply_patch", "bash", "bash_kill", "bash_list", "bash_output", "edit", "glob", "grep", "list", "multiedit", "read", "write", "todo", "plan_submit"]
+  const exec = ["apply_patch", "bash", "bash_kill", "bash_list", "bash_output", "edit", "glob", "grep", "list", "multiedit", "read", "write"]
   for (const n of exec) expect(TOOL_SPECS[n]!.scope).toBe("cli")
-  const shared = ["ask_user", "knowledge_get", "knowledge_search", "memory", "note_manage", "note_view", "notes_search", "skill_manage", "skill_view", "skills_list", "task", "web_fetch", "web_search"]
+  // The plan is one structure both keep (spec 1.1.0): its three tools are shared, and todo is
+  // plan_write's former name rather than a tool.
+  expect(TOOL_SPECS.todo).toBeUndefined()
+  expect(TOOL_SPECS.plan_write!.aliases.cli).toEqual(["todo"])
+  const shared = ["ask_user", "knowledge_get", "knowledge_search", "memory", "note_manage", "note_view", "notes_search", "plan_submit", "plan_update", "plan_write", "skill_manage", "skill_view", "skills_list", "task", "web_fetch", "web_search"]
   for (const n of shared) expect(TOOL_SPECS[n]!.scope).toBe("shared")
   expect(Object.values(TOOL_SPECS).filter((t) => t.scope === "shared").map((t) => t.name).sort()).toEqual(shared.sort())
 })
@@ -160,6 +167,29 @@ test("every {{variable}} in a description is declared, and none reaches a model"
   const bash = app.engine.o.tools.find((t) => t.name === "bash")!
   expect(bash.description).toContain("default 90 seconds, `timeout` up to 10 minutes). For a server")
   expect(PURPOSE_DEF.schema).toEqual({ type: "string", description: expect.stringContaining("what this call is for") })
+  // Nor through the assembled system prompt, in any mode, with or without a plan, with the
+  // instance's pieces or without them; the CLI's facts are in it and the bullets LLeMbas alone
+  // fills are gone.
+  const plan = normalise({ title: "T", phases: [{ title: "P", tasks: ["a"] }] }) as Plan
+  for (const mode of MODES) {
+    for (const p of [undefined, plan]) {
+      const system = app.engine.o.system(mode, app.engine.model, p)
+      expect(system).not.toContain("{{")
+      expect(system).toContain("Use the instructions below and the tools you have to help with software engineering and with running the project.")
+      expect(system).toContain("- Your output is shown in a terminal and rendered as GitHub-flavoured markdown in a monospace font. Be concise")
+      expect(system).toContain("- Use the dedicated tools for files: read (not cat)")
+      expect(system).toContain("- A long-running command (a server, a watcher) runs with bash `background: true`")
+      expect(system).toContain("# Git\n- How git is used in this project")
+      expect(system).not.toContain("- \n")
+      if (p) expect(system).toContain("- ### The current plan\n\n# T\n## p1 P (pending)\n[t1] [ ] a\n\nThis is the plan as it stands now. Work to it, and quote the ids above rather than restating the plan in your answer.")
+      else expect(system).not.toContain("The current plan")
+    }
+  }
+  app.setContext({ instructions: "Be brief.", prototypes: { offered: true, sources: "" }, library: { bases: [{ id: "k", name: "K" }] } }, "example")
+  const withContext = app.engine.o.system("manual", app.engine.model, plan)
+  expect(withContext).not.toContain("{{")
+  expect(withContext).toContain("## Instructions from example\n\nBe brief.")
+  expect(withContext).toContain("prototype-page")
 })
 
 test("acp.md names every _lembas method the code handles or sends, and every capability", async () => {

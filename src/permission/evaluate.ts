@@ -4,7 +4,7 @@ import { lstatSync, readlinkSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { localRoot } from "../config/paths.ts"
-import type { Action, Mode, PermissionConfig } from "../config/schema.ts"
+import { renamePermissionKeys, type Action, type Mode, type PermissionConfig } from "../config/schema.ts"
 import { prefix } from "./arity.ts"
 import { splitCommand, words } from "./bash.ts"
 import { hardlineCommand, plainCommands, protectedPath, type HardlineRule } from "./hardline.ts"
@@ -50,7 +50,9 @@ export interface Decision {
 }
 
 // The rules every session starts from: the harness spec's (harness/permission/defaults.json).
-export const DEFAULT_RULES = DEFAULTS.rules as PermissionConfig
+// A key the spec still writes under a former name (defaults.json says `todo`) is read as the key
+// it is now, as a user's config is.
+export const DEFAULT_RULES = renamePermissionKeys(DEFAULTS.rules) as PermissionConfig
 
 export function toRules(config: PermissionConfig, source?: Rule["source"]): Rule[] {
   const rules: Rule[] = []

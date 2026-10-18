@@ -16,9 +16,9 @@ export function reading(p: { total: number; done: number; processed: number; ms:
   return parts.join(" · ")
 }
 
-// Hermes' kawaii spinner: a braille frame, a face that changes every few seconds, what is going on
-// (a verb while it thinks), and the whole task's time and output tokens — from the prompt until
-// the last reply of the task, subagents included.
+// The working line: a braille frame, what is going on (a verb while it thinks), and the whole
+// task's time and output tokens — from the prompt until the last reply of the task, subagents
+// included.
 export function Spinner() {
   const { theme, view } = useTui()
   const [tick, setTick] = createSignal(0)
@@ -41,12 +41,10 @@ export function Spinner() {
     if (s.phase === "writing") return "writing"
     return "waiting for the model"
   }
-  const face = () => (view.state.phase === "thinking" ? pick(sp().thinking, 30) : pick(sp().waiting, 30))
   return (
     <box paddingLeft={1} height={1}>
       <text wrapMode="none" truncate>
         <span style={{ fg: theme().colors.accent }}>{pick(sp().frames, 1)} </span>
-        <span style={{ fg: theme().colors.label }}>{face()} </span>
         <span style={{ fg: theme().colors.muted }}>{what()}… </span>
         <span style={{ fg: theme().colors.dim }}>
           {elapsed()} · {tokens()} · esc to stop

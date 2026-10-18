@@ -2,12 +2,13 @@ import { applyPatchTool } from "./apply_patch.ts"
 import { bashKillTool, bashListTool, bashOutputTool, bashTool } from "./bash.ts"
 import { editTool } from "./edit.ts"
 import { multieditTool } from "./multiedit.ts"
-import { askUserTool } from "./question.ts"
+import { askUserTool } from "./ask_user.ts"
 import { readTool } from "./read.ts"
 import { globTool, grepTool, listTool } from "./search.ts"
-import { todoTool } from "./todo.ts"
 import { viewImageTool } from "./view_image.ts"
-import { planSubmitTool } from "./plan_exit.ts"
+import { planSubmitTool } from "./plan_submit.ts"
+import { planUpdateTool } from "./plan_update.ts"
+import { planWriteTool } from "./plan_write.ts"
 import { taskTool } from "./task.ts"
 import { decisionsTool, tasksTool } from "./project_tools.ts"
 import { webFetchTool, webSearchTool } from "./web.ts"
@@ -35,7 +36,8 @@ export const BUILTIN_TOOLS: Tool[] = [
   webSearchTool,
   webFetchTool,
   taskTool,
-  todoTool,
+  planWriteTool,
+  planUpdateTool,
   tasksTool,
   decisionsTool,
   askUserTool,

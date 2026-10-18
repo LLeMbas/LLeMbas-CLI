@@ -31,7 +31,7 @@ export interface CommandInfo {
  *  the two equal). A custom command or a skill of one of these names is not a command — in the TUI
  *  the built-in wins — so it is not one here either, even where the built-in is not offered. */
 export const TUI_COMMAND_NAMES = [
-  "agents", "continue", "help", "model", "effort", "mode", "plan", "plans", "review", "changelog", "init", "release", "tasks", "decisions", "decide",
+  "agents", "continue", "help", "model", "effort", "mode", "plan", "plans", "prototype", "review", "changelog", "init", "release", "tasks", "decisions", "decide",
   "sessions", "resume", "remote", "delete", "new", "clear", "copy", "undo", "redo", "diff", "checkpoint", "checkpoints", "branch", "commit", "context",
   "compact", "memory", "skills", "skill", "personality", "voice", "speak", "mcp", "login", "logout", "settings", "usage", "kb", "theme", "skin", "terminal",
   "icons", "trust", "reload", "restart", "quit", "exit", "q",

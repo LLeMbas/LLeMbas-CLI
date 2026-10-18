@@ -6,9 +6,11 @@ import { applyPatchTool } from "../src/tool/apply_patch.ts"
 import { bashKillTool, bashOutputTool, bashTool } from "../src/tool/bash.ts"
 import { editTool } from "../src/tool/edit.ts"
 import { multieditTool } from "../src/tool/multiedit.ts"
-import { formatAnswers, questionSchema, unattendedReply, type QuestionRequest } from "../src/tool/question.ts"
+import { formatAnswers, questionSchema, unattendedReply, type QuestionRequest } from "../src/tool/ask_user.ts"
 import { readTool } from "../src/tool/read.ts"
-import { todoTool } from "../src/tool/todo.ts"
+import { planUpdateTool } from "../src/tool/plan_update.ts"
+import { planWriteTool } from "../src/tool/plan_write.ts"
+import type { Plan } from "../src/plan/plan.ts"
 import type { ToolContext } from "../src/tool/tool.ts"
 
 function ctx(): ToolContext {
@@ -163,15 +165,25 @@ describe("file tools", () => {
     expect(readFileSync(join(c.root, "f.txt"), "utf8")).toBe("ONE\ntwo\nthree\nFOUR\n")
   })
 
-  test("todo replaces the list and reports progress", async () => {
+  test("plan_write stores the plan with ids and shows it; plan_update changes it by id, and an unknown id changes nothing", async () => {
     const c = ctx()
-    const todos = { items: [] as { content: string; status: "pending" | "in_progress" | "completed" | "cancelled" }[] }
-    // Through the schema, as the engine does: it turns the bare string into a pending item.
-    const args = todoTool.schema.parse({ todos: [{ content: "read", status: "completed" }, { content: "fix", status: "in_progress" }, "test"] })
-    const r = await todoTool.run(args, { ...c, todos })
-    expect(r.output).toBe("[x] read\n[>] fix\n[ ] test")
+    let stored: Plan | undefined
+    const plan = { get: () => stored, set: (p: Plan | null) => (stored = p ?? undefined) }
+    // Through the schema, as the engine does: a bare string is a task, a phase sent as its title is empty.
+    const args = planWriteTool.schema.parse({ title: "Fix it", findings: ["cookie not renewed"], phases: [{ title: "Code", tasks: [{ text: "read", status: "done" }, { text: "fix", status: "doing" }, "test"] }, "Verify"] })
+    const r = await planWriteTool.run(args, { ...c, plan })
+    expect(r.output).toBe("# Fix it\nFindings: [f1] cookie not renewed\n## p1 Code (pending)\n[t1] [x] read\n[t2] [>] fix\n[t3] [ ] test\n## p2 Verify (pending)")
     expect(r.title).toBe("1/3 done")
-    expect(todos.items).toHaveLength(3)
+    expect(stored?.steps).toEqual(["read", "fix", "test"])
+    const u = await planUpdateTool.run(planUpdateTool.schema.parse({ tasks: [{ id: "t2", status: "done" }, { id: "t3", status: "dropped", note: "covered" }], add_tasks: [{ phase: "p2", text: "run the suite" }] }), { ...c, plan })
+    expect(u.output).toBe("# Fix it\nFindings: [f1] cookie not renewed\n## p1 Code (pending)\n[t1] [x] read\n[t2] [x] fix\n[t3] [~] test — covered\n## p2 Verify (pending)\n[t4] [ ] run the suite")
+    expect(u.title).toBe("2/3 done")
+    const bad = await planUpdateTool.run(planUpdateTool.schema.parse({ tasks: [{ id: "t9", status: "done" }] }), { ...c, plan })
+    expect(bad).toEqual({ output: 'Unknown task id "t9". Known: t1, t2, t3, t4.', isError: true })
+    expect(stored?.phases[1]!.tasks).toHaveLength(1)
+    // No plan yet: plan_update says so instead of inventing one.
+    stored = undefined
+    expect((await planUpdateTool.run({ tasks: [{ id: "t1", status: "done" }] }, { ...c, plan })).isError).toBe(true)
   })
 })
 

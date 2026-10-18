@@ -2,7 +2,7 @@
 // Wording of knowledge_search after LLeMbas's tool.knowledge prompt (© Jaroslav Beneš,
 // MIT): look there before the web, and read the document before answering from it.
 import { z } from "zod"
-import { SNIPPET_CHARS } from "../library/store.ts"
+import { resolveBase, SNIPPET_CHARS } from "../library/store.ts"
 import { defineTool, ToolError, type ToolContext } from "./tool.ts"
 import { described } from "../harness.ts"
 
@@ -104,8 +104,12 @@ export const knowledgeSearchTool = defineTool({
   permission: (a) => ({ permission: "knowledge", class: "read", patterns: [a.base ?? "*"] }),
   async run(a, ctx) {
     const L = lib(ctx)
-    const bases = a.base ? [a.base] : L.bases
-    if (a.base && L.bases && !L.bases.includes(a.base)) throw new ToolError(`"${a.base}" is not one of this project's knowledge bases: ${L.bases.join(", ")}`)
+    // The bases in scope (all of this machine's, or the project's `knowledge:`), and `base` read
+    // against them as LLeMbas reads it: by name whatever its case, an unknown one named back.
+    const inScope = L.lib.bases().filter((b) => !L.bases || L.bases.includes(b.name)).map((b) => ({ id: b.name, name: b.name }))
+    const resolved = resolveBase(inScope, a.base)
+    if ("error" in resolved) throw new ToolError(resolved.error)
+    const bases = resolved.ids
     let note = ""
     let hits
     try {

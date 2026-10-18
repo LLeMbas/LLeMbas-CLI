@@ -5,6 +5,16 @@ import { estimateTokens } from "../../provider/tokens.ts"
 import { useTui } from "../context.ts"
 import type { Item } from "../state.ts"
 import { clipDiff } from "../diffclip.ts"
+import { TOOL_SPECS } from "../../harness.ts"
+import { resolveCall } from "../../tool/names.ts"
+import { splitPrototypes } from "../../prototype/fence.ts"
+
+/** A call the transcript does not draw: a plan change (the panel above the prompt follows it) or a
+ *  tool the spec marks hidden — under its former name too (a stored session's `todo`). */
+const undrawn = (name: string) => {
+  const block = TOOL_SPECS[resolveCall(name, {}).name]?.block
+  return block === "plan" || block === "hidden"
+}
 
 const FILETYPES: Record<string, string> = { ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", mjs: "javascript", md: "markdown", zig: "zig" }
 export const filetypeOf = (diff: string) => FILETYPES[/^\+\+\+ \S*\.(\w+)/m.exec(diff)?.[1] ?? ""]
@@ -14,7 +24,7 @@ function argSummary(args: unknown): string {
   if (!args || typeof args !== "object") return ""
   const a = args as Record<string, unknown>
   if (Array.isArray(a.questions)) return (a.questions as { header?: string }[]).map((q) => q.header).filter(Boolean).join(" · ") || "asking"
-  if (Array.isArray(a.todos)) return `${a.todos.length} item${a.todos.length === 1 ? "" : "s"}`
+  if (Array.isArray(a.phases)) return String(a.title ?? "").slice(0, 120)
   if (typeof a.patch === "string") return [...a.patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((m) => m[1]).join(", ")
   const v = a.description ?? a.command ?? a.path ?? a.pattern ?? a.id ?? ""
   return String(v).split("\n")[0]!.slice(0, 120)
@@ -38,11 +48,33 @@ function UserMessage(p: { item: Extract<Item, { kind: "user" }> }) {
   )
 }
 
+/** A reply as markdown — except a completed prototype fence, which is saved as a file
+ *  (state.ts) and drawn as one line saying so in its place; while it still streams it is the
+ *  code block it is so far. */
 function AssistantMessage(p: { item: Extract<Item, { kind: "assistant" }> }) {
   const { theme, md } = useTui()
+  const segments = () => (p.item.text.includes("```") || p.item.text.includes("~~~") ? splitPrototypes(p.item.text) : [])
+  const whole = () => !segments().some((s) => s.kind === "prototype")
   return (
-    <box paddingLeft={2} marginTop={1}>
-      <markdown content={p.item.text.trim()} syntaxStyle={md()} streaming={p.item.streaming} fg={theme().colors.text} conceal />
+    <box paddingLeft={2} marginTop={1} flexDirection="column">
+      <Show when={!whole()} fallback={<markdown content={p.item.text.trim()} syntaxStyle={md()} streaming={p.item.streaming} fg={theme().colors.text} conceal />}>
+        <For each={segments()}>
+          {(seg, i) => {
+            const saved = () => (seg.kind === "prototype" && seg.closed ? p.item.prototypes?.[seg.start] : undefined)
+            const last = () => i() === segments().length - 1
+            return (
+              <Show
+                when={saved()}
+                fallback={<markdown content={(seg.kind === "text" ? seg.text : seg.raw).trim()} syntaxStyle={md()} streaming={p.item.streaming && last()} fg={theme().colors.text} conceal />}
+              >
+                <text fg={theme().colors.muted} wrapMode="none" truncate>
+                  {`prototype · ${saved()!.title || saved()!.kind} · saved to ${saved()!.path}`}
+                </text>
+              </Show>
+            )
+          }}
+        </For>
+      </Show>
     </box>
   )
 }
@@ -229,7 +261,7 @@ export function Messages() {
           <Match when={item.kind === "reasoning"}>
             <Reasoning item={item as Extract<Item, { kind: "reasoning" }>} />
           </Match>
-          <Match when={item.kind === "tool"}>
+          <Match when={item.kind === "tool" && !undrawn((item as Extract<Item, { kind: "tool" }>).name)}>
             <ToolLine item={item as Extract<Item, { kind: "tool" }>} />
           </Match>
           <Match when={item.kind === "notice"}>

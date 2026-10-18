@@ -7,16 +7,19 @@ import type { Asker, AskReply, Bus, Event } from "../bus/index.ts"
 import type { Mode } from "../config/schema.ts"
 import type { Decision, PermissionRequest } from "../permission/evaluate.ts"
 import type { Message, Usage } from "../provider/types.ts"
-import type { PlanReply } from "../tool/plan_exit.ts"
-import type { QuestionReply, QuestionRequest } from "../tool/question.ts"
-import type { Todo } from "../tool/todo.ts"
+import type { Plan } from "../plan/plan.ts"
+import type { PlanReply, PlanRequest } from "../tool/plan_submit.ts"
+import type { QuestionReply, QuestionRequest } from "../tool/ask_user.ts"
 import { CONTINUE_PROMPT, STEER_MARK } from "../session/engine.ts"
+import { splitPrototypes, titleFor, type PrototypeKind } from "../prototype/fence.ts"
+import { savePrototype } from "../prototype/store.ts"
 import { CHARS_PER_TOKEN } from "../provider/tokens.ts"
 
 export type Item =
   /** `mid`: sent while the agent worked, and given to it at a step boundary. */
   | { kind: "user"; id: string; text: string; mid?: boolean }
-  | { kind: "assistant"; id: string; text: string; streaming: boolean }
+  /** `prototypes`: the prototype fences in the text that have been saved, by where each starts. */
+  | { kind: "assistant"; id: string; text: string; streaming: boolean; prototypes?: Record<number, SavedPrototype> }
   | { kind: "reasoning"; id: string; text: string; streaming: boolean; started: number; ms?: number; tokens?: number }
   | {
       kind: "tool"
@@ -36,6 +39,31 @@ export type Item =
   | { kind: "error"; id: string; text: string }
 
 export type Phase = "idle" | "waiting" | "thinking" | "writing" | "tools"
+
+/** A prototype the model wrote, saved as a file (prototype/store.ts). */
+export interface SavedPrototype {
+  kind: PrototypeKind
+  title: string
+  path: string
+}
+
+/** Whether a reply might hold a fenced block at all, before it is split. */
+const mayFence = (text: string) => text.includes("```") || text.includes("~~~")
+
+/** Every completed prototype fence in a reply, saved the first time it is seen — the model's
+ *  output as it is, under the state directory — and noted on the item, so the transcript draws
+ *  one line in its place. Nothing without a session to keep it under. */
+function keepPrototypes(sessionId: string | undefined, it: Extract<Item, { kind: "assistant" }>) {
+  if (!sessionId || !mayFence(it.text)) return
+  for (const seg of splitPrototypes(it.text)) {
+    if (seg.kind !== "prototype" || !seg.closed || it.prototypes?.[seg.start]) continue
+    const title = titleFor(seg.code, seg.info.title)
+    try {
+      const path = savePrototype(sessionId, seg.code, { kind: seg.info.kind, title })
+      ;(it.prototypes ??= {})[seg.start] = { kind: seg.info.kind, title, path }
+    } catch {}
+  }
+}
 
 export interface Pending {
   tool: string
@@ -67,7 +95,8 @@ export interface ViewState {
   pending?: Pending
   question?: PendingQuestion
   plan?: import("./components/plancard.tsx").PendingPlan
-  todos: Todo[]
+  /** The session's plan (plan_write / plan_update), drawn above the prompt while work is open. */
+  livePlan?: Plan
   /** Tool call being streamed by the model, for the spinner line. */
   preparing?: string
   showReasoning: boolean
@@ -83,7 +112,7 @@ let seq = 0
 const nextId = () => `i${++seq}`
 
 export function createView(bus: Bus) {
-  const [state, set] = createStore<ViewState>({ items: [], phase: "idle", busySince: 0, showReasoning: false, expandTools: false, todos: [], queued: { texts: [], mode: "steer" } })
+  const [state, set] = createStore<ViewState>({ items: [], phase: "idle", busySince: 0, showReasoning: false, expandTools: false, queued: { texts: [], mode: "steer" } })
   let stepStart = 0
   // The task's output tokens (every step, subagents included), and the reply
   // streaming now, counted as it arrives so the number moves before the step's usage comes in.
@@ -116,6 +145,8 @@ export function createView(bus: Bus) {
             }
             if (last?.kind === "assistant" && last.streaming) last.text += c.text
             else s.items.push({ kind: "assistant", id: nextId(), text: c.text, streaming: true })
+            const reply = s.items[s.items.length - 1]!
+            if (reply.kind === "assistant") keepPrototypes(s.sessionId, reply)
             s.phase = "writing"
           } else {
             if (last?.kind === "reasoning" && last.streaming) last.text += c.text
@@ -135,6 +166,7 @@ export function createView(bus: Bus) {
       if ((it.kind === "assistant" || it.kind === "reasoning") && it.streaming) {
         it.streaming = false
         if (it.kind === "reasoning") it.ms = Date.now() - it.started
+        else keepPrototypes(s.sessionId, it)
       }
   }
 
@@ -235,8 +267,8 @@ export function createView(bus: Bus) {
             }),
           )
           break
-        case "todos":
-          set("todos", e.items.map((t) => ({ ...t })))
+        case "plan":
+          set("livePlan", e.plan ? structuredClone(e.plan) : undefined)
           break
         case "notice":
           set(produce((s) => void s.items.push({ kind: "notice", id: nextId(), text: e.message, level: "warn" })))
@@ -317,7 +349,7 @@ export function createView(bus: Bus) {
       (done) => set("question", { req, resolve: done }),
       () => set("question", undefined),
     )
-  const planLocal = (req: { path: string; text: string }) =>
+  const planLocal = (req: PlanRequest) =>
     cardLocal<PlanReply>(
       (done) => set("plan", { ...req, resolve: done }),
       () => set("plan", undefined),
@@ -393,7 +425,11 @@ export function createView(bus: Bus) {
           items.push({ kind: "user", id: nextId(), text: m.parts.filter((p) => p.type === "text" && !ATTACHMENT.test(p.text)).map((p) => (p.type === "text" ? p.text : "")).join("\n") })
         else if (m.role === "assistant") {
           for (const p of m.parts) {
-            if (p.type === "text" && p.text.trim()) items.push({ kind: "assistant", id: nextId(), text: p.text, streaming: false })
+            if (p.type === "text" && p.text.trim()) {
+              const it: Extract<Item, { kind: "assistant" }> = { kind: "assistant", id: nextId(), text: p.text, streaming: false }
+              keepPrototypes(state.sessionId, it)
+              items.push(it)
+            }
             else if (p.type === "reasoning" && p.text.trim()) items.push({ kind: "reasoning", id: nextId(), text: p.text, streaming: false, started: 0 })
             else if (p.type === "tool_call") {
               let args: unknown
@@ -422,7 +458,7 @@ export function createView(bus: Bus) {
 export interface CardHooks {
   ask?: (req: Parameters<Asker["ask"]>[0], local: LocalAsk) => Promise<AskReply>
   question?: (req: QuestionRequest, callId: string | undefined, local: LocalAsk<QuestionReply>) => Promise<QuestionReply>
-  plan?: (req: { path: string; text: string }, callId: string | undefined, local: LocalAsk<PlanReply>) => Promise<PlanReply>
+  plan?: (req: PlanRequest, callId: string | undefined, local: LocalAsk<PlanReply>) => Promise<PlanReply>
 }
 
 export type View = ReturnType<typeof createView>

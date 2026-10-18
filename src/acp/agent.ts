@@ -13,16 +13,19 @@
 // block: a directory outside `roots` is refused, a mode beyond `max_mode` is lowered to it, an
 // untrusted project is refused, and an approval nobody answers in time is a denial. The hardline
 // applies in every mode, as everywhere.
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs"
+import { existsSync, readdirSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { createApp, type App } from "../app.ts"
+import { createApp, type App, type SessionContext } from "../app.ts"
 import type { AskReply, Asker, Event } from "../bus/index.ts"
 import { FileIndex } from "../project/files.ts"
 import { loadSkills } from "../skill/index.ts"
 import { commandSet, sourcesOf, type CommandInfo } from "../session/commands.ts"
 import { loadConfig } from "../config/load.ts"
-import { NOBODY_TO_ASK, type Answer, type QuestionReply, type QuestionRequest } from "../tool/question.ts"
-import { nobodyToApprove, type PlanReply } from "../tool/plan_exit.ts"
+import { NOBODY_TO_ASK, type Answer, type QuestionReply, type QuestionRequest } from "../tool/ask_user.ts"
+import { nobodyToApprove, type PlanReply, type PlanRequest } from "../tool/plan_submit.ts"
+import { realPath } from "../permission/evaluate.ts"
+import type { Plan } from "../plan/plan.ts"
+import { PLAN_META } from "../session/engine.ts"
 import { ToolError } from "../tool/tool.ts"
 import { dropAttachments, preparePrompt, storedAttachments } from "./prompt.ts"
 import { addPendingDeleted, clearPendingDeleted, pendingDeleted } from "./pending.ts"
@@ -73,7 +76,7 @@ export function refusalFor(L: Limits | undefined, dir: string): string | undefin
   if (L.enabled === false) return "remote work is off on this machine — lembas remote enable there (remote.enabled)"
   if (!L.roots.length) return "this device allows no folders for remote work yet — lembas remote add <dir> there (remote.roots)"
   if (!underRoots(dir, L.roots)) return `${dir} is outside the directories this device accepts remote work in (remote.roots)`
-  if (L.requireTrust && trustOf(findProject(dir).root) !== "trusted" && !trustedWithin(real(dir)))
+  if (L.requireTrust && trustOf(findProject(dir).root) !== "trusted" && !trustedWithin(realPath(dir)))
     return `${dir} is not in a trusted project on this device — trust it there first (lembas trust)`
   return undefined
 }
@@ -136,20 +139,11 @@ export function clampMode(wanted: Mode, max: Mode): Mode {
   return MODE_RANK[wanted] < MODE_RANK[max] ? max : wanted
 }
 
-/** A path with its symlinks followed, where it exists: a link inside a root that points out of it
- *  is outside. */
-function real(p: string): string {
-  try {
-    return realpathSync(p)
-  } catch {
-    return resolve(p)
-  }
-}
-
 export function underRoots(dir: string, roots: string[]): boolean {
-  const target = real(dir)
+  // Symlinks followed (realPath), so a link inside a root that points out of it is outside.
+  const target = realPath(dir)
   return roots.some((r) => {
-    const root = real(expandHome(r))
+    const root = realPath(expandHome(r))
     const rel = relative(root, target)
     return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))
   })
@@ -199,6 +193,41 @@ function promptText(blocks: unknown): string {
 const turnStore = (sessionId: string) => sessionTurnFile<PromptResult>(sessionId)
 const turnLog = (sessionId: string) => sessionTurns<PromptResult>(sessionId)
 
+/** `Context` (harness/acp.md): what the client holds for a session, read from `_meta.lembas` of
+ *  `session/new` and `session/prompt`. Undefined when none of its fields is there (a prompt's
+ *  `_meta.lembas` with a turnId alone changes nothing); fields the client leaves out are unset. */
+export function contextOf(meta: any): SessionContext | undefined {
+  const m = meta?.lembas
+  if (!m || typeof m !== "object") return undefined
+  const out: SessionContext = {}
+  const str = (v: unknown) => (typeof v === "string" ? v : "")
+  if (typeof m.system_prompt === "string") out.instructions = m.system_prompt
+  if (m.personalization === null) out.personalization = null
+  else if (m.personalization && typeof m.personalization === "object")
+    out.personalization = { personality: str(m.personalization.personality), personality_custom: str(m.personalization.personality_custom), instructions: str(m.personalization.instructions) }
+  if (m.library && typeof m.library === "object")
+    out.library = {
+      bases: (Array.isArray(m.library.bases) ? (m.library.bases as unknown[]) : [])
+        .filter((b): b is { id: unknown; name: unknown } => !!b && typeof b === "object")
+        .map((b) => ({ id: str(b.id), name: str(b.name) }))
+        .filter((b) => b.id || b.name)
+        .map((b) => ({ id: b.id || b.name, name: b.name || b.id })),
+    }
+  if (m.prototypes && typeof m.prototypes === "object") out.prototypes = { offered: m.prototypes.offered === true, sources: str(m.prototypes.sources) }
+  return Object.keys(out).length ? out : undefined
+}
+
+/** The `plan` session update: ACP's flat entries for an editor, the structure for the web UI
+ *  (`_meta.lembas.plan`, null when cleared). */
+export function planUpdate(plan: Plan | null | undefined) {
+  const entries = (plan?.phases.flatMap((p) => p.tasks) ?? []).map((t) => ({
+    content: t.text,
+    status: t.status === "done" || t.status === "dropped" ? "completed" : t.status === "doing" ? "in_progress" : "pending",
+    priority: "medium",
+  }))
+  return { sessionUpdate: "plan", entries, _meta: { lembas: { plan: plan ?? null } } }
+}
+
 /** The turn id the web UI gave a prompt, or a new one. */
 export function turnIdOf(p: any): string {
   const id = p?._meta?.lembas?.turnId
@@ -229,6 +258,14 @@ export const CAPABILITIES = [
   "plan",
   "model",
   "turns",
+  // Harness spec 1.1.0: what only the client knows comes with the session (its instructions,
+  // personalization, library scope, prototypes), the plan travels as a structure, library calls
+  // carry the chat's scope, and a client may rewind a session.
+  "context",
+  "library",
+  "prototypes",
+  "plan_state",
+  "rewind",
 ] as const
 export const STOP: Record<string, string> = { stop: "end_turn", steps: "max_turn_requests", budget: "max_tokens", cancelled: "cancelled", error: "end_turn" }
 
@@ -278,9 +315,10 @@ export function questionParams(sessionId: string, req: QuestionRequest, toolCall
   return { sessionId, toolCallId: toolCallId ?? crypto.randomUUID(), ...(req.why ? { why: req.why } : {}), questions, _meta: { lembas: o.patient ? { patient: true } : {} } }
 }
 
-/** `_lembas/plan`'s params: the plan_submit card, with the plan's markdown. */
-export function planParams(sessionId: string, req: { path: string; text: string }, toolCallId: string | undefined, o: { patient?: boolean } = {}) {
-  return { sessionId, toolCallId: toolCallId ?? crypto.randomUUID(), path: req.path, text: req.text, _meta: { lembas: o.patient ? { patient: true } : {} } }
+/** `_lembas/plan`'s params: the plan_submit card, with the plan's markdown and its structure
+ *  (capability `plan_state`; a client without it draws `text`). */
+export function planParams(sessionId: string, req: PlanRequest, toolCallId: string | undefined, o: { patient?: boolean } = {}) {
+  return { sessionId, toolCallId: toolCallId ?? crypto.randomUUID(), path: req.path, text: req.text, plan: req.plan, _meta: { lembas: o.patient ? { patient: true } : {} } }
 }
 
 /** The client's answer to `_lembas/question`, as the tool's reply. Anything else is a dismissal. */
@@ -400,6 +438,7 @@ export class AcpAgent {
     peer.handle("_lembas/session/delete", (p) => this.deleteSession(p))
     peer.handle("_lembas/session/compact", (p) => this.compact(p))
     peer.handle("_lembas/session/title", (p) => this.retitle(p))
+    peer.handle("_lembas/session/rewind", (p) => this.rewind(p))
     peer.handle("_lembas/terminal/open", (p) => this.terminalOpen(p))
     peer.handle("_lembas/files/search", (p) => this.filesSearch(p))
     peer.handle("_lembas/commands", (p) => this.commands(p))
@@ -526,10 +565,12 @@ export class AcpAgent {
     session.id = id
     session.turns = turnLog(id)
     markRemote(session.app.store, id)
+    this.takeContext(session, p)
     this.sessions.set(id, session)
     this.adopt(session)
-    // After the answer that names the session, so the client knows whose commands they are.
-    setTimeout(() => this.sendCommands(session, true), 0)
+    // After the answer that names the session, so the client knows whose commands they are
+    // (and whose plan, where the session has one).
+    setTimeout(() => (this.sendCommands(session, true), this.sendPlan(session)), 0)
     return {
       sessionId: id,
       modes: { currentModeId: session.app.engine.mode, availableModes: this.modes().map((m) => ({ id: m, name: m })) },
@@ -600,8 +641,23 @@ export class AcpAgent {
     if (L) session.app.engine.mode = clampMode(session.app.engine.mode, L.maxMode)
     this.sessions.set(id, session)
     this.adopt(session)
-    setTimeout(() => this.sendCommands(session, true), 0)
+    setTimeout(() => (this.sendCommands(session, true), this.sendPlan(session)), 0)
     return session
+  }
+
+  /** The client's context for the session (`_meta.lembas` of session/new or session/prompt),
+   *  the newer replacing the older. */
+  private takeContext(s: Session, p: any) {
+    const ctx = contextOf(p?._meta)
+    if (ctx) s.app.setContext(ctx, this.instanceConnection)
+  }
+
+  /** The session's plan, as a `plan` update — after session/new and after opening from the
+   *  store, when it has one (a change is forwarded as it happens). */
+  private sendPlan(s: Session) {
+    if (!this.ready || this.peer.isClosed || s.agent !== this) return
+    const plan = s.app.engine.plan
+    if (plan) this.update(s, planUpdate(plan))
   }
 
   /** This link passes the session's events on, and asks its approvals. */
@@ -817,12 +873,14 @@ export class AcpAgent {
         throw new RpcError(INVALID_PARAMS, `this session runs in ${t.mode} in the terminal, beyond what remote work may use here (${L.maxMode}) — change its mode there, or share it by name with /remote`)
       // The blocks themselves: the terminal expands commands, @files and attachments as
       // its own keyboard would; `text` for a terminal of a build before that.
-      return t.client.request("session/prompt", { sessionId: t.sessionId, text: promptText(p.prompt), prompt: p.prompt, turnId })
+      const context = contextOf(p?._meta)
+      return t.client.request("session/prompt", { sessionId: t.sessionId, text: promptText(p.prompt), prompt: p.prompt, turnId, ...(context ? { context, instance: this.instanceConnection } : {}) })
     }
     const s = this.get(p)
     // A turn id this session has taken already: not run again — the original's answer,
     // now or when it is done.
     if (s.turns.has(turnId)) return s.turns.run(turnId, () => Promise.reject(new Error("unreachable")))
+    this.takeContext(s, p)
     const prepared = preparePrompt(s.app, s.id, p.prompt, { roots: this.limits?.roots })
     // Working already: the prompt waits for the turn to end and runs next. It used to be
     // refused, and a web UI that had misjudged the session as idle lost its message to an error.
@@ -905,9 +963,9 @@ export class AcpAgent {
     if (t) {
       // The terminal knows its turns; what the hub saw of them, when it cannot be asked.
       const turns = await t.client
-        .request<{ turnId?: string; queued?: string[]; lastTurnId?: string }>("hub/status", { sessionId: t.sessionId }, 3000)
-        .catch(() => ({ ...(t.turnId ? { turnId: t.turnId } : {}), queued: [], ...(t.lastTurnId ? { lastTurnId: t.lastTurnId } : {}) }))
-      return { sessionId: id, exists: true, held: "terminal", busy: t.busy, title: t.title, ...turns, queued: turns.queued ?? [] }
+        .request<{ turnId?: string; queued?: string[]; lastTurnId?: string; plan?: Plan | null }>("hub/status", { sessionId: t.sessionId }, 3000)
+        .catch(() => ({ ...(t.turnId ? { turnId: t.turnId } : {}), queued: [], ...(t.lastTurnId ? { lastTurnId: t.lastTurnId } : {}), plan: this.storedPlan(id) }))
+      return { sessionId: id, exists: true, held: "terminal", busy: t.busy, title: t.title, ...turns, queued: turns.queued ?? [], plan: turns.plan ?? null }
     }
     const s = this.sessions.get(id)
     if (s)
@@ -920,11 +978,37 @@ export class AcpAgent {
         ...(s.turns.running ? { turnId: s.turns.running } : {}),
         queued: s.turns.queued(),
         ...(s.turns.last ? { lastTurnId: s.turns.last } : {}),
+        plan: s.app.engine.plan ?? null,
       }
     const row = (this.store ??= new Store()).session(id)
-    // Not open: the last turn it finished, as kept across a restart.
+    // Not open: the last turn it finished, as kept across a restart, and its plan as stored.
     const last = row ? turnStore(id).load().at(-1)?.[0] : undefined
-    return { sessionId: id, exists: Boolean(row), held: "none", busy: false, title: row?.title ?? "", queued: [], ...(last ? { lastTurnId: last } : {}) }
+    return { sessionId: id, exists: Boolean(row), held: "none", busy: false, title: row?.title ?? "", queued: [], ...(last ? { lastTurnId: last } : {}), plan: row ? this.storedPlan(id) : null }
+  }
+
+  /** A stored session's plan (the engine keeps it under PLAN_META), or null. */
+  private storedPlan(id: string): Plan | null {
+    try {
+      const p = (this.store ??= new Store()).meta<Plan | null>(id, PLAN_META)
+      return p && typeof p === "object" && "version" in p ? p : null
+    } catch {
+      return null
+    }
+  }
+
+  /** `_lembas/session/rewind`: the client is editing or regenerating from a turn. That turn and
+   *  every later one leave the conversation and the history, as /undo drops a turn — the files
+   *  are not touched. Refused for a turn the session does not have, or while it works. */
+  private async rewind(p: any) {
+    const turnId = typeof p?.turnId === "string" ? p.turnId.trim() : ""
+    if (!turnId) throw new RpcError(INVALID_PARAMS, "turnId, please")
+    const t = this.terminalFor(p)
+    if (t) return t.client.request("hub/rewind", { sessionId: t.sessionId, turnId }, 15_000)
+    const s = this.get(p)
+    if (s.prompting || s.turns.queued().length) throw new RpcError(INVALID_PARAMS, "this session is working — rewind it when the reply is done")
+    const reverted = s.app.turns.rewind(turnId)
+    if (reverted === undefined) throw new RpcError(INVALID_PARAMS, `this session has no turn ${turnId}`)
+    return { reverted }
   }
 
   /** `_lembas/session/delete`: the chat was deleted in the web UI, so the session is too —
@@ -1101,8 +1185,8 @@ export class AcpAgent {
         })
       case "tool_denied":
         return this.update(s, { sessionUpdate: "tool_call_update", toolCallId: e.id, status: "failed", content: [{ type: "content", content: { type: "text", text: e.reason } }] })
-      case "todos":
-        return this.update(s, { sessionUpdate: "plan", entries: e.items.map((t: any) => ({ content: t.content ?? t.text ?? "", status: t.status === "done" || t.status === "completed" || t.status === "cancelled" ? "completed" : t.status === "in_progress" ? "in_progress" : "pending", priority: "medium" })) })
+      case "plan":
+        return this.update(s, planUpdate(e.plan))
       case "mode":
         return this.update(s, { sessionUpdate: "current_mode_update", currentModeId: e.mode })
     }
@@ -1156,7 +1240,7 @@ export class AcpAgent {
       },
       get plan() {
         if (!canAsk()) return undefined
-        return async (req: { path: string; text: string }, callId?: string): Promise<PlanReply> => {
+        return async (req: PlanRequest, callId?: string): Promise<PlanReply> => {
           const agent = agentOf()
           const params = planParams(s.id, req, callId)
           try {

@@ -217,19 +217,40 @@ test("the question card: pick by number, multiple with space, ask back — and t
   expect(result).toContain('↩ counter-question: "what does docker cost?"')
 })
 
-test("esc dismisses the questions; the todo panel shows open work", async () => {
+test("esc dismisses the questions; the plan panel shows open work, and a plan call is not drawn as a tool line", async () => {
   t = await tui([
-    { chunks: [toolCall(0, "t1", "todo", JSON.stringify({ todos: [{ content: "read the code", status: "completed" }, { content: "fix the bug", status: "in_progress" }, { content: "run tests", status: "pending" }] })), toolCall(1, "q1", "ask_user", '{"question":"Go on?","options":["yes","no"]}')] },
+    { chunks: [toolCall(0, "t1", "plan_write", JSON.stringify({ title: "The bug", phases: [{ title: "Work", status: "active", tasks: [{ text: "read the code", status: "done" }, { text: "fix the bug", status: "doing" }, "run tests"] }] })), toolCall(1, "q1", "ask_user", '{"question":"Go on?","options":["yes","no"]}')] },
     { chunks: [delta({ content: "Carrying on." })] },
   ])
   await t.input.typeText("go")
   t.input.pressEnter()
   expect(await t.until("Go on?")).toBe(true)
-  expect(t.frame()).toContain("todo 1/3")
+  expect(t.frame()).toContain("plan 1/3 · The bug")
   expect(t.frame()).toContain("▸ fix the bug")
+  expect(t.frame()).toContain("☐ run tests")
+  expect(t.frame()).not.toContain("plan_write")
   t.input.pressEscape()
   expect(await t.until("Carrying on.")).toBe(true)
   expect(t.fake.requests[1].messages.at(-1).content).toContain("dismissed")
+})
+
+test("the former todo tool still fills the panel; /plan show prints the plan with its ids; /plan clear drops it", async () => {
+  t = await tui([
+    { chunks: [toolCall(0, "t1", "todo", JSON.stringify({ todos: [{ content: "read the code", status: "completed" }, { content: "fix the bug", status: "in_progress" }] }))] },
+    { chunks: [delta({ content: "Working." })] },
+  ])
+  await t.input.typeText("go")
+  t.input.pressEnter()
+  expect(await t.until("Working.")).toBe(true)
+  expect(t.frame()).toContain("plan 1/2 · Work")
+  await t.input.typeText("/plan show")
+  t.input.pressEnter()
+  expect(await t.until("[t2] [>] fix the bug")).toBe(true)
+  expect(t.frame()).toContain("## p1 Work (active)")
+  await t.input.typeText("/plan clear")
+  t.input.pressEnter()
+  expect(await t.until("plan cleared")).toBe(true)
+  expect(t.frame()).not.toContain("plan 1/2")
 })
 
 test("@ lists files; tab takes one; the model receives the file", async () => {
@@ -306,22 +327,21 @@ test("pasting an image's path (quoted, as a file manager does) inserts an @refer
   expect(t.frame()).toContain(`@${t.cwd}/my\\ shot.png`)
 })
 
-test("the plan card: the plan shown as markdown; a approves and the status bar says edit", async () => {
+test("the plan card: the plan shown with its ids; a approves and the status bar says edit", async () => {
   t = await tui([
-    { chunks: [toolCall(0, "w1", "write", JSON.stringify({ path: ".agent/plans/2026-09-29-x.md", content: "# The plan\n\n## Changes\n- **one** thing\n" }))] },
-    { chunks: [toolCall(0, "x1", "plan_submit", '{"path":".agent/plans/2026-09-29-x.md"}')] },
+    { chunks: [toolCall(0, "w1", "plan_write", JSON.stringify({ title: "The plan", summary: "Two changes.", phases: [{ title: "Changes", tasks: ["one thing", "another"] }] }))] },
+    { chunks: [toolCall(0, "x1", "plan_submit", "{}")] },
     { chunks: [delta({ content: "Implementing now." })] },
   ])
   await t.input.typeText("/plan tidy up")
   t.input.pressEnter()
   expect(await t.until("Approve — edit mode")).toBe(true)
-  expect(await t.until("one thing")).toBe(true) // markdown is parsed off-thread; it draws a moment later
   const f = t.frame()
-  expect(f).toContain("plan · .agent/plans/2026-09-29-x.md")
+  expect(f).toContain("plan · The plan")
   const card = f.slice(f.indexOf("╭─ plan ·"))
-  expect(card).toContain("The plan")
-  expect(card).toContain("one thing")
-  expect(card).not.toContain("**one**") // rendered, not raw
+  expect(card).toContain("Two changes.")
+  expect(card).toContain("p1 Changes (pending)")
+  expect(card).toContain("[t1] [ ] one thing")
   expect(f).toContain(" plan · fake/coder")
   await t.input.typeText("a")
   expect(await t.until("Implementing now.")).toBe(true)

@@ -93,7 +93,7 @@ if (import.meta.main) {
   ])
   const d = await drive({ cols, rows, home, cwd, bin: binAt > 0 ? process.argv[binAt + 1] : undefined })
   const show = (label: string) => console.log(`\n=== ${label}\n` + d.screen().map((l) => l.trimEnd()).join("\n"))
-  await d.waitFor("☤ LLeMbas")
+  await d.waitFor("shift+tab mode · /help")
   show("start")
   await d.type("greet me")
   await d.key("\r")

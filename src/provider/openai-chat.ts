@@ -63,14 +63,19 @@ export function toOpenAIMessages(system: string, messages: Message[], vision: bo
 /** Reassembles streamed tool-call fragments, keyed by index (the only field on every fragment). */
 export class ToolCallAccumulator {
   private calls = new Map<number, { id: string; name: string; args: string }>()
+  /** The index of the call started last: a delta without one continues it (quirks.json
+   *  tool-call-without-index; conformance toolcall_index.json). */
+  private last = 0
 
   feed(fragments: unknown): { index: number; name?: string; argsDelta: string }[] {
     const deltas: { index: number; name?: string; argsDelta: string }[] = []
     if (!Array.isArray(fragments)) return deltas
     for (const f of fragments as any[]) {
       if (!f || typeof f !== "object") continue
-      // Some servers omit index when there is only one call.
-      const index = Number.isInteger(f.index) ? (f.index as number) : 0
+      // Some servers omit the index: the fragment belongs to the call started last, and the
+      // first fragment of a stream without one starts call 0.
+      const index = Number.isInteger(f.index) ? (f.index as number) : this.last
+      this.last = index
       let call = this.calls.get(index)
       if (!call) this.calls.set(index, (call = { id: "", name: "", args: "" }))
       if (f.id) call.id = String(f.id)

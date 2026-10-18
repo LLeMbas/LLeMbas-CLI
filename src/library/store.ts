@@ -92,6 +92,21 @@ export interface Note {
   updated: number
 }
 
+/** knowledge_search's `base` against the bases a conversation may search (harness
+ *  conformance/library_scope.json, shared with LLeMbas): no `base` is all of them; an id matches
+ *  first, then a name whatever its case; anything else is the error the tool answers with,
+ *  naming what there is. */
+export function resolveBase(bases: { id: string; name: string }[], base: string | null | undefined): { ids: string[] } | { error: string } {
+  const wanted = (base ?? "").trim()
+  if (!wanted) return { ids: bases.map((b) => b.id) }
+  const byId = bases.find((b) => b.id === wanted)
+  if (byId) return { ids: [byId.id] }
+  const lower = wanted.toLowerCase()
+  const byName = bases.find((b) => b.name.toLowerCase() === lower)
+  if (byName) return { ids: [byName.id] }
+  return { error: `No knowledge base called "${wanted}" here. Available: ${bases.map((b) => b.name).join(", ") || "none"}.` }
+}
+
 /** An embedding model: turns texts into vectors (unit length), all of one width. */
 export interface Embedder {
   model: string

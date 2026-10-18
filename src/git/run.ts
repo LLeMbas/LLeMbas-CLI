@@ -20,4 +20,3 @@ export function git(cwd: string, args: string[], opts: { env?: Record<string, st
   return { code: r.exitCode ?? 1, out: r.stdout.toString().replace(/\s+$/, ""), err: r.exitCode === null && !err ? `git ${args[0]} did not finish in ${Math.round((opts.timeoutMs ?? 120_000) / 1000)} s (a key waiting for a passphrase? a slow hook?)` : err }
 }
 
-export const hasGit = Bun.which("git") !== null

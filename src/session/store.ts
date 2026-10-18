@@ -115,6 +115,20 @@ export class Store {
     this.db.query("UPDATE messages SET kind = ? WHERE session_id = ? AND id BETWEEN ? AND ? AND kind = ?").run(kind, sessionId, fromId, toId, other)
   }
 
+  /** The row of the user message that started turn `turnId` (kept with the message, engine.ts),
+   *  or undefined for a turn this session does not have. */
+  turnRow(sessionId: string, turnId: string): number | undefined {
+    // The LIKE is a prefilter; the message itself says.
+    const rows = this.db.query("SELECT id, json FROM messages WHERE session_id = ? AND role = 'user' AND kind = 'message' AND json LIKE ? ORDER BY id").all(sessionId, `%${JSON.stringify(turnId)}%`) as { id: number; json: string }[]
+    return rows.find((r) => (JSON.parse(r.json) as Message).role === "user" && (JSON.parse(r.json) as { turnId?: string }).turnId === turnId)?.id
+  }
+
+  /** How many turns start at row `fromId` or after it: the visible user messages that carry a turn id. */
+  turnsFrom(sessionId: string, fromId: number): number {
+    const rows = this.db.query("SELECT json FROM messages WHERE session_id = ? AND role = 'user' AND kind = 'message' AND id >= ?").all(sessionId, fromId) as { json: string }[]
+    return rows.filter((r) => typeof (JSON.parse(r.json) as { turnId?: string }).turnId === "string").length
+  }
+
   /** Record a compaction: what the model sees from here on starts with this summary. */
   compaction(sessionId: string, summary: string) {
     this.db

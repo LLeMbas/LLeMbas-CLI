@@ -8,6 +8,8 @@ import type { Store } from "./store.ts"
 
 interface Turn {
   prompt: string
+  /** Its id: the one it was given (the web UI's message id), or the one made here. */
+  turnId: string
   /** engine.messages.length before the prompt. */
   at: number
   before?: string
@@ -56,8 +58,8 @@ export class Turns {
     const before = this.snaps?.track()
     this.base ??= before
     const turnId = meta.turnId || crypto.randomUUID()
-    const turn: Turn = { prompt: text, at: this.engine.messages.length, before, firstRow: this.engine.lastRowId + 1, lastRow: 0 }
-    this.current = { ...turn, turnId }
+    const turn: Turn = { prompt: text, turnId, at: this.engine.messages.length, before, firstRow: this.engine.lastRowId + 1, lastRow: 0 }
+    this.current = { ...turn }
     this.engine.o.bus.emit({ type: "task", state: "start", turnId })
     try {
       return await this.engine.prompt(text, extra, shown, { ...meta, turnId })
@@ -111,6 +113,37 @@ export class Turns {
     if (this.store && this.engine.sessionId && u.turn.lastRow >= u.turn.firstRow) this.store.setKind(this.engine.sessionId, u.turn.firstRow, u.turn.lastRow, "message")
     this.done.push(u.turn)
     return { prompt: u.turn.prompt, files }
+  }
+
+  /** `_lembas/session/rewind`: the turn `turnId` and every later one leave the conversation the
+   *  model sees and the history — their rows re-kinded as /undo re-kinds a turn's, the messages
+   *  dropped — and the files are left as they are (the client says so beside its control). The
+   *  number of turns reverted, or undefined for a turn this session does not have. Not while a
+   *  prompt runs: the caller checks. */
+  rewind(turnId: string): number | undefined {
+    const sessionId = this.engine.sessionId
+    const i = this.done.findIndex((t) => t.turnId === turnId)
+    if (i >= 0) {
+      const dropped = this.done.splice(i)
+      const first = dropped[0]!
+      const last = dropped[dropped.length - 1]!
+      this.engine.messages.splice(first.at)
+      if (this.store && sessionId && last.lastRow >= first.firstRow) this.store.setKind(sessionId, first.firstRow, last.lastRow, "reverted")
+      this.undone = []
+      return dropped.length
+    }
+    // A turn run before this process had the session (opened from the store): by its row. Every
+    // turn run here came after it, so they all go too.
+    if (!this.store || !sessionId) return undefined
+    const row = this.store.turnRow(sessionId, turnId)
+    if (row === undefined) return undefined
+    const count = this.store.turnsFrom(sessionId, row)
+    this.store.setKind(sessionId, row, Number.MAX_SAFE_INTEGER, "reverted")
+    const at = this.engine.messages.findIndex((m) => m.role === "user" && m.turnId === turnId)
+    if (at >= 0) this.engine.messages.splice(at)
+    this.done = []
+    this.undone = []
+    return count
   }
 
   /** Everything changed since the session's first prompt, as a unified diff. */

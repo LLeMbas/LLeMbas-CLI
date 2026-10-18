@@ -1,12 +1,25 @@
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import { createSignal, For, Show } from "solid-js"
-import type { PlanReply } from "../../tool/plan_exit.ts"
+import { TASK_MARK, type Plan } from "../../plan/plan.ts"
+import type { PlanReply, PlanRequest } from "../../tool/plan_submit.ts"
 import { useTui } from "../context.ts"
 
-export interface PendingPlan {
-  path: string
-  text: string
+/** The plan as the card draws it: render()'s lines, each with what it is, so the ids and marks
+ *  stay on screen (a markdown box would read `[t1]` as a link and conceal it). */
+export function planLines(plan: Plan): { kind: "title" | "text" | "phase" | "todo" | "doing" | "done" | "dropped"; text: string }[] {
+  const out: ReturnType<typeof planLines> = [{ kind: "title", text: plan.title }]
+  if (plan.summary) out.push({ kind: "text", text: plan.summary })
+  if (plan.findings.length) out.push({ kind: "text", text: `Findings: ${plan.findings.map((f) => `[${f.id}] ${f.text}`).join("; ")}` })
+  if (plan.objectives.length) out.push({ kind: "text", text: `Objectives: ${plan.objectives.map((o) => `[${o.id}] ${o.text} (${o.status})`).join("; ")}` })
+  for (const ph of plan.phases) {
+    out.push({ kind: "phase", text: `${ph.id} ${ph.title} (${ph.status})` })
+    for (const t of ph.tasks) out.push({ kind: t.status, text: `[${t.id}] ${TASK_MARK[t.status]} ${t.text}${t.note ? ` — ${t.note}` : ""}` })
+  }
+  return out
+}
+
+export interface PendingPlan extends PlanRequest {
   resolve: (r: PlanReply) => void
 }
 
@@ -19,7 +32,7 @@ const CHOICES = [
 
 /** plan_submit's card: the plan itself (scroll with pgup/pgdn), then a | m | r | ?; esc keeps planning. */
 export function PlanCard(p: { pending: PendingPlan }) {
-  const { theme, md, dims } = useTui()
+  const { theme, dims } = useTui()
   const c = () => theme().colors
   const [sel, setSel] = createSignal(0)
   const [typing, setTyping] = createSignal<"revise" | "back">()
@@ -54,9 +67,11 @@ export function PlanCard(p: { pending: PendingPlan }) {
   })
 
   return (
-    <box border borderStyle="rounded" borderColor={c().info} flexDirection="column" paddingLeft={1} paddingRight={1} title={` plan · ${p.pending.path} `} titleColor={c().info}>
+    <box border borderStyle="rounded" borderColor={c().info} flexDirection="column" paddingLeft={1} paddingRight={1} title={` plan · ${p.pending.plan.title} `} titleColor={c().info}>
       <scrollbox ref={(r: ScrollBoxRenderable) => (box = r)} maxHeight={Math.max(6, Math.floor(dims().height / 2))} scrollX={false}>
-        <markdown content={p.pending.text} syntaxStyle={md()} fg={c().text} conceal />
+        <box flexDirection="column">
+          <For each={planLines(p.pending.plan)}>{(l) => <text fg={l.kind === "title" ? c().title : l.kind === "phase" ? c().accent : l.kind === "doing" ? c().accent : l.kind === "done" || l.kind === "dropped" ? c().dim : c().text} attributes={l.kind === "title" || l.kind === "phase" ? TextAttributes.BOLD : 0} wrapMode="word">{l.text}</text>}</For>
+        </box>
       </scrollbox>
       <Show
         when={!typing()}

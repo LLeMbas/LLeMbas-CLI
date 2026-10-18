@@ -83,8 +83,3 @@ export function attachmentsFor(text: string, ctx: Pick<ToolContext, "root" | "cw
   }
   return out
 }
-
-/** Absolute paths for attachments, for frecency. */
-export function attachedPaths(atts: Attachment[], root: string): string[] {
-  return atts.map((a) => a.path.replace(/\/$/, "")).map((p) => (p.startsWith("/") ? p : join(root, p)))
-}

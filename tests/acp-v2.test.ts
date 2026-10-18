@@ -2,11 +2,11 @@
 // ACP, images and files in a prompt, ask_user and plan_submit answered from the web, the model
 // event, and turn ids. A fake LLeMbas is the client; the model is a scripted endpoint.
 import { afterEach, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AcpAgent, planReplyFrom, questionParams, questionReplyFrom, type Limits } from "../src/acp/agent.ts"
-import { formatAnswers } from "../src/tool/question.ts"
+import { formatAnswers } from "../src/tool/ask_user.ts"
 import { Hub } from "../src/acp/hub.ts"
 import { BLOCK_LIMIT, readBlocks } from "../src/acp/prompt.ts"
 import { Peer, type Transport } from "../src/acp/rpc.ts"
@@ -15,7 +15,7 @@ import { pruneTurnFiles, turnFile, TurnLog } from "../src/acp/turns.ts"
 import { createApp, type App } from "../src/app.ts"
 import { paths } from "../src/config/paths.ts"
 import { setTrust } from "../src/project/root.ts"
-import type { QuestionReply } from "../src/tool/question.ts"
+import type { QuestionReply } from "../src/tool/ask_user.ts"
 import { delta, fakeProvider, toolCall, type Fake } from "./fake-provider.ts"
 
 let fake: Fake | undefined
@@ -273,12 +273,13 @@ test("ask_user in a session held here is asked of LLeMbas, and its answer reache
   expect(result.content).toContain("→ Postgres")
 })
 
-test("plan_submit is asked of LLeMbas; approving moves the session to the mode chosen", async () => {
-  fake = fakeProvider([{ chunks: [toolCall(0, "p1", "plan_submit", JSON.stringify({ path: ".agent/plans/p.md" }))] }, { chunks: [delta({ content: "implementing" })] }])
+test("plan_submit is asked of LLeMbas with the plan written, its text and its file; approving moves the session to the mode chosen", async () => {
+  const PLAN = { title: "The plan", summary: "One change.", phases: [{ title: "Work", tasks: ["do it"] }] }
+  fake = fakeProvider([{ chunks: [toolCall(0, "w1", "plan_write", JSON.stringify(PLAN))] }, { chunks: [toolCall(0, "p1", "plan_submit", "{}")] }, { chunks: [delta({ content: "implementing" })] }])
   config(fake.url, "mode: plan\n")
-  const root = project({ ".agent/plans/p.md": "# The plan\n1. do it\n" })
+  const root = project({ ".agent/config.yaml": "" })
   let asked: any
-  const { c, events } = await client(limitsFor(root, { maxMode: "edit" }), {
+  const { c, events, updates } = await client(limitsFor(root, { maxMode: "edit" }), {
     handlers: {
       "_lembas/plan": (p) => {
         asked = p
@@ -288,9 +289,111 @@ test("plan_submit is asked of LLeMbas; approving moves the session to the mode c
   })
   const s: any = await c.request("session/new", { cwd: root, _meta: { mode: "plan" } })
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "plan it" }] })
-  expect(asked).toMatchObject({ toolCallId: "p1", path: ".agent/plans/p.md", text: "# The plan\n1. do it\n" })
+  const text = "# The plan\nOne change.\n## p1 Work (pending)\n[t1] [ ] do it"
+  expect(asked).toMatchObject({ toolCallId: "p1", text, plan: { version: 2, title: "The plan", steps: ["do it"] } })
+  // The copy for the record, under the project's plans directory, named by the day and the title.
+  expect(asked.path).toMatch(/^\.agent\/plans\/\d{4}-\d{2}-\d{2}-the-plan\.md$/)
+  expect(readFileSync(join(root, asked.path), "utf8")).toBe(text + "\n")
   expect(events.some((e) => e.event.type === "mode" && e.event.mode === "edit")).toBe(true)
-  expect(fake.requests[1].messages.find((m: any) => m.role === "tool").content).toContain("approved the plan")
+  expect(fake.requests[2].messages.filter((m: any) => m.role === "tool").at(-1).content).toContain("approved the plan")
+  // The plan travels as a structure too (capability plan_state): on the update, beside ACP's entries.
+  const update = updates.find((u) => u.update.sessionUpdate === "plan")
+  expect(update.update.entries).toEqual([{ content: "do it", status: "pending", priority: "medium" }])
+  expect(update.update._meta.lembas.plan).toMatchObject({ version: 2, title: "The plan", phases: [{ id: "p1", tasks: [{ id: "t1", text: "do it", status: "todo" }] }] })
+  expect((await c.request<any>("_lembas/session/status", { sessionId: s.sessionId })).plan).toMatchObject({ title: "The plan" })
+})
+
+// §5 — harness spec 1.1.0: what only the client knows, the plan as a structure, rewinding.
+
+test("initialize lists the 1.1.0 capabilities", async () => {
+  fake = fakeProvider([])
+  config(fake.url)
+  const { init } = await client(limitsFor(project()))
+  for (const cap of ["context", "library", "prototypes", "plan_state", "rewind"]) expect(init._meta.lembas.capabilities).toContain(cap)
+})
+
+test("the context reaches the prompt: the instance's instructions, its personalization, the library's scope, prototypes", async () => {
+  fake = fakeProvider([{ chunks: [delta({ content: "one" })] }, { chunks: [delta({ content: "two" })] }, { chunks: [delta({ content: "three" })] }])
+  config(fake.url, "personality: concise\ninstructions: local words\n")
+  const root = project()
+  const { c } = await client(limitsFor(root), { instance: "example" })
+  const context = {
+    system_prompt: "Answer in Slovak.",
+    personalization: { personality: "formal", personality_custom: "", instructions: "Call me Jaro." },
+    library: { bases: [{ id: "kb1", name: "Manuals" }, { id: "kb2", name: "Contracts" }] },
+    prototypes: { offered: true, sources: "The page may load nothing from the network." },
+  }
+  const s: any = await c.request("session/new", { cwd: root, _meta: { lembas: context } })
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "hi" }] })
+  const system = () => fake!.requests.at(-1)!.messages[0].content as string
+  expect(system()).toContain("## Instructions from example\n\nAnswer in Slovak.")
+  // The account's personalization, in place of the device's own.
+  expect(system()).toContain("## How the person you are talking to wants to be helped\n\nCall me Jaro.")
+  expect(system()).not.toContain("local words")
+  expect(system()).toContain("## Personality\n\n")
+  expect(system()).toContain("formal")
+  // Prototypes offered, with what a page may load and where it is seen from a terminal.
+  expect(system()).toContain("prototype-chat")
+  expect(system()).toContain("The page may load nothing from the network.")
+  expect(system()).toContain("It is saved as a file you can open, and the LLeMbas web UI renders it live.")
+  // The library's scope is named only where its tools are offered (none here: no local base, no
+  // instance library) — nothing unfilled reaches the model either way.
+  expect(system()).not.toContain("{{")
+  // A later prompt replaces the context: personalization back to the device's, nothing from the instance.
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "again" }], _meta: { lembas: { turnId: "T2", system_prompt: "", personalization: null, prototypes: { offered: false, sources: "" } } } })
+  expect(system()).not.toContain("Instructions from example")
+  expect(system()).toContain("local words")
+  expect(system()).not.toContain("prototype-chat")
+  // A prompt that says only its turn id changes nothing.
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "more" }], _meta: { lembas: { turnId: "T3" } } })
+  expect(system()).toContain("local words")
+})
+
+test("the plan is sent after a session is opened from the store, and cleared with plan: null", async () => {
+  fake = fakeProvider([{ chunks: [toolCall(0, "w1", "plan_write", JSON.stringify({ title: "Kept", phases: [{ title: "P", tasks: ["a"] }] }))] }, { chunks: [delta({ content: "ok" })] }])
+  config(fake.url)
+  const root = project()
+  const first = await client(limitsFor(root))
+  const s: any = await first.c.request("session/new", { cwd: root })
+  await first.c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "plan" }] })
+  // A new link: the session opened from the store says its plan before anything changes it.
+  const again = await client(limitsFor(root))
+  expect((await again.c.request<any>("_lembas/session/status", { sessionId: s.sessionId })).plan).toMatchObject({ title: "Kept" })
+  await again.c.request("_lembas/session/status", { sessionId: s.sessionId })
+  await again.c.request("_lembas/configure", { sessionId: s.sessionId })
+  await until(() => again.updates.some((u) => u.update.sessionUpdate === "plan"), "the plan update")
+  expect(again.updates.find((u) => u.update.sessionUpdate === "plan").update._meta.lembas.plan).toMatchObject({ title: "Kept" })
+  // /plan clear from the web UI? Not a command; the session's own clearing says plan: null.
+  await again.c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "/undo" }] })
+})
+
+test("rewind: the turn and every later one leave the conversation; the next prompt does not see them; files stay", async () => {
+  fake = fakeProvider([{ chunks: [delta({ content: "first answer" })] }, { chunks: [delta({ content: "second answer" })] }, { chunks: [delta({ content: "third answer" })] }, { chunks: [delta({ content: "after the rewind" })] }])
+  config(fake.url)
+  const root = project()
+  const { c } = await client(limitsFor(root))
+  const s: any = await c.request("session/new", { cwd: root })
+  const prompt = (text: string, turnId: string) => c.request<any>("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text }], _meta: { lembas: { turnId } } })
+  await prompt("one", "T1")
+  await prompt("two", "T2")
+  await prompt("three", "T3")
+  writeFileSync(join(root, "made.txt"), "by the second turn\n")
+  await expect(c.request("_lembas/session/rewind", { sessionId: s.sessionId, turnId: "nope" })).rejects.toThrow("no turn")
+  expect(await c.request<any>("_lembas/session/rewind", { sessionId: s.sessionId, turnId: "T2" })).toEqual({ reverted: 2 })
+  // Gone from the history and from what the model is sent; the file is as it was.
+  const h: any = await c.request("_lembas/session/history", { sessionId: s.sessionId })
+  expect(h.turns.filter((t: any) => t.role === "user").map((t: any) => t.text)).toEqual(["one"])
+  await prompt("four", "T4")
+  const sent = JSON.stringify(fake.requests[3].messages)
+  expect(sent).toContain("first answer")
+  expect(sent).not.toContain("second answer")
+  expect(sent).not.toContain("third answer")
+  expect(readFileSync(join(root, "made.txt"), "utf8")).toBe("by the second turn\n")
+  // A session opened from the store (nothing in memory): rewound by its rows.
+  const again = await client(limitsFor(root))
+  expect(await again.c.request<any>("_lembas/session/rewind", { sessionId: s.sessionId, turnId: "T1" })).toEqual({ reverted: 2 })
+  const after: any = await again.c.request("_lembas/session/history", { sessionId: s.sessionId })
+  expect(after.turns).toEqual([])
 })
 
 test("a client that is not LLeMbas gets no question card: ask_user says nobody can be asked", async () => {

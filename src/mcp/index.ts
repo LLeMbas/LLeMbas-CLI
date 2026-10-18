@@ -392,7 +392,9 @@ export class McpManager {
           run: async (args, ctx) => {
             const c = await this.clientOf(s.name)
             try {
-              const r = await c.callTool({ name: t.name, arguments: args as Record<string, unknown> }, undefined, {
+              // The instance's library answers within the chat's scope (harness/acp.md, Scope).
+              const scope = library ? ctx.libraryScope : undefined
+              const r = await c.callTool({ name: t.name, arguments: args as Record<string, unknown>, ...(scope ? { _meta: { lembas: { scope } } } : {}) }, undefined, {
                 signal: ctx.signal,
                 timeout: (s.cfg.timeout ?? 120) * 1000,
                 resetTimeoutOnProgress: true,

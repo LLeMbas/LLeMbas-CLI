@@ -35,7 +35,7 @@ test("past the output budget the tools are withdrawn, the model is told, and it 
   expect(await a.engine.prompt("what is in big.txt?")).toBe("budget")
   expect(tools(fake!.requests[0])).toContain("read")
   expect(tools(fake!.requests[1])).toEqual([])
-  expect(JSON.stringify(fake!.requests[1].messages.at(-1))).toContain("reached the budget for this reply")
+  expect(JSON.stringify(fake!.requests[1].messages.at(-1))).toContain("The tool output budget for this prompt has been reached")
   expect(notices.join("\n")).toContain("with too much tool output to read")
 })
 

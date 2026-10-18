@@ -18,7 +18,10 @@ let changed = 0
 for (const f of readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
   const area = f.replace(/\.json$/, "")
   const run = AREAS[area]
-  if (!run) throw new Error(`no runner for ${area}`)
+  if (!run) {
+    console.log(`${area}: no runner in tests/conformance.ts yet — skipped`)
+    continue
+  }
   const doc = JSON.parse(readFileSync(join(dir, f), "utf8")) as { about: string; cases: Record<string, unknown>[] }
   for (const c of doc.cases) {
     if ("expect" in c && flag !== "--all") continue

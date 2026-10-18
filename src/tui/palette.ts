@@ -1,13 +1,12 @@
 // Every colour the TUI uses comes from here — no hex literal anywhere else under src/tui/. This
 // file is the palettes and the loader only, with nothing from OpenTUI, so `lembas run` can use
 // it without loading the renderer; theme.ts adds what needs OpenTUI.
-// The default theme, lembas, is dark: cyan on ink, blue and violet beside it; lembas-light is its
-// light counterpart, and moria and shire are the LLeMbas web UI's own two
-// (src/lembas/web/static/css/tokens.css). hermes is Hermes Agent's
-// default ("Classic Hermes — gold", hermes_cli/skin_engine.py and agent/display.py, MIT,
-// © 2025 Nous Research).
+// The default theme, moria, is the LLeMbas web UI's own dark one (src/lembas/web/static/css/
+// tokens.css), shire its light one; lembas is dark, cyan on ink, blue and violet beside it, and
+// lembas-light its light counterpart. hermes is Hermes Agent's default ("Classic Hermes — gold",
+// hermes_cli/skin_engine.py and agent/display.py, MIT, © 2025 Nous Research).
 // A user theme is ~/.config/lembas/themes/<name>.yaml (skins/ is still read) with any subset
-// of these keys, merged over lembas.
+// of these keys, merged over moria.
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { parse } from "yaml"
@@ -62,7 +61,8 @@ export interface Theme {
     comment: string
   }
   branding: { agentName: string; responseLabel: string; promptSymbol: string; toolPrefix: string }
-  spinner: { waiting: string[]; thinking: string[]; verbs: string[]; frames: string[] }
+  /** The line while the model works: a frame every tick, a verb while it thinks. */
+  spinner: { verbs: string[]; frames: string[] }
   toolEmoji: Record<string, string>
   /** The other pictures: an MCP tool, any other tool, a refused call, the microphone, the speaker, a locked server. */
   icons: { mcp: string; other: string; denied: string; mic: string; speaker: string; locked: string }
@@ -111,10 +111,8 @@ export const HERMES: Theme = {
     type: "#DAA520",
     comment: "#C0C0C0",
   },
-  branding: { agentName: "LLeMbas", responseLabel: " ☤ LLeMbas ", promptSymbol: "❯", toolPrefix: "┊" },
+  branding: { agentName: "LLeMbas", responseLabel: " LLeMbas ", promptSymbol: "❯", toolPrefix: "┊" },
   spinner: {
-    waiting: ["(｡◕‿◕｡)", "(◕‿◕✿)", "٩(◕‿◕｡)۶", "(✿◠‿◠)", "( ˘▽˘)っ", "♪(´ε` )", "(◕ᴗ◕✿)", "ヾ(＾∇＾)", "(≧◡≦)", "(★ω★)"],
-    thinking: ["(｡•́︿•̀｡)", "(◔_◔)", "(¬‿¬)", "( •_•)>⌐■-■", "(⌐■_■)", "(´･_･`)", "◉_◉", "(°ロ°)", "٩(๑❛ᴗ❛๑)۶", "(⊙_⊙)", "ಠ_ಠ"],
     verbs: ["pondering", "contemplating", "musing", "cogitating", "ruminating", "deliberating", "mulling", "reflecting", "reasoning", "analyzing", "synthesizing", "formulating"],
     frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
   },
@@ -133,17 +131,14 @@ export const HERMES: Theme = {
     bash_output: "📜",
     bash_list: "📜",
     bash_kill: "🛑",
-    todo: "📋",
-    question: "❓",
+    plan_write: "📋",
+    plan_update: "📋",
     ask_user: "❓",
     view_image: "📷",
-    plan_exit: "🧭",
     plan_submit: "🧭",
     task: "🤖",
     tasks: "📚",
     decisions: "📌",
-    websearch: "🔍",
-    webfetch: "🌐",
     web_search: "🔍",
     web_fetch: "🌐",
     memory: "🧠",
@@ -172,7 +167,7 @@ export const MONO: Theme = {
   colors: Object.fromEntries(Object.keys(HERMES.colors).map((k) => [k, k.endsWith("Bg") || k === "panel" || k === "menu" ? "#202020" : k === "selection" || k === "menuCurrent" ? "#404040" : "#d0d0d0"])) as Theme["colors"],
 }
 
-/** What every built-in theme but Hermes's own shares: LLeMbas's branding, Hermes' spinner and icons. */
+/** What every built-in theme but Hermes's own shares: LLeMbas's branding, the spinner and the icons. */
 const LEMBAS_LOOK = { branding: HERMES.branding, spinner: HERMES.spinner, toolEmoji: HERMES.toolEmoji, icons: HERMES.icons }
 
 /** lembas — dark, cyan on ink, blue and violet beside it; danger a warm red, success a leaf
@@ -371,7 +366,7 @@ export const SHIRE: Theme = {
   ...LEMBAS_LOOK,
 }
 
-export const DEFAULT_THEME = LEMBAS
+export const DEFAULT_THEME = MORIA
 export const BUILTIN_THEMES: Record<string, Theme> = { lembas: LEMBAS, "lembas-light": LEMBAS_LIGHT, moria: MORIA, shire: SHIRE, hermes: HERMES, mono: MONO }
 
 /** Where user themes are read from: themes/ first, then the old skins/. */

@@ -159,10 +159,6 @@ export function expandWebui(name: string, w: WebuiConnection, cache = readCache(
   }
 }
 
-export function isWebui(c: unknown): c is WebuiLoaded {
-  return !!c && typeof c === "object" && "webui" in c && !!(c as WebuiLoaded).webui
-}
-
 /** Read the instance's models and services, and keep them. Throws LembasError. */
 export async function fetchWebui(name: string, url: string, token: string, tls: Tls | undefined, timeoutMs?: number): Promise<Cache> {
   const base = normalise(url)

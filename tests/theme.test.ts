@@ -24,8 +24,8 @@ const contrast = (a: string, b: string) => {
 // The themes that paint their own background (hermes and mono keep the terminal's).
 const painted = Object.values(BUILTIN_THEMES).filter((t) => t.colors.bg)
 
-test("the default is lembas, and every built-in theme has every colour as #rrggbb", () => {
-  expect(DEFAULT_THEME.name).toBe("lembas")
+test("the default is moria, and every built-in theme has every colour as #rrggbb", () => {
+  expect(DEFAULT_THEME.name).toBe("moria")
   expect(painted.map((t) => t.name).sort()).toEqual(["lembas", "lembas-light", "moria", "shire"])
   for (const t of Object.values(BUILTIN_THEMES)) {
     for (const k of Object.keys(HERMES.colors) as (keyof Theme["colors"])[]) expect({ theme: t.name, key: k, ok: /^#[0-9a-fA-F]{6}$/.test(t.colors[k] ?? "") }).toEqual({ theme: t.name, key: k, ok: true })
@@ -46,7 +46,7 @@ test("readable: text 7:1 on the background; what is read 4.5:1 on the background
   expect(low).toEqual([])
 })
 
-test("a user theme in themes/ (or the old skins/) is merged over lembas; an unknown one falls back with a warning", () => {
+test("a user theme in themes/ (or the old skins/) is merged over the default; an unknown one falls back with a warning", () => {
   mkdirSync(join(paths.config, "themes"), { recursive: true })
   writeFileSync(join(paths.config, "themes", "mine.yaml"), "colors:\n  accent: '#ff00ff'\n")
   mkdirSync(join(paths.config, "skins"), { recursive: true })
@@ -57,7 +57,7 @@ test("a user theme in themes/ (or the old skins/) is merged over lembas; an unkn
   expect(mine.colors.bg).toBe(DEFAULT_THEME.colors.bg)
   expect(loadTheme("old").theme.colors.title).toBe("#00ff00")
   const none = loadTheme("nope")
-  expect(none.theme.name).toBe("lembas")
+  expect(none.theme.name).toBe("moria")
   expect(none.warning).toContain('theme "nope" not found')
 })
 

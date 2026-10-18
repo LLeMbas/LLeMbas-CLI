@@ -1,6 +1,6 @@
 // The names harness spec v1 changed (shared with LLeMbas): question → ask_user, plan_exit →
 // plan_submit, websearch/webfetch → web_search/web_fetch, notes → notes_search/note_view/
-// note_manage, bash's workdir → cwd, the mode unrestricted → auto. Whatever was written under an
+// note_manage, bash's workdir → cwd, the mode unrestricted → auto; and 1.1.0's todo → plan_write. Whatever was written under an
 // old name — a stored session, a config file, an agent file, a prompt override — keeps working.
 import { afterEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
@@ -33,6 +33,19 @@ test("a call under a former name runs the tool it now is, with its arguments", (
   // A name that is not a former one is left alone.
   expect(resolveCall("read", { path: "a" })).toEqual({ name: "read", raw: { path: "a" } })
   expect(canonicalToolNames(["read", "webfetch", "notes"])).toEqual(["read", "web_fetch", "notes_search", "note_view", "note_manage"])
+})
+
+test("a todo call is a plan_write of one phase called Work, its statuses translated", () => {
+  const r = resolveCall("todo", { todos: [{ content: "Read the code", status: "completed" }, { content: "Fix it", status: "in_progress" }, "Test it", { content: "Old idea", status: "cancelled" }] })
+  expect(r.name).toBe("plan_write")
+  expect(r.raw).toEqual({
+    title: "Work",
+    phases: [{ title: "Work", status: "active", tasks: [{ text: "Read the code", status: "done" }, { text: "Fix it", status: "doing" }, { text: "Test it", status: "todo" }, { text: "Old idea", status: "dropped" }] }],
+  })
+  // Nothing in progress: the phase is pending. An empty list is an empty plan, which the tool refuses.
+  expect((resolveCall("todo", { todos: ["a"] }).raw as { phases: { status: string }[] }).phases[0]!.status).toBe("pending")
+  expect(resolveCall("todo", { todos: [] }).raw).toEqual({ title: "Work", phases: [] })
+  expect(canonicalToolNames(["todo", "read"])).toEqual(["plan_write", "read"])
 })
 
 test("the mode unrestricted is auto, wherever a mode is written", () => {

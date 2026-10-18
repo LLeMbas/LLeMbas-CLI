@@ -8,7 +8,9 @@ import type { Asker, AttachmentInfo, Bus } from "../bus/index.ts"
 import type { Effort, Mode } from "../config/schema.ts"
 import { evaluate, shadowsDeny, type Context as PermContext, type Rule } from "../permission/evaluate.ts"
 import { ProviderError, type Client, type ImagePart, type Message, type ResolvedModel, type ToolCallPart, type Usage } from "../provider/types.ts"
-import type { Todo } from "../tool/todo.ts"
+import type { Plan } from "../plan/plan.ts"
+import { LOOP } from "../harness.ts"
+import { fillPrompt } from "../prompt/fill.ts"
 import { splitPurpose, toSpec, ToolError, type Tool, type ToolContext, type ToolResult } from "../tool/tool.ts"
 import { fill, promptText } from "../prompt/assemble.ts"
 import { resolveCall } from "../tool/names.ts"
@@ -25,7 +27,8 @@ export interface EngineOptions {
   tools: Tool[]
   store?: Store
   sessionId?: string
-  system: (mode: Mode, model: ResolvedModel) => string
+  /** The system prompt for a step; `plan`: the session's plan, for `{{plan_context}}`. */
+  system: (mode: Mode, model: ResolvedModel, plan?: Plan) => string
   mode: Mode
   effort: Effort | null
   perm: Omit<PermContext, "mode">
@@ -50,7 +53,7 @@ export interface PromptMeta {
   attachments?: AttachmentInfo[]
 }
 
-const MAX_PARALLEL = 4
+const MAX_PARALLEL = LOOP.parallel.max
 const PRUNED = "[This output was removed to save context. Run the tool again if you need it.]"
 /** What a message sent mid-turn starts with. Said, not hidden: Hermes found that a model refuses an
  *  unmarked one as an injection. A resumed session shows the message without it. */
@@ -79,9 +82,11 @@ const CUT_THINKING =
   "Your last reply hit the output limit while you were still thinking, so nothing was said or done. Think less this time: act now with a tool call, or answer."
 const CUT_TEXT = "Your last reply was cut off at the output limit. Carry on from exactly where it stopped."
 /** Replies in a row that say nothing (only thinking, or cut off) get asked again this many times. */
-const MAX_NUDGES = 2
-const wrapUpText = (why: string) =>
-  `You have reached the ${why} for this reply. Do not call any more tools. Answer now from what you have: say what is done, what is not, and what you would do next.`
+const MAX_NUDGES = LOOP.nudges.max
+/** The wrap-up: the spec's words, with which limit was reached. */
+const wrapUpText = (limit: string) => fillPrompt(LOOP.wrap_up.message, { limit })
+/** The session_meta key the plan is kept under. */
+export const PLAN_META = "plan"
 
 export class Engine {
   messages: Message[] = []
@@ -113,8 +118,9 @@ export class Engine {
   private turnSteers: string[] = []
   /** busy_input: steer — the inbox goes in at the next step; queue — it waits for the task to end. */
   busyInput: "steer" | "queue" = "steer"
-  /** The todo tool's list, for this session. */
-  todos: { items: Todo[]; changed?: (items: Todo[]) => void } = { items: [] }
+  /** The session's plan (plan_write / plan_update), kept with the session and put into the
+   *  prompt on every step while it exists. */
+  plan: Plan | undefined
   private sessionRules: Rule[] = []
   private recentCalls: string[] = []
   /** Tools refused with no one able to approve them: no longer offered. */
@@ -131,7 +137,22 @@ export class Engine {
     this.model = o.model
     this.client = o.client
     this.sessionId = o.sessionId
-    this.todos.changed = (items) => o.bus.emit({ type: "todos", items })
+    this.plan = this.storedPlan()
+  }
+
+  /** The plan the store holds for this session, if any. */
+  private storedPlan(): Plan | undefined {
+    if (!this.o.store || !this.sessionId) return undefined
+    const p = this.o.store.meta<Plan | null>(this.sessionId, PLAN_META)
+    return p && typeof p === "object" && "version" in p ? p : undefined
+  }
+
+  /** Replace the plan (null clears it): kept with the session, and said on the bus so every
+   *  front end's card follows. */
+  setPlan(plan: Plan | null) {
+    this.plan = plan ?? undefined
+    if (this.o.store && this.sessionId) this.o.store.setMeta(this.sessionId, PLAN_META, plan)
+    this.o.bus.emit({ type: "plan", plan: this.plan })
   }
 
   get effort(): Effort | null {
@@ -162,8 +183,10 @@ export class Engine {
     this.sessionRules = []
     this.recentCalls = []
     this.withdrawn.clear()
-    this.todos.items = []
-    this.o.bus.emit({ type: "todos", items: [] })
+    // A new session's plan is whatever the store holds for it: none for a fresh one, the old one
+    // on a resume.
+    this.plan = this.storedPlan()
+    this.o.bus.emit({ type: "plan", plan: this.plan })
     this.o.toolCtx.readFiles.clear()
     this.o.toolCtx.fileStamps.clear()
   }
@@ -302,18 +325,20 @@ export class Engine {
     }
   }
 
-  /** Which budget this prompt has run past, said for the user, or "" while there is room. */
-  private overBudget(started: number): string {
+  /** Which budget this prompt has run past — `limit` names it for the wrap-up message, `said` is
+   *  for the user's notice — or undefined while there is room. */
+  private overBudget(started: number): { limit: string; said: string } | undefined {
     const b = this.o.budget
-    if (!b) return ""
+    if (!b) return undefined
     const spent = (performance.now() - started - this.turnWaitedMs) / 1000
-    if (b.wall_seconds && spent > b.wall_seconds) return `after ${duration(spent * 1000, true)}`
-    if (b.output_bytes && this.turnOutputBytes > b.output_bytes) return "with too much tool output to read"
-    if (b.completion_tokens && this.turnCompletion > b.completion_tokens) return `after writing about ${this.turnCompletion.toLocaleString("en")} tokens`
-    return ""
+    if (b.wall_seconds && spent > b.wall_seconds) return { limit: "time budget", said: `after ${duration(spent * 1000, true)}` }
+    if (b.output_bytes && this.turnOutputBytes > b.output_bytes) return { limit: "tool output budget", said: "with too much tool output to read" }
+    if (b.completion_tokens && this.turnCompletion > b.completion_tokens) return { limit: "output budget", said: `after writing about ${this.turnCompletion.toLocaleString("en")} tokens` }
+    return undefined
   }
 
-  /** Tools a model can use at all: view_image only with vision. */
+  /** Tools a model can use at all: view_image only with vision, plan_submit only in plan mode
+   *  (`requires: "plan"`; plan_write and plan_update are offered in every mode). */
   private offered(name: string): boolean {
     const t = this.o.tools.find((x) => x.name === name)
     if (name === "task" && !this.o.spawn) return false
@@ -424,14 +449,14 @@ export class Engine {
     this.autoCompactions = 0
     const toolMap = new Map(this.o.tools.map((t) => [t.name, t]))
     const allSpecs = this.o.tools.map(toSpec)
-    const maxSteps = this.o.maxSteps ?? 200
+    const maxSteps = this.o.maxSteps ?? LOOP.steps.default
     const started = performance.now()
     this.turnWaitedMs = 0
     this.turnOutputBytes = 0
     this.turnCompletion = 0
     // Why the prompt is being wound up early, once a budget has run out: then, as past the step
     // limit, the tools are withdrawn and the model answers from what it has.
-    let ranOut = ""
+    let ranOut: { limit: string; said: string } | undefined
     let nudges = 0
     let midRetries = 0
     const tried = new Set<string>()
@@ -440,9 +465,9 @@ export class Engine {
       // Checked between steps, never mid-reply: a reply cut off mid-sentence is worth nothing.
       if (!ranOut && step > 1) {
         ranOut = this.overBudget(started)
-        if (ranOut) bus.emit({ type: "notice", message: `stopped ${ranOut} — the model answers from what it has; send a message to carry on` })
+        if (ranOut) bus.emit({ type: "notice", message: `stopped ${ranOut.said} — the model answers from what it has; send a message to carry on` })
       }
-      const wrapUp = step > maxSteps || ranOut !== ""
+      const wrapUp = step > maxSteps || ranOut !== undefined
       if (!wrapUp) await this.manageContext(signal)
       // After compacting, so what was just sent is never folded into a summary.
       if (!wrapUp) this.deliverInbox()
@@ -457,8 +482,8 @@ export class Engine {
       let partial = ""
       try {
         const stream = this.client.stream({
-          system: this.o.system(this.mode, this.model),
-          messages: mergeUsers(wrapUp ? [...this.messages, { role: "user", parts: [{ type: "text", text: wrapUpText(ranOut ? "budget" : "step limit") }] }] : this.messages),
+          system: this.o.system(this.mode, this.model, this.plan),
+          messages: mergeUsers(wrapUp ? [...this.messages, { role: "user", parts: [{ type: "text", text: wrapUpText(ranOut ? ranOut.limit : "step limit") }] }] : this.messages),
           tools: wrapUp ? [] : allSpecs.filter((s) => !this.withdrawn.has(s.name) && this.offered(s.name)),
           effort: this.effort,
           signal,
@@ -581,12 +606,15 @@ export class Engine {
         ...this.o.toolCtx,
         signal,
         question: this.o.asker.question ? (req, id) => this.waiting(this.o.asker.question!(req, id)) : undefined,
-        plan: this.o.asker.plan ? (req, id) => this.waiting(this.o.asker.plan!(req, id)) : undefined,
+        plan: {
+          get: () => this.plan,
+          set: (p) => this.setPlan(p),
+          ask: this.o.asker.plan ? (req, id) => this.waiting(this.o.asker.plan!(req, id)) : undefined,
+        },
         setMode: (m) => {
           this.mode = m
           bus.emit({ type: "mode", mode: m })
         },
-        todos: this.todos,
         spawn: this.o.spawn,
       }
       // Consecutive ordinary calls run together (up to MAX_PARALLEL); an exclusive one — it waits

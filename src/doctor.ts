@@ -5,8 +5,9 @@
 // that comes first on PATH, it is what `lembas` runs — and the person typing it gets a Python
 // traceback or a web server instead of this program. install.sh says so when it installs; this says
 // so whenever the configuration is checked.
-import { accessSync, constants, openSync, readSync, closeSync, realpathSync, statSync } from "node:fs"
+import { accessSync, constants, openSync, readSync, closeSync, statSync } from "node:fs"
 import { delimiter, dirname, join } from "node:path"
+import { realPath } from "./permission/evaluate.ts"
 
 /** The first `lembas` on `path`, the way a shell finds it. */
 export function firstOnPath(name: string, path = process.env.PATH ?? ""): string | undefined {
@@ -22,18 +23,10 @@ export function firstOnPath(name: string, path = process.env.PATH ?? ""): string
   return undefined
 }
 
-function real(p: string): string {
-  try {
-    return realpathSync(p)
-  } catch {
-    return p
-  }
-}
-
 /** Whether a file is a Python script (its first line a `#!` naming python). */
 export function isPythonScript(file: string): boolean {
   try {
-    const fd = openSync(real(file), "r")
+    const fd = openSync(realPath(file), "r")
     const buf = Buffer.alloc(300)
     const n = readSync(fd, buf, 0, 300, 0)
     closeSync(fd)
@@ -51,7 +44,7 @@ export function lembasShadowed(o: { path?: string; self?: string } = {}): string
   const self = "self" in o ? o.self : /(^|\/)bun$/.test(process.execPath) ? undefined : process.execPath
   const found = firstOnPath("lembas", o.path)
   if (!found) return undefined
-  if (self && real(found) === real(self)) return undefined
+  if (self && realPath(found) === realPath(self)) return undefined
   const python = isPythonScript(found)
   if (!python && !self) return undefined
   const what = python ? "a Python console script — most likely the LLeMbas server's own `lembas`" : "another program"

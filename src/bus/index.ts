@@ -1,9 +1,9 @@
 import type { Mode } from "../config/schema.ts"
 import type { Decision, PermissionRequest } from "../permission/evaluate.ts"
 import type { Usage } from "../provider/types.ts"
-import type { PlanReply } from "../tool/plan_exit.ts"
-import type { QuestionReply, QuestionRequest } from "../tool/question.ts"
-import type { Todo } from "../tool/todo.ts"
+import type { Plan } from "../plan/plan.ts"
+import type { PlanReply, PlanRequest } from "../tool/plan_submit.ts"
+import type { QuestionReply, QuestionRequest } from "../tool/ask_user.ts"
 import type { ToolResult } from "../tool/tool.ts"
 
 // Everything the engine does is announced here. The TUI, the headless renderer and the tests
@@ -50,7 +50,8 @@ export type Event =
   | { type: "notice"; message: string; level?: "info" | "warn" }
   /** Discard the reply streamed so far in this step: it is being retried. */
   | { type: "retract" }
-  | { type: "todos"; items: Todo[] }
+  /** The session's plan was written, changed or cleared (plan_write, plan_update, /new). */
+  | { type: "plan"; plan: Plan | undefined }
   /** The conversation was replaced by a summary of it (/compact, or automatically). */
   | { type: "compacted"; summary: string }
   /** A subagent's tool call finished (shown under the task line). */
@@ -111,6 +112,6 @@ export interface Asker {
   /** The ask_user tool. Absent: the tool reports that nobody can be asked. `callId`: the tool call's
    *  id, which keys the card on another screen. */
   question?(req: QuestionRequest, callId?: string): Promise<QuestionReply>
-  /** plan_exit. Absent: the plan is saved and the model told to stop. */
-  plan?(req: { path: string; text: string }, callId?: string): Promise<PlanReply>
+  /** plan_submit. Absent: the plan is saved and the model told to stop. */
+  plan?(req: PlanRequest, callId?: string): Promise<PlanReply>
 }

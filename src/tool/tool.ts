@@ -20,7 +20,7 @@ export interface ToolContext {
   /** Instruction files (AGENTS.md / CLAUDE.md) the model has already been given. */
   instructionsSeen?: Set<string>
   /** Ask the user questions (the ask_user tool). Absent where nobody can answer. */
-  question?: (req: import("./question.ts").QuestionRequest, callId?: string) => Promise<import("./question.ts").QuestionReply>
+  question?: (req: import("./ask_user.ts").QuestionRequest, callId?: string) => Promise<import("./ask_user.ts").QuestionReply>
   /** Run a subagent (the task tool). Absent inside a subagent: no recursion. */
   spawn?: (agent: string, prompt: string, signal: AbortSignal, callId?: string, opts?: { worktree?: boolean; description?: string; model?: string }) => Promise<import("./task.ts").SubagentResult>
   /** The id of the call being run (set by the engine per call). */
@@ -29,8 +29,13 @@ export interface ToolContext {
   projectDir?: string
   /** The plans directory (plan mode writes only there). */
   planDir?: string
-  /** Present a plan for approval (plan_submit). Absent where nobody can answer. */
-  plan?: (req: { path: string; text: string }, callId?: string) => Promise<import("./plan_exit.ts").PlanReply>
+  /** The session's plan (plan_write, plan_update, plan_submit): read it, replace it (null clears),
+   *  and present it for approval — `ask` is absent where nobody can answer. */
+  plan?: {
+    get(): import("../plan/plan.ts").Plan | undefined
+    set(plan: import("../plan/plan.ts").Plan | null): void
+    ask?: (req: import("./plan_submit.ts").PlanRequest, callId?: string) => Promise<import("./plan_submit.ts").PlanReply>
+  }
   /** Change the permission mode (plan_submit, on approval). */
   setMode?: (mode: import("../config/schema.ts").Mode) => void
   /** Web search and fetch settings (config `search:`). */
@@ -50,6 +55,9 @@ export interface ToolContext {
     set(key: string, value: unknown, scope?: import("../config/settings.ts").Scope): import("../settings.ts").SetResult
     models(): string[]
   }
+  /** The scope sent on every call to the instance's library (`_meta.lembas.scope`, harness/acp.md):
+   *  the session's id, where the client has said what the session may search. */
+  libraryScope?: string
   /** The library: notes, and the knowledge bases this project searches (all, when
    *  `bases` is undefined); `project` is the scope of this project's notes. */
   library?: {
@@ -58,8 +66,6 @@ export interface ToolContext {
     bases?: string[]
     embedder?: import("../library/store.ts").Embedder
   }
-  /** The session's todo list (the todo tool). */
-  todos?: { items: import("./todo.ts").Todo[]; changed?: (items: import("./todo.ts").Todo[]) => void }
 }
 
 export interface ToolResult {

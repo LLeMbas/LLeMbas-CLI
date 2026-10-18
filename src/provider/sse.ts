@@ -1,5 +1,5 @@
 // Server-sent events → parsed JSON objects. Keep-alive comments and non-data lines are skipped;
-// a malformed frame is skipped rather than killing the reply (LLeMbas openai_client._stream_once).
+// a malformed frame is skipped rather than killing the reply (LLeMbas generation.py, the same rule).
 // Errors are surfaced in every shape seen in the wild — see the comments in `line()`.
 export async function* sseJson(body: ReadableStream<Uint8Array>): AsyncGenerator<{ event?: string; data: unknown }> {
   const decoder = new TextDecoder()

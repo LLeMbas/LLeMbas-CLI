@@ -12,7 +12,7 @@ import { PermissionPrompt } from "./components/permission.tsx"
 import { copiedMessage, copyText } from "./clipboard.ts"
 import { QuestionCard } from "./components/question.tsx"
 import { PlanCard } from "./components/plancard.tsx"
-import { Todos } from "./components/todos.tsx"
+import { PlanPanel } from "./components/plan.tsx"
 import { Prompt, type PaletteEntry } from "./components/prompt.tsx"
 import { FileIndex } from "../project/files.ts"
 import { attachmentsFor } from "../project/attach.ts"
@@ -316,6 +316,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     },
     notice: (text, level) => view.info(text, level),
     changed: () => refresh(),
+    rewound: () => view.load(app.engine.messages),
   })
   cmd.share = share
   view.setCardHooks({
@@ -356,7 +357,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
         // Not mid-task: what changes the session under it, and what sends a prompt of its own
         // (that would start a second turn on top of the running one).
         const midTask = ["new", "delete", "compact", "sessions", "model", "undo", "redo", "commit", "diff", "release", "changelog", "init", "checkpoint", "checkpoints", "branch", "reload", "review", "skill"]
-        if ((busy() || app.turns.current) && (midTask.includes(c.name) || (c.name === "plan" && arg))) return (view.info("wait for the reply to finish (esc stops it)", "warn"), false)
+        if ((busy() || app.turns.current) && (midTask.includes(c.name) || (c.name === "plan" && arg && arg !== "show"))) return (view.info("wait for the reply to finish (esc stops it)", "warn"), false)
         return void c.run(cmd, arg)
       }
       const cc = custom().find((x) => x.name === name)
@@ -538,7 +539,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
           <Messages />
         </scrollbox>
         <box flexShrink={0} flexDirection="column">
-          <Todos />
+          <PlanPanel />
           <Show when={view.state.pending}>
             <PermissionPrompt pending={view.state.pending!} />
           </Show>

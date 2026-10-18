@@ -9,7 +9,7 @@ export function Welcome() {
   return (
     <box border borderStyle="rounded" borderColor={c().border} flexDirection="column" paddingLeft={1} paddingRight={1} marginTop={1} flexShrink={0}>
       <text fg={c().title} attributes={TextAttributes.BOLD}>
-        ☤ {theme().branding.agentName} <span style={{ fg: c().dim, attributes: 0 }}>{VERSION}</span>
+        {theme().branding.agentName} <span style={{ fg: c().dim, attributes: 0 }}>{VERSION}</span>
       </text>
       <text fg={c().text} wrapMode="none" truncate>
         <span style={{ fg: c().label }}>model </span>

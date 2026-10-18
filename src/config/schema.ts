@@ -11,13 +11,13 @@ export const PERSONALITIES = [...PERSONALITY_PRESETS, "custom"] as const
 export const MODE_ALIASES: Record<string, (typeof MODES)[number]> = { unrestricted: "auto" }
 export const ACTIONS = ["allow", "ask", "deny"] as const
 
-export type Dialect = (typeof DIALECTS)[number]
 export type Effort = (typeof EFFORTS)[number]
 export type Mode = (typeof MODES)[number]
 export type Action = (typeof ACTIONS)[number]
 
-/** Permission keys the harness spec renamed (v1), read as the new ones in a config's `permission:`. */
-export const PERMISSION_ALIASES: Record<string, string> = { question: "ask_user", plan_exit: "plan_submit", websearch: "web_search", webfetch: "web_fetch" }
+/** Permission keys the harness spec renamed (v1; 1.1.0 folded todo into the plan tools, whose key
+ *  is `plan`), read as the new ones in a config's `permission:` and in the spec's own defaults. */
+export const PERMISSION_ALIASES: Record<string, string> = { question: "ask_user", plan_exit: "plan_submit", websearch: "web_search", webfetch: "web_fetch", todo: "plan" }
 
 export function renamePermissionKeys(p: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
@@ -235,7 +235,7 @@ export const Config = z.strictObject({
   small_model: z.string().optional().describe("`connection/model` for small jobs — session titles, commit messages. Default: the session's model. On a server that holds one model at a time (llama-swap), another model here swaps."),
   titles: z.enum(["model", "prompt"]).optional().describe("Session titles: model (default) — named from the first prompt, then by the model after its first reply; prompt — only from the first prompt, no extra request."),
   mode: z.enum(MODES).optional().describe("The permission mode a session starts in (default manual)."),
-  theme: z.string().optional().describe("Colours: lembas (default), lembas-light, moria, shire, hermes, mono, or a themes/<name>.yaml of your own."),
+  theme: z.string().optional().describe("Colours: moria (default), shire, lembas, lembas-light, hermes, mono, or a themes/<name>.yaml of your own."),
   theme_background: z.enum(["theme", "terminal"]).optional().describe("theme (default): the theme paints the whole screen; terminal: the terminal's own background shows, and the theme colours only text, panels and accents."),
   skin: z.string().optional().describe("The old name of `theme`; still read when `theme` is not set."),
   busy_input: z.enum(["steer", "queue"]).optional().describe("A message sent while the agent works: steer (default) — it goes in at the next step, after the running tools finish, and the agent carries on with it; queue — it is sent as the next prompt once the task is done."),
@@ -295,6 +295,7 @@ export const Config = z.strictObject({
   effort: z.union([z.enum(EFFORTS), z.literal("off")]).optional().describe("The effort a session starts with, when the model takes it; otherwise the model's own default."),
   settings_tool: z.enum(["ask", "allow", "off"]).optional().describe("Global config only. The agent's settings tool: ask (default) — each change is approved like any tool call; allow — changes go through without asking (a less strict mode still asks); off — no settings tool."),
   update: Update.optional().describe("Global config only. Updating LLeMbas CLI itself."),
+  prototypes: z.boolean().optional().describe("Global config only. Offer the model prototypes: a complete HTML page in a `prototype-chat` or `prototype-page` fence, saved as a file under the state directory (prototypes/<session>/) and listed by /prototype; the LLeMbas web UI renders the same fences live. Default false."),
   library: z.enum(["local", "lembas"]).optional().describe("Global config only. local (default): memory, notes, skills and knowledge on this machine. lembas: the account's on the LLeMbas instance you are logged in to, through its /mcp — the same tools its chats have (needs a login with the library scope)."),
   remote: z
     .strictObject({
