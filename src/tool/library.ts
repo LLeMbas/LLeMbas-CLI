@@ -5,6 +5,7 @@ import { z } from "zod"
 import { resolveBase, SNIPPET_CHARS } from "../library/store.ts"
 import { defineTool, ToolError, type ToolContext } from "./tool.ts"
 import { described } from "../harness.ts"
+import { CLI_VARS } from "./spec-vars.ts"
 
 const MAX_GET = 40_000
 const MAX_NOTE = 20_000
@@ -22,7 +23,16 @@ function noteScopes(ctx: ToolContext) {
 }
 const scopeLabel = (scope: string) => (scope === "global" ? "global" : "project")
 
-function ownNote(ctx: ToolContext, id: number) {
+/** An id as the spec sends it (a string, since 1.2.0: LLeMbas's ids are not numbers), as this
+ *  library's number. A model that sends the number itself is taken at its word too. */
+const Id = z.preprocess((v) => (typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : v), z.string())
+function numeric(id: string, what: string): number {
+  if (!/^\d+$/.test(id)) throw new ToolError(`"${id}" is not ${what} id here: the ids are the numbers in [brackets].`)
+  return Number(id)
+}
+
+function ownNote(ctx: ToolContext, raw: string) {
+  const id = numeric(raw, "a note")
   const { L, scopes } = noteScopes(ctx)
   const n = L.lib.note(id)
   if (!n || !scopes.includes(n.scope)) throw new ToolError(`There is no note ${id} here.`)
@@ -30,7 +40,7 @@ function ownNote(ctx: ToolContext, id: number) {
 }
 
 export const notesSearchTool = defineTool({
-  ...described("notes_search"),
+  ...described("notes_search", CLI_VARS.notes_search),
   access: "notes",
   purpose: false,
   schema: z.object({
@@ -50,7 +60,7 @@ export const noteViewTool = defineTool({
   access: "notes",
   purpose: false,
   schema: z.object({
-    id: z.number().int(),
+    id: Id,
   }),
   permission: (a) => ({ permission: "notes", class: "read", patterns: [String(a.id)] }),
   async run(a, ctx) {
@@ -60,12 +70,12 @@ export const noteViewTool = defineTool({
 })
 
 export const noteManageTool = defineTool({
-  ...described("note_manage"),
+  ...described("note_manage", CLI_VARS.note_manage),
   access: "notes",
   purpose: false,
   schema: z.object({
     action: z.enum(["create", "edit", "delete"]),
-    id: z.number().int().optional(),
+    id: Id.optional(),
     title: z.string().max(200).optional(),
     body: z.string().optional(),
     scope: z.enum(["project", "global"]).optional(),
@@ -130,11 +140,11 @@ export const knowledgeGetTool = defineTool({
   access: "knowledge",
   purpose: false,
   requires: "knowledge",
-  schema: z.object({ id: z.number().int(), offset: z.number().int().min(0).optional() }),
+  schema: z.object({ id: Id, offset: z.number().int().min(0).optional() }),
   permission: () => ({ permission: "knowledge", class: "read", patterns: ["*"] }),
   async run(a, ctx) {
     const L = lib(ctx)
-    const d = L.lib.document(a.id)
+    const d = L.lib.document(numeric(a.id, "a document"))
     if (!d || (L.bases && !L.bases.includes(d.base))) throw new ToolError(`There is no document ${a.id} in this project's knowledge bases.`)
     if (d.error && !d.text) return { output: `[${d.id}] ${d.title}: no text — ${d.error}`, title: d.title, isError: true }
     const from = a.offset ?? 0

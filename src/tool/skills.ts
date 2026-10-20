@@ -9,11 +9,12 @@ import { within, findSkill, globalSkillsDir, INDEX_DESCRIPTION, linkedFiles, loa
 import { replace } from "./replace-text.ts"
 import { defineTool, ToolError, type ToolContext } from "./tool.ts"
 import { described } from "../harness.ts"
+import { CLI_VARS } from "./spec-vars.ts"
 
 const skillsOf = (ctx: ToolContext): Skill[] => ctx.skills?.list() ?? loadSkills()
 
 export const skillsListTool = defineTool({
-  ...described("skills_list"),
+  ...described("skills_list", CLI_VARS.skills_list),
   purpose: false,
   access: "skills",
   schema: z.object({ category: z.string().optional() }),
@@ -28,7 +29,7 @@ export const skillsListTool = defineTool({
 })
 
 export const skillViewTool = defineTool({
-  ...described("skill_view"),
+  ...described("skill_view", CLI_VARS.skill_view),
   purpose: false,
   access: "skills",
   schema: z.object({
@@ -135,7 +136,7 @@ function supportPath(s: { dir: string }, rel?: string): string {
 }
 
 export const skillManageTool = defineTool({
-  ...described("skill_manage"),
+  ...described("skill_manage", CLI_VARS.skill_manage),
   access: "skill_manage",
   schema: z.object({ operations: z.array(Op).min(1).max(20) }),
   permission: (a) => ({ permission: "skill_manage", class: "write", patterns: a.operations.map((o) => `${o.action} ${o.name}`) }),

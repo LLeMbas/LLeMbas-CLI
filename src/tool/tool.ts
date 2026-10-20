@@ -4,7 +4,7 @@ import { z } from "zod"
 import type { PermissionRequest } from "../permission/evaluate.ts"
 import { expandHome } from "../config/paths.ts"
 import type { ToolSpec } from "../provider/types.ts"
-import { PURPOSE_DEF, TOOL_SPECS } from "../harness.ts"
+import { fillParameters, PURPOSE_DEF, TOOL_SPECS } from "../harness.ts"
 
 export interface ToolContext {
   /** Absolute project root. */
@@ -91,6 +91,9 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
   schema: S
   /** The JSON Schema sent to the model, when it does not come from `schema` (MCP tools). */
   jsonSchema?: Record<string, unknown>
+  /** The values of the spec's `{{variables}}` for this tool: its description is filled with them
+   *  already (described), its parameters' descriptions when it is sent (toSpec). */
+  vars?: Record<string, string>
   /** Where the model says what a call is for, shown when the user is asked to allow it: the
    *  `purpose` argument added to every tool (the default), a field of the tool's own (bash's
    *  `description`), or false for a tool that never asks. */
@@ -134,7 +137,7 @@ export function toSpec(t: Tool): ToolSpec {
   if (t.jsonSchema) schema = t.jsonSchema
   // A built-in tool's parameters are the harness spec's, as LLeMbas sends them too; its zod schema
   // validates the call, and tests/harness.test.ts keeps the two the same shape.
-  else if (TOOL_SPECS[t.name]) schema = structuredClone(TOOL_SPECS[t.name]!.parameters)
+  else if (TOOL_SPECS[t.name]) schema = t.vars ? fillParameters(TOOL_SPECS[t.name]!.parameters, t.vars) : structuredClone(TOOL_SPECS[t.name]!.parameters)
   else {
     schema = z.toJSONSchema(t.schema, { target: "draft-7", io: "input" }) as Record<string, unknown>
     delete schema.$schema

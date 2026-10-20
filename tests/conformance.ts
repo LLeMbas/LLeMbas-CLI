@@ -16,6 +16,9 @@ import { apply, fromTodos, normalise, type Plan } from "../src/plan/plan.ts"
 import { ToolCallAccumulator } from "../src/provider/openai-chat.ts"
 import { parseInfo, titleFor } from "../src/prototype/fence.ts"
 import { resolveBase } from "../src/library/store.ts"
+import { NarrowError, narrowParameters, type Narrow } from "../src/harness.ts"
+import { fillPrompt } from "../src/prompt/fill.ts"
+import { applyOps, type Op, type Target } from "../src/memory/store.ts"
 
 type Case = Record<string, unknown>
 
@@ -70,6 +73,26 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
   prototype: (c) => {
     const info = parseInfo(c.info as string)
     return info ? { kind: info.kind, title: titleFor(c.code as string, info.title) } : null
+  },
+  fill: (c) => {
+    try {
+      return { text: fillPrompt(c.text as string, c.vars as Record<string, string>) }
+    } catch (e) {
+      // "prompt: no value for {{a}}, {{c}}": the names, sorted.
+      return { missing: [...(e as Error).message.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]!).sort() }
+    }
+  },
+  narrow: (c) => {
+    try {
+      return { parameters: narrowParameters(c.parameters as Record<string, unknown>, c.narrow as Narrow) }
+    } catch (e) {
+      if (e instanceof NarrowError) return { error: e.code }
+      throw e
+    }
+  },
+  memory: (c) => {
+    const r = applyOps(c.target as Target, c.entries as string[], c.ops as Op[], c.limit as number)
+    return { ok: r.ok, entries: r.ok ? r.after : c.entries, message: r.message, usage: r.usage, shown: Boolean(r.entries) }
   },
   library_scope: (c) => resolveBase(c.bases as { id: string; name: string }[], c.base as string | null),
   toolcall_index: (c) => {

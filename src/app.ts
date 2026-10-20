@@ -371,7 +371,14 @@ export function createApp(o: AppOptions): App {
       background: " For a server, a watcher or anything long, set `background: true`: it returns at once with a job id; read its output with bash_output, list jobs with bash_list, stop one with bash_kill.",
     },
   }
-  const tools: Tool[] = offered.map((t) => (TOOL_SPECS[t.name]?.variables ? { ...t, description: fillDescription(t.description, vars[t.name] ?? {}) } : t))
+  // A tool whose values are its own (the library's, set where it is defined) is filled already;
+  // any other with variables is filled here, and one with none given fails rather than reach the
+  // model with a literal `{{name}}`.
+  const tools: Tool[] = offered.map((t) => {
+    if (!TOOL_SPECS[t.name]?.variables || (t.vars && !vars[t.name])) return t
+    const v = vars[t.name] ?? {}
+    return { ...t, description: fillDescription(t.description, v), vars: { ...t.vars, ...v } }
+  })
   const spawn: NonNullable<EngineOptions["spawn"]> = async (name, prompt, signal, callId, opts = {}) => {
     const spec = agentList.find((a) => a.name === name)
     if (!spec) throw new ToolError(`There is no agent "${name}". The agents are: ${agentList.map((a) => a.name).join(", ")}.`)

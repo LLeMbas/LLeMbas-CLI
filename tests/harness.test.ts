@@ -5,7 +5,7 @@ import { expect, test } from "bun:test"
 import { readdirSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { z } from "zod"
-import { HARNESS_VERSION, PURPOSE_DEF, TOOL_SPECS } from "../src/harness.ts"
+import { fillDescription, HARNESS_VERSION, narrowParameters, PURPOSE_DEF, TOOL_SPECS } from "../src/harness.ts"
 import { createApp, stricterMode } from "../src/app.ts"
 import { paths } from "../src/config/paths.ts"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
@@ -15,7 +15,7 @@ import { promptText } from "../src/prompt/assemble.ts"
 import { normalise, type Plan } from "../src/plan/plan.ts"
 import { canonicalToolNames, resolveCall } from "../src/tool/names.ts"
 import { BUILTIN_TOOLS } from "../src/tool/registry.ts"
-import { purposeKey, type Tool, type ToolContext } from "../src/tool/tool.ts"
+import { purposeKey, toSpec, type Tool, type ToolContext } from "../src/tool/tool.ts"
 
 const HARNESS = join(import.meta.dir, "..", "harness")
 const ours: Tool[] = [...BUILTIN_TOOLS]
@@ -74,7 +74,7 @@ test("every tool the spec gives the CLI is built in, and every built-in tool is 
 for (const t of ours) {
   test(`${t.name}: the spec's parameters, description, flags and risk are this tool's`, () => {
     const s = TOOL_SPECS[t.name]!
-    expect(t.description).toBe(s.description)
+    expect(t.description).toBe(t.vars ? fillDescription(s.description, t.vars) : s.description)
     expect(zodShape(t)).toEqual(shape(s.parameters))
     expect(t.exclusive === true).toBe(s.exclusive)
     expect(purposeKey(t) ?? false).toBe(s.purpose)
@@ -147,6 +147,16 @@ test("the personality presets are shared prompt texts, one paragraph each", () =
   }
 })
 
+test("every narrow in the spec is a subset its project can offer, of a shared tool", () => {
+  for (const s of Object.values(TOOL_SPECS)) {
+    for (const [project, n] of Object.entries(s.narrow ?? {})) {
+      expect(s.scope).toBe("shared")
+      expect(["cli", "llembas"]).toContain(project)
+      expect(() => narrowParameters(s.parameters, n)).not.toThrow()
+    }
+  }
+})
+
 test("modes.json is the modes the CLI has, loosest first, with the same former names", () => {
   const modes = JSON.parse(readFileSync(join(HARNESS, "permission", "modes.json"), "utf8")) as { order: string[]; aliases: Record<string, string>; modes: Record<string, unknown> }
   expect([...MODES].sort() as string[]).toEqual(Object.keys(modes.modes).sort())
@@ -156,14 +166,19 @@ test("modes.json is the modes the CLI has, loosest first, with the same former n
 
 test("every {{variable}} in a description is declared, and none reaches a model", () => {
   for (const s of Object.values(TOOL_SPECS)) {
-    const used = [...s.description.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]!)
+    // In the description, and in any description inside the parameters.
+    const text = s.description + JSON.stringify(s.parameters)
+    const used = [...new Set([...text.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]!))]
     expect(used.sort()).toEqual(Object.keys(s.variables ?? {}).sort())
   }
   mkdirSync(paths.config, { recursive: true })
   writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    dialect: openai-chat\n    base_url: http://127.0.0.1:9/v1\n    models: { m: {} }\n", { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\nlimits: { bash_timeout: 90 }\n")
   const app = createApp({ cwd: mkdtempSync(join(tmpdir(), "ph-vars-")), store: false, snapshots: false, asker: { ask: async () => ({ kind: "once" }) } })
-  for (const t of app.engine.o.tools) expect(t.description).not.toContain("{{")
+  for (const t of app.engine.o.tools) {
+    expect(t.description).not.toContain("{{")
+    expect(JSON.stringify(toSpec(t).parameters)).not.toContain("{{")
+  }
   const bash = app.engine.o.tools.find((t) => t.name === "bash")!
   expect(bash.description).toContain("default 90 seconds, `timeout` up to 10 minutes). For a server")
   expect(PURPOSE_DEF.schema).toEqual({ type: "string", description: expect.stringContaining("what this call is for") })

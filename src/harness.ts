@@ -37,6 +37,7 @@ import t_view_image from "../harness/tools/view_image.json"
 import t_web_fetch from "../harness/tools/web_fetch.json"
 import t_web_search from "../harness/tools/web_search.json"
 import t_write from "../harness/tools/write.json"
+import { fillPrompt } from "./prompt/fill.ts"
 
 export interface ToolSpecDef {
   name: string
@@ -57,6 +58,8 @@ export interface ToolSpecDef {
   argument_aliases?: Record<string, string>
   /** `{{name}}` in the description: a fact the projects differ in, filled in by each (fillDescription). */
   variables?: Record<string, string>
+  /** What a project offers of the parameters, where it offers less than all (narrowParameters). */
+  narrow?: Partial<Record<"cli" | "llembas", Narrow>>
   description: string
   parameters: Record<string, unknown>
 }
@@ -77,22 +80,84 @@ export const LOOP: {
 /** The `purpose` argument (harness/purpose.json). */
 export const PURPOSE_DEF: { name: string; schema: Record<string, unknown> } = PURPOSE
 
-/** A description with its `{{variables}}` filled in. A variable left unfilled is an error: it
- *  would reach the model as a literal `{{name}}`. */
+/** A description with its `{{variables}}` filled in, by the prompt texts' rules (fillPrompt): a
+ *  line that is only a bullet and a variable goes when the value is empty, and a variable left
+ *  unfilled is an error — it would reach the model as a literal `{{name}}` (conformance: fill). */
 export function fillDescription(description: string, vars: Record<string, string>): string {
-  return description.replace(/\{\{(\w+)\}\}/g, (m, k: string) => {
-    if (!Object.hasOwn(vars, k)) throw new Error(`harness: no value for {{${k}}} in a tool description`)
-    return vars[k]!
-  })
+  try {
+    return fillPrompt(description, vars)
+  } catch (e) {
+    throw new Error(`harness: ${(e as Error).message.replace(/^prompt: /, "")} in a tool description`)
+  }
+}
+
+/** A tool's parameters with every `description` in them filled the same way. */
+export function fillParameters(parameters: Record<string, unknown>, vars: Record<string, string>): Record<string, unknown> {
+  const walk = (o: unknown): unknown => {
+    if (Array.isArray(o)) return o.map(walk)
+    if (!o || typeof o !== "object") return o
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(o)) out[k] = k === "description" && typeof v === "string" ? fillDescription(v, vars) : walk(v)
+    return out
+  }
+  return walk(parameters) as Record<string, unknown>
+}
+
+/** What one project offers of a shared tool's parameters: optional properties left out (`drop`),
+ *  a property's values narrowed (`enum`). `a.b` is b inside a, `a[].b` b inside a's items. */
+export interface Narrow {
+  drop?: string[]
+  enum?: Record<string, string[]>
+}
+
+export class NarrowError extends Error {
+  constructor(readonly code: "required" | "unknown" | "not_subset", path: string) {
+    super(`harness: cannot narrow ${path}: ${code}`)
+  }
+}
+
+/** The parameters as a project offers them: a subset, never more and never retyped
+ *  (conformance: narrow). The spec's own object is not changed. */
+export function narrowParameters(parameters: Record<string, unknown>, narrow: Narrow = {}): Record<string, unknown> {
+  const out = structuredClone(parameters)
+  type Obj = { properties?: Record<string, Record<string, unknown>>; required?: string[]; items?: Obj }
+  const locate = (path: string): { parent: Obj; key: string } => {
+    let node = out as Obj
+    const steps = path.split(".")
+    for (const [i, raw] of steps.entries()) {
+      const items = raw.endsWith("[]")
+      const key = items ? raw.slice(0, -2) : raw
+      const props = node.properties
+      if (!props || !Object.hasOwn(props, key)) throw new NarrowError("unknown", path)
+      if (i === steps.length - 1 && !items) return { parent: node, key }
+      const next = props[key] as Obj
+      node = items ? (next.items as Obj) : next
+      if (!node) throw new NarrowError("unknown", path)
+    }
+    throw new NarrowError("unknown", path)
+  }
+  for (const path of narrow.drop ?? []) {
+    const { parent, key } = locate(path)
+    if (parent.required?.includes(key)) throw new NarrowError("required", path)
+    delete parent.properties![key]
+  }
+  for (const [path, values] of Object.entries(narrow.enum ?? {})) {
+    const { parent, key } = locate(path)
+    const own = parent.properties![key]!.enum as unknown[] | undefined
+    if (!own || !values.every((v) => own.includes(v))) throw new NarrowError("not_subset", path)
+    parent.properties![key]!.enum = own.filter((v) => values.includes(v as string))
+  }
+  return out
 }
 
 export const TOOL_SPECS: Record<string, ToolSpecDef> = Object.fromEntries(
   ([t_apply_patch, t_ask_user, t_bash, t_bash_kill, t_bash_list, t_bash_output, t_decisions, t_edit, t_glob, t_grep, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_multiedit, t_note_manage, t_note_view, t_notes_search, t_plan_submit, t_plan_update, t_plan_write, t_read, t_session_search, t_settings, t_skill_manage, t_skill_view, t_skills_list, t_task, t_tasks, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
 )
 
-/** A tool's name and description as the spec has them, for its definition: `...described("read")`. */
-export function described(name: string): { name: string; description: string } {
+/** A tool's name and description as the spec has them, for its definition: `...described("read")`.
+ *  With `vars`, the description filled and the values kept for its parameters (toSpec). */
+export function described(name: string, vars?: Record<string, string>): { name: string; description: string; vars?: Record<string, string> } {
   const t = TOOL_SPECS[name]
   if (!t) throw new Error(`harness: no tool ${name} in the spec`)
-  return { name: t.name, description: t.description }
+  return vars ? { name: t.name, description: fillDescription(t.description, vars), vars } : { name: t.name, description: t.description }
 }

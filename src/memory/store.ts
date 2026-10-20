@@ -20,6 +20,8 @@ const HEADERS: Record<Target, string> = { memory: "MEMORY (your personal notes)"
 export interface Op {
   action: "add" | "replace" | "remove"
   content?: string
+  /** Another name for content. */
+  new_text?: string
   old_text?: string
 }
 
@@ -29,6 +31,59 @@ export interface Outcome {
   /** On a failure the model can fix by consolidating: what is there now. */
   entries?: string[]
   usage: string
+  /** The entries after the change (applyOps): to be saved when ok. */
+  after?: string[]
+}
+
+const size = (entries: string[]) => entries.join(DELIMITER).length
+
+/** How full a target is: "12% — 164/1,375 chars". */
+export function usageOf(entries: string[], limit: number): string {
+  const n = size(entries)
+  return `${limit > 0 ? Math.min(100, Math.floor((n / limit) * 100)) : 0}% — ${n.toLocaleString("en")}/${limit.toLocaleString("en")} chars`
+}
+
+/** One target's entries changed by `ops`, all together or not at all; the size limit is checked
+ *  on the result only, so one call can make room and add, and a change that does not grow the
+ *  entries always goes through. Pure: the harness spec's conformance area `memory`, which LLeMbas
+ *  runs through its own implementation. `check` refuses an entry's text (threats, here). */
+export function applyOps(t: Target, before: string[], ops: Op[], limit: number, check?: (content: string) => string | undefined): Outcome {
+  const work = [...before]
+  const fail = (message: string, show = false): Outcome => ({ ok: false, message: ops.length > 1 ? `${message} Nothing was changed (the operations go together or not at all).` : message, usage: usageOf(before, limit), ...(show ? { entries: before } : {}) })
+  if (!ops.length) return fail("Nothing to do: give action (with content and/or old_text), or operations.")
+  for (const [i, op] of ops.entries()) {
+    const at = ops.length > 1 ? `operation ${i + 1}: ` : ""
+    const content = (op.content ?? op.new_text)?.trim() ?? ""
+    if (op.action !== "remove") {
+      if (!content) return fail(`${at}${op.action} needs content${op.action === "replace" ? " — the complete new entry" : ""}.`)
+      const threat = check?.(content)
+      if (threat) return fail(`${at}${threat}`)
+      if (/(^|\n)[ \t]*§[ \t]*(\n|$)/.test(content)) return fail(`${at}a line holding only "§" separates entries; it cannot be inside one.`)
+      if (content.length > MAX_ENTRY) return fail(`${at}an entry is one fact, under ${MAX_ENTRY} characters; this one is ${content.length}. Split it into facts, or keep only what will still matter.`)
+    }
+    if (op.action === "add") {
+      if (!work.includes(content)) work.push(content)
+      continue
+    }
+    if (!op.old_text?.trim())
+      return fail(`${at}${op.action} needs old_text: a short unique part of the entry to ${op.action}.${op.action === "replace" ? " content is the COMPLETE new entry; the whole matched entry is overwritten." : ""}`, true)
+    const hit = findEntry(work, op.old_text.trim())
+    if (hit.ambiguous) return fail(`${at}"${op.old_text}" matches more than one entry — use a longer, unique part.`, true)
+    if (hit.index === undefined) return fail(`${at}no entry contains "${op.old_text}".`, true)
+    if (op.action === "remove") work.splice(hit.index, 1)
+    else work[hit.index] = content
+  }
+  // Over the limit already (it was lowered, or the file edited)? Anything that does not grow it
+  // still goes through, so "forget X" always works.
+  if (size(work) > limit && size(work) > size(before))
+    return fail(
+      `${t === "user" ? "The user profile" : "Memory"} would be ${size(work).toLocaleString("en")}/${limit.toLocaleString("en")} chars. Consolidate in the same call: replace overlapping entries with one shorter entry, or remove stale ones, together with the add.`,
+      true,
+    )
+  const unique = [...new Set(work)]
+  const first = ops[0]!
+  const message = ops.length > 1 ? `Applied ${ops.length} operations.` : first.action === "add" && before.includes((first.content ?? first.new_text)!.trim()) ? "That entry already exists; nothing added." : `Entry ${first.action === "add" ? "added" : first.action === "replace" ? "replaced" : "removed"}.`
+  return { ok: true, message, usage: usageOf(unique, limit), after: unique }
 }
 
 export const memoryDir = () => join(paths.config, "memory")
@@ -69,12 +124,8 @@ export class MemoryStore {
     return existsSync(f) ? parseEntries(readFileSync(f, "utf8")) : []
   }
 
-  private size = (entries: string[]) => entries.join(DELIMITER).length
-
   usage(t: Target, entries = this.entries(t)): string {
-    const n = this.size(entries)
-    const limit = this.limits[t]
-    return `${limit > 0 ? Math.min(100, Math.floor((n / limit) * 100)) : 0}% — ${n.toLocaleString("en")}/${limit.toLocaleString("en")} chars`
+    return usageOf(entries, this.limits[t])
   }
 
   private save(t: Target, entries: string[]) {
@@ -120,41 +171,9 @@ export class MemoryStore {
 
   private applyNow(t: Target, ops: Op[]): Outcome {
     const before = this.entries(t)
-    const work = [...before]
-    const fail = (message: string, show = false): Outcome => ({ ok: false, message: ops.length > 1 ? `${message} Nothing was changed (the operations go together or not at all).` : message, usage: this.usage(t, before), ...(show ? { entries: before } : {}) })
-    for (const [i, op] of ops.entries()) {
-      const at = ops.length > 1 ? `operation ${i + 1}: ` : ""
-      const content = op.content?.trim() ?? ""
-      if (op.action !== "remove") {
-        if (!content) return fail(`${at}${op.action} needs content${op.action === "replace" ? " — the complete new entry" : ""}.`)
-        const threat = threatMessage(content, "The entry")
-        if (threat) return fail(`${at}${threat}`)
-        if (/(^|\n)[ \t]*§[ \t]*(\n|$)/.test(content)) return fail(`${at}a line holding only "§" separates entries; it cannot be inside one.`)
-        if (content.length > MAX_ENTRY) return fail(`${at}an entry is one fact, under ${MAX_ENTRY} characters; this one is ${content.length}. Split it into facts, or keep only what will still matter.`)
-      }
-      if (op.action === "add") {
-        if (!work.includes(content)) work.push(content)
-        continue
-      }
-      if (!op.old_text?.trim())
-        return fail(`${at}${op.action} needs old_text: a short unique part of the entry to ${op.action}.${op.action === "replace" ? " content is the COMPLETE new entry; the whole matched entry is overwritten." : ""}`, true)
-      const hit = findEntry(work, op.old_text.trim())
-      if (hit.ambiguous) return fail(`${at}"${op.old_text}" matches more than one entry — use a longer, unique part.`, true)
-      if (hit.index === undefined) return fail(`${at}no entry contains "${op.old_text}".`, true)
-      if (op.action === "remove") work.splice(hit.index, 1)
-      else work[hit.index] = content
-    }
-    const limit = this.limits[t]
-    // Over the limit already (it was lowered, or the file edited)? Anything that does not grow it
-    // still goes through, so "forget X" always works.
-    if (this.size(work) > limit && this.size(work) > this.size(before))
-      return fail(
-        `${t === "user" ? "The user profile" : "Memory"} would be ${this.size(work).toLocaleString("en")}/${limit.toLocaleString("en")} chars. Consolidate in the same call: replace overlapping entries with one shorter entry, or remove stale ones, together with the add.`,
-        true,
-      )
-    const unique = [...new Set(work)]
-    if (unique.join("\u0000") !== before.join("\u0000")) this.save(t, unique)
-    return { ok: true, message: ops.length > 1 ? `Applied ${ops.length} operations.` : ops[0]!.action === "add" && before.includes(ops[0]!.content!.trim()) ? "That entry already exists; nothing added." : `Entry ${ops[0]!.action === "add" ? "added" : ops[0]!.action === "replace" ? "replaced" : "removed"}.`, usage: this.usage(t, unique) }
+    const r = applyOps(t, before, ops, this.limits[t], (content) => threatMessage(content, "The entry"))
+    if (r.ok && r.after!.join("\u0000") !== before.join("\u0000")) this.save(t, r.after!)
+    return r
   }
 
   /** The system-prompt block for one target, or "" when it is empty. */
