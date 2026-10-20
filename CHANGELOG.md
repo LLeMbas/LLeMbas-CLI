@@ -6,6 +6,31 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-20
+
+Harness spec 1.2.0: the library's tools are the same tools in LLeMbas.
+
+### Changed
+
+- The harness spec's memory, notes and skills tools now fit both projects. The CLI's facts in
+  their descriptions — memory files and targets, project notes, supporting files, project skills,
+  `session_search` — are the spec's `variables`, filled with the CLI's own values, so what a model
+  is sent here is word for word what it was; LLeMbas sends the same tools with its own facts
+  (LLeMbas 1.5.0). A CLI linked to an instance (`library: lembas`) therefore sees `memory`,
+  `note_view`, `note_manage`, `skills_list`, `skill_view` and `skill_manage` whether the library is
+  its own or the instance's, where it used to see the instance's `memory_add`, `notes_create` and
+  the rest.
+- Note and knowledge-document ids are strings in the tools' parameters, as they are on an instance;
+  the number is still accepted.
+- Tool descriptions are filled by the prompt texts' rules, and the descriptions inside a tool's
+  parameters are filled too.
+
+### Added
+
+- `narrow` in the harness spec: what a project offers of a shared tool's parameters where it offers
+  less than all. Three conformance areas, run by both projects: `fill`, `narrow`, and `memory` —
+  one change or a batch, applied together, against the size limit, messages included.
+
 ## [1.3.0] — 2026-10-18
 
 Harness spec 1.1.0: planning as one structure shared with LLeMbas.
