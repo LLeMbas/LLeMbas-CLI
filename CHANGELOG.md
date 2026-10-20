@@ -6,6 +6,8 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-10-20
+
 Harness spec 2.0.0: background work is one thing — a job — for commands and subagents alike, and
 the person sees it.
 
