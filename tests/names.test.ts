@@ -35,6 +35,14 @@ test("a call under a former name runs the tool it now is, with its arguments", (
   expect(canonicalToolNames(["read", "webfetch", "notes"])).toEqual(["read", "web_fetch", "notes_search", "note_view", "note_manage"])
 })
 
+test("spec 2.0.0: bash_output, bash_list and bash_kill are job_output, job_list and job_stop, in calls and in permission rules", () => {
+  expect(resolveCall("bash_output", { id: "job1" })).toEqual({ name: "job_output", raw: { id: "job1" } })
+  expect(resolveCall("bash_list", {}).name).toBe("job_list")
+  expect(resolveCall("bash_kill", { id: "job2" }).name).toBe("job_stop")
+  expect(canonicalToolNames(["bash", "bash_output"])).toEqual(["bash", "job_output"])
+  expect(renamePermissionKeys({ bash_output: "deny", bash_kill: "ask", job_list: "allow" })).toEqual({ job_output: "deny", job_stop: "ask", job_list: "allow" })
+})
+
 test("a todo call is a plan_write of one phase called Work, its statuses translated", () => {
   const r = resolveCall("todo", { todos: [{ content: "Read the code", status: "completed" }, { content: "Fix it", status: "in_progress" }, "Test it", { content: "Old idea", status: "cancelled" }] })
   expect(r.name).toBe("plan_write")

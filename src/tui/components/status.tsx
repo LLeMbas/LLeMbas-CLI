@@ -9,8 +9,19 @@ export function fmtTokens(n: number): string {
   return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 }
 
-/** One line: mode · model · effort on the left; context use and where on the right — or, for a
- *  moment, a flash (a copy) in their place. */
+/** The status bar's word for the session's jobs: the running count, `!` when one ended unseen or
+ *  holds output the model has not read; nothing while there is nothing to say. */
+export function jobsWord(jobs: { state: string; unread: number; unseen?: boolean }[]): string {
+  const running = jobs.filter((j) => j.state === "running").length
+  const news = jobs.some((j) => j.unseen || j.unread > 0)
+  if (!running && !news) return ""
+  return `${running} job${running === 1 ? "" : "s"}${news ? "!" : ""}`
+}
+
+/** One line: mode · model · effort on the left; the jobs, context use and where on the right — or,
+ *  for a moment, a flash (a copy) in their place. The jobs word sits on the right, which is never
+ *  truncated: at 80 columns a long project name cuts the left short, and a running job is the one
+ *  thing that must stay visible. */
 export function StatusBar(p: { mode: () => string; model: () => string; effort: () => string; branch?: string; voice?: () => string; flash?: () => string | undefined; remote?: () => string; credits?: () => string }) {
   const { theme, view, app } = useTui()
   const c = () => theme().colors
@@ -39,6 +50,7 @@ export function StatusBar(p: { mode: () => string; model: () => string; effort: 
         when={p.flash?.()}
         fallback={
           <text wrapMode="none">
+            <span style={{ fg: jobsWord(view.state.jobs).endsWith("!") ? c().statusWarn : c().statusText }}>{jobsWord(view.state.jobs) ? `${jobsWord(view.state.jobs)} · ` : ""}</span>
             <span style={{ fg: c().statusDim }}>{view.state.rate ? `${Math.round(view.state.rate)} tok/s · ` : ""}</span>
             <span style={{ fg: c().statusText }}>{p.credits?.() ? `${p.credits()} · ` : ""}</span>
             <span style={{ fg: ctx().color }}>{ctx().text}</span>

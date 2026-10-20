@@ -21,8 +21,20 @@ export interface ToolContext {
   instructionsSeen?: Set<string>
   /** Ask the user questions (the ask_user tool). Absent where nobody can answer. */
   question?: (req: import("./ask_user.ts").QuestionRequest, callId?: string) => Promise<import("./ask_user.ts").QuestionReply>
-  /** Run a subagent (the task tool). Absent inside a subagent: no recursion. */
-  spawn?: (agent: string, prompt: string, signal: AbortSignal, callId?: string, opts?: { worktree?: boolean; description?: string; model?: string }) => Promise<import("./task.ts").SubagentResult>
+  /** Start a subagent (the task tool): a handle on its job, whose `done` is its report. `signal`:
+   *  the parent's turn, which stops a synchronous subagent with it — never wired for a background
+   *  one. Absent inside a subagent: no recursion. */
+  spawn?: (agent: string, prompt: string, opts: SpawnOptions) => Promise<SubagentHandleInfo>
+  /** Background jobs (jobs/registry.ts): the registry, and whose jobs these tools see — the
+   *  session's, or a subagent's own (`job`: the subagent's job, which `report` speaks for). */
+  jobs?: { registry: import("../jobs/registry.ts").JobRegistry; owner(): { sessionId: string; job?: import("../jobs/registry.ts").Job } }
+  /** false: a foreground command is killed at its timeout rather than moved to the background —
+   *  the TUI's own `!` commands, which no model owns. Default true. */
+  bashTimeline?: boolean
+  /** Aborted when the person wants the foreground command of this step in the background now
+   *  (the TUI's ctrl+b): bash hands it to the registry as it would at its timeout. Set by the
+   *  engine for the step's calls. */
+  backgroundNow?: AbortSignal
   /** The id of the call being run (set by the engine per call). */
   callId?: string
   /** The project directory (.agent), when the project has one. */
@@ -66,6 +78,21 @@ export interface ToolContext {
     bases?: string[]
     embedder?: import("../library/store.ts").Embedder
   }
+}
+
+export interface SpawnOptions {
+  signal?: AbortSignal
+  callId?: string
+  worktree?: boolean
+  description?: string
+  model?: string
+  background?: boolean
+}
+
+/** What the task tool gets back from spawn: the job's id and the report when it ends. */
+export interface SubagentHandleInfo {
+  id: string
+  done: Promise<import("./task.ts").SubagentResult>
 }
 
 export interface ToolResult {

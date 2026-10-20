@@ -45,12 +45,17 @@ export interface EngineOptions {
   /** The model to switch to when this one's server cannot be reached (its `fallback` list), or
    *  undefined when there is none left to try. */
   fallback?: (current: ResolvedModel, tried: Set<string>) => { model: ResolvedModel; client: Client; effort: Effort | null } | undefined
+  /** What a message sent mid-turn starts with: the user's words for a session, the main agent's for
+   *  a subagent (loop.json jobs.marks to_subagent). */
+  steerMark?: string
 }
 
 /** What a prompt carries besides its text. */
 export interface PromptMeta {
   turnId?: string
   attachments?: AttachmentInfo[]
+  /** The harness started this turn — a job's note — not the person. */
+  machine?: true
 }
 
 const MAX_PARALLEL = LOOP.parallel.max
@@ -62,7 +67,8 @@ const PRUNED = "[This output was removed to save context. Run the tool again if 
 export const CONTINUE_PROMPT = continueText.replace(/<!--[\s\S]*?-->\n?/g, "").trim()
 
 export const STEER_MARK = "[The user sent this while you were working — take it into account from here:]"
-export const JOB_MARK = "[A background job you started has finished:]"
+/** The mark on a finished command's note (the spec's text; jobs/note.ts composes the notes). */
+export const JOB_MARK = LOOP.jobs.marks.command
 
 /** Neighbouring user messages as one: a message sent mid-turn after the image message, or after a
  *  nudge, would otherwise be two user turns in a row, which strict chat templates (llama.cpp's
@@ -110,9 +116,9 @@ export class Engine {
   private inbox: string[] = []
   /** Beside the inbox, entry for entry: the id the sender gave a message (the web UI's message id), so where it was taken in can be shown at that point of the reply. */
   private inboxIds: (string | undefined)[] = []
-  /** What happened while the task ran that is not the user's word: background jobs that finished.
-   *  Given to the model at the next step, like a steer; left over at the end, `takeNotes` hands
-   *  them out to start a turn of their own. */
+  /** What happened while the task ran that is not the user's word: background jobs that finished,
+   *  a subagent's message. Each begins with its mark (jobs/note.ts). Given to the model at the next
+   *  step, like a steer; left over at the end, `takeNotes` hands them out to start a turn of their own. */
   private notes: string[] = []
   /** Those given to the model in this turn: kept word for word through a compaction, like the prompt. */
   private turnSteers: string[] = []
@@ -130,6 +136,8 @@ export class Engine {
   private turnOutputBytes = 0
   private turnCompletion = 0
   private abort: AbortController | undefined
+  /** The step's "background now" signal (ToolContext.backgroundNow), while its tools run. */
+  private bgNow: AbortController | undefined
 
   constructor(readonly o: EngineOptions) {
     this.mode = o.mode
@@ -357,6 +365,14 @@ export class Engine {
     this.abort?.abort()
   }
 
+  /** The person wants the foreground command running in this step in the background now (ctrl+b):
+   *  bash hands it to the job registry and the call returns. False when no tools run. */
+  backgroundNow(): boolean {
+    if (!this.bgNow || this.bgNow.signal.aborted) return false
+    this.bgNow.abort()
+    return true
+  }
+
   /** A message the user sent while a task runs. It goes to the model at the next step (steer), or
    *  is held for the task's end (queue, or a turn that ends first): `takeInbox` gives it back. */
   enqueue(text: string, id?: string) {
@@ -394,7 +410,8 @@ export class Engine {
     return texts
   }
 
-  /** A background job ended while a task runs: it goes to the model at the next step. */
+  /** A background job ended while a task runs: it goes to the model at the next step. The text
+   *  carries its own mark. */
   note(text: string) {
     this.notes.push(text)
   }
@@ -408,14 +425,15 @@ export class Engine {
   private deliverInbox(): boolean {
     const notes = this.notes.splice(0)
     if (notes.length) {
-      this.push({ role: "user", parts: [{ type: "text", text: `${JOB_MARK}\n${notes.join("\n\n")}` }] })
-      this.o.bus.emit({ type: "notice", message: notes.map((n) => n.split("\n")[0]!).join("; ") })
+      this.push({ role: "user", parts: [{ type: "text", text: notes.join("\n\n") }] })
+      // Said as what happened, not as its mark: the line after it.
+      this.o.bus.emit({ type: "notice", message: notes.map((n) => n.split("\n").find((l, i) => i > 0 && l.trim()) ?? n.split("\n")[0]!).join("; ") })
     }
     if (this.busyInput !== "steer" || !this.inbox.length) return notes.length > 0
     const texts = this.inbox.splice(0)
     const ids = this.inboxIds.splice(0).filter((i): i is string => typeof i === "string")
     this.turnSteers.push(...texts)
-    this.push({ role: "user", parts: [{ type: "text", text: `${STEER_MARK}\n${texts.join("\n\n")}` }] })
+    this.push({ role: "user", parts: [{ type: "text", text: `${this.o.steerMark ?? STEER_MARK}\n${texts.join("\n\n")}` }] })
     this.o.bus.emit({ type: "steered", texts, ...(ids.length ? { ids } : {}) })
     this.o.bus.emit({ type: "inbox", texts: [], mode: this.busyInput })
     return true
@@ -431,19 +449,19 @@ export class Engine {
   async prompt(text: string, extra: (string | ImagePart)[] = [], shown = text, meta: PromptMeta = {}): Promise<"stop" | "steps" | "budget" | "cancelled" | "error"> {
     if (this.busy) throw new Error("busy")
     this.busy = true
-    this.o.bus.emit({ type: "prompt", text: shown, ...(meta.turnId ? { turnId: meta.turnId } : {}), ...(meta.attachments?.length ? { attachments: meta.attachments } : {}) })
+    this.o.bus.emit({ type: "prompt", text: shown, ...(meta.turnId ? { turnId: meta.turnId } : {}), ...(meta.attachments?.length ? { attachments: meta.attachments } : {}), ...(meta.machine ? { machine: true as const } : {}) })
     try {
-      return await this.run(text, [...this.pendingContext.splice(0), ...extra], meta.turnId)
+      return await this.run(text, [...this.pendingContext.splice(0), ...extra], meta.turnId, meta.machine)
     } finally {
       this.busy = false
     }
   }
 
-  private async run(text: string, extra: (string | ImagePart)[], turnId?: string): Promise<"stop" | "steps" | "budget" | "cancelled" | "error"> {
+  private async run(text: string, extra: (string | ImagePart)[], turnId?: string, machine?: true): Promise<"stop" | "steps" | "budget" | "cancelled" | "error"> {
     const { bus } = this.o
     this.abort = new AbortController()
     const signal = this.abort.signal
-    this.push({ role: "user", parts: [{ type: "text", text }, ...extra.map((t) => (typeof t === "string" ? { type: "text" as const, text: t } : t))], ...(turnId ? { turnId } : {}) })
+    this.push({ role: "user", parts: [{ type: "text", text }, ...extra.map((t) => (typeof t === "string" ? { type: "text" as const, text: t } : t))], ...(turnId ? { turnId } : {}), ...(machine ? { machine } : {}) })
     this.turnPrompt = this.messages[this.messages.length - 1]
     this.turnSteers = []
     this.autoCompactions = 0
@@ -602,9 +620,12 @@ export class Engine {
           if (decided.denied) bus.emit({ type: "tool_denied", id: call.id, name: call.name, reason: decided.result.output })
         } else runnable.push({ call, ...decided })
       }
+      const bgNow = new AbortController()
+      this.bgNow = bgNow
       const toolCtx: ToolContext = {
         ...this.o.toolCtx,
         signal,
+        backgroundNow: bgNow.signal,
         question: this.o.asker.question ? (req, id) => this.waiting(this.o.asker.question!(req, id)) : undefined,
         plan: {
           get: () => this.plan,
@@ -646,6 +667,7 @@ export class Engine {
           }),
         )
       }
+      this.bgNow = undefined
       const images: ImagePart[] = []
       for (const call of calls) {
         const r = results.get(call.id) ?? { output: "Not run: the reply was cancelled.", isError: true }

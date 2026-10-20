@@ -25,6 +25,7 @@ import { NOBODY_TO_ASK, type Answer, type QuestionReply, type QuestionRequest } 
 import { nobodyToApprove, type PlanReply, type PlanRequest } from "../tool/plan_submit.ts"
 import { realPath } from "../permission/evaluate.ts"
 import type { Plan } from "../plan/plan.ts"
+import type { JobInfo } from "../jobs/registry.ts"
 import { PLAN_META } from "../session/engine.ts"
 import { ToolError } from "../tool/tool.ts"
 import { dropAttachments, preparePrompt, storedAttachments } from "./prompt.ts"
@@ -40,6 +41,7 @@ import { CWD_META, REMOTE_META, Store } from "../session/store.ts"
 import type { Message } from "../provider/types.ts"
 import type { Hub } from "./hub.ts"
 import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
+import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs } from "./jobs.ts"
 
 export const ACP_VERSION = 1
 /** The `_lembas/*` extension's version (LLeMbas `api/devices.py:PROTOCOL`). 2: every
@@ -154,8 +156,10 @@ export function toolKind(name: string): string {
   if (["read", "list", "view_image"].includes(name)) return "read"
   if (["write", "edit", "multiedit", "apply_patch"].includes(name)) return "edit"
   if (["glob", "grep", "session_search", "knowledge_search", "notes_search"].includes(name)) return "search"
-  if (["bash", "bash_output", "bash_kill"].includes(name)) return "execute"
+  if (["bash", "job_stop"].includes(name)) return "execute"
+  if (["job_output", "job_list"].includes(name)) return "read"
   if (["web_fetch", "web_search"].includes(name)) return "fetch"
+  // A message between agents (job_send, report) is nothing the kinds name.
   return "other"
 }
 
@@ -266,6 +270,10 @@ export const CAPABILITIES = [
   "prototypes",
   "plan_state",
   "rewind",
+  // Harness spec 2.0.0: the session's background jobs — the `job` and `job_note` events, the
+  // `_lembas/jobs` and `_lembas/job/*` methods, `jobs` in `status`, `job` on an approval, and a
+  // note's turn marked `machine`.
+  "jobs",
 ] as const
 export const STOP: Record<string, string> = { stop: "end_turn", steps: "max_turn_requests", budget: "max_tokens", cancelled: "cancelled", error: "end_turn" }
 
@@ -291,7 +299,16 @@ export function permissionParams(sessionId: string, req: AskRequest, o: { patien
       ...(offerAlways ? [{ optionId: "session", kind: "allow_always", name: "Always, this session" }] : []),
       { optionId: "deny", kind: "reject_once", name: "Deny" },
     ],
-    _meta: { lembas: { reason: req.decision.reason, purpose: req.purpose, always: req.decision.always ?? req.request.always, ...(o.patient ? { patient: true } : {}) } },
+    _meta: {
+      lembas: {
+        reason: req.decision.reason,
+        purpose: req.purpose,
+        always: req.decision.always ?? req.request.always,
+        ...(o.patient ? { patient: true } : {}),
+        // Which subagent asks (capability jobs), so the card can say — it may ask while the session itself is idle.
+        ...(req.source ? { job: { id: req.source.jobId, agent: req.source.agent, description: req.source.description } } : {}),
+      },
+    },
   }
 }
 
@@ -442,6 +459,11 @@ export class AcpAgent {
     peer.handle("_lembas/terminal/open", (p) => this.terminalOpen(p))
     peer.handle("_lembas/files/search", (p) => this.filesSearch(p))
     peer.handle("_lembas/commands", (p) => this.commands(p))
+    peer.handle("_lembas/jobs", (p) => this.jobs(p))
+    peer.handle("_lembas/job/output", (p) => this.job("output", p))
+    peer.handle("_lembas/job/stop", (p) => this.job("stop", p))
+    peer.handle("_lembas/job/send", (p) => this.job("send", p))
+    peer.handle("_lembas/job/transcript", (p) => this.job("transcript", p))
     peer.on("_lembas/terminal/input", (p) => this.terminalInput(p))
     peer.on("_lembas/terminal/resize", (p) => this.terminalResize(p))
     peer.on("_lembas/terminal/close", (p) => this.terminalClose(String(p?.terminalId ?? "")))
@@ -963,9 +985,9 @@ export class AcpAgent {
     if (t) {
       // The terminal knows its turns; what the hub saw of them, when it cannot be asked.
       const turns = await t.client
-        .request<{ turnId?: string; queued?: string[]; lastTurnId?: string; plan?: Plan | null }>("hub/status", { sessionId: t.sessionId }, 3000)
-        .catch(() => ({ ...(t.turnId ? { turnId: t.turnId } : {}), queued: [], ...(t.lastTurnId ? { lastTurnId: t.lastTurnId } : {}), plan: this.storedPlan(id) }))
-      return { sessionId: id, exists: true, held: "terminal", busy: t.busy, title: t.title, ...turns, queued: turns.queued ?? [], plan: turns.plan ?? null }
+        .request<{ turnId?: string; queued?: string[]; lastTurnId?: string; plan?: Plan | null; jobs?: JobInfo[] }>("hub/status", { sessionId: t.sessionId }, 3000)
+        .catch(() => ({ ...(t.turnId ? { turnId: t.turnId } : {}), queued: [], ...(t.lastTurnId ? { lastTurnId: t.lastTurnId } : {}), plan: this.storedPlan(id), jobs: this.storedJobsOf(id) }))
+      return { sessionId: id, exists: true, held: "terminal", busy: t.busy, title: t.title, ...turns, queued: turns.queued ?? [], plan: turns.plan ?? null, jobs: turns.jobs ?? [] }
     }
     const s = this.sessions.get(id)
     if (s)
@@ -979,11 +1001,46 @@ export class AcpAgent {
         queued: s.turns.queued(),
         ...(s.turns.last ? { lastTurnId: s.turns.last } : {}),
         plan: s.app.engine.plan ?? null,
+        jobs: jobList(s.app),
       }
     const row = (this.store ??= new Store()).session(id)
-    // Not open: the last turn it finished, as kept across a restart, and its plan as stored.
+    // Not open: the last turn it finished, as kept across a restart, its plan and its jobs as stored.
     const last = row ? turnStore(id).load().at(-1)?.[0] : undefined
-    return { sessionId: id, exists: Boolean(row), held: "none", busy: false, title: row?.title ?? "", queued: [], ...(last ? { lastTurnId: last } : {}), plan: row ? this.storedPlan(id) : null }
+    return { sessionId: id, exists: Boolean(row), held: "none", busy: false, title: row?.title ?? "", queued: [], ...(last ? { lastTurnId: last } : {}), plan: row ? this.storedPlan(id) : null, jobs: row ? this.storedJobsOf(id) : [] }
+  }
+
+  /** A stored session's jobs (capability `jobs`), or none. */
+  private storedJobsOf(id: string): JobInfo[] {
+    try {
+      return storedJobs((this.store ??= new Store()), id)
+    } catch {
+      return []
+    }
+  }
+
+  /** `_lembas/jobs`: the session's background jobs, running first — the terminal's through the
+   *  hub when a terminal has it, as `status` goes. */
+  private async jobs(p: any) {
+    const t = this.terminalFor(p)
+    if (t) return t.client.request("hub/job", { sessionId: t.sessionId, op: "list" }, 15_000)
+    return { jobs: jobList(this.get(p).app) }
+  }
+
+  /** `_lembas/job/output`, `/stop`, `/send`, `/transcript` (acp/jobs.ts): one job of the session. */
+  private async job(op: "output" | "stop" | "send" | "transcript", p: any) {
+    const t = this.terminalFor(p)
+    if (t) return t.client.request("hub/job", { sessionId: t.sessionId, op, id: p?.id, since: p?.since, text: p?.text }, 15_000)
+    const app = this.get(p).app
+    switch (op) {
+      case "output":
+        return jobOutput(app, p?.id, p?.since)
+      case "stop":
+        return jobStop(app, p?.id)
+      case "send":
+        return jobSend(app, p?.id, p?.text)
+      case "transcript":
+        return jobTranscript(app, p?.id)
+    }
   }
 
   /** A stored session's plan (the engine keeps it under PLAN_META), or null. */
@@ -1028,6 +1085,8 @@ export class AcpAgent {
     const s = this.sessions.get(id)
     if (s) {
       s.app.cancel()
+      // Its jobs go with it: nothing is left running for a session that no longer exists.
+      s.app.registry.stopAll(id)
       await s.queue?.catch(() => {})
       this.sessions.delete(id)
       await s.app.close().catch(() => {})

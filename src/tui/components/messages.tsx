@@ -113,6 +113,13 @@ function Reasoning(p: { item: Extract<Item, { kind: "reasoning" }> }) {
   )
 }
 
+/** How a job is doing, in a word or two: `running…`, `done · 1m 12s`, `stopped · 4s`. */
+export function jobWords(j: { state: string; started: number; ended?: number; exit?: number | null }): string {
+  if (j.state === "running") return "running…"
+  const took = duration((j.ended ?? Date.now()) - j.started, true)
+  return `${j.state}${j.state !== "lost" && j.exit !== undefined && j.exit !== null && j.exit !== 0 ? ` (exit ${j.exit})` : ""} · ${took}`
+}
+
 function ToolLine(p: { item: Extract<Item, { kind: "tool" }> }) {
   const { theme, view } = useTui()
   const c = () => theme().colors
@@ -134,6 +141,14 @@ function ToolLine(p: { item: Extract<Item, { kind: "tool" }> }) {
           <span style={{ fg: c().error }}> ✗</span>
         </Show>
       </text>
+      <Show when={p.item.job}>
+        <text wrapMode="none" truncate>
+          <span style={{ fg: c().dim }}>{"    → "}</span>
+          <span style={{ fg: c().label }}>{p.item.job!.id}</span>
+          <span style={{ fg: c().muted }}>{` (${p.item.job!.agent ? `${p.item.job!.agent}: ` : ""}${p.item.job!.description})`}</span>
+          <span style={{ fg: p.item.job!.state === "running" ? c().accent : p.item.job!.state === "error" || p.item.job!.state === "lost" ? c().error : c().dim }}>{` ${jobWords(p.item.job!)}`}</span>
+        </text>
+      </Show>
       <For each={p.item.children ?? []}>
         {(ch) => (
           <text wrapMode="none" truncate>

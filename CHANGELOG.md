@@ -6,6 +6,84 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+Harness spec 2.0.0: background work is one thing — a job — for commands and subagents alike, and
+the person sees it.
+
+### Added
+
+- **Subagents in the background.** `task` takes `background: true`: the call returns at once with
+  a job id and the model carries on; the subagent's report arrives as a message in the
+  conversation when it ends — at the next step while the model works, as a turn of its own
+  otherwise. A running subagent can be messaged (`job_send`: given to it at its next step) and a
+  finished one started again with its context intact; a subagent can message the main agent
+  before its final reply (`report`: a finding to act on now, or a question). Approval cards from
+  a subagent say which one asks.
+- **A subagent has a session of its own**, kept with the parent: its transcript survives a
+  resume and can be read later; `/sessions` and `session_search` leave children out.
+- **`job_list`, `job_output`, `job_stop`, `job_send`** replace `bash_list`, `bash_output` and
+  `bash_kill` (which still work as former names, and a rule written for them still applies): one
+  list of the session's background commands and subagents, one way to read, stop and message.
+- **Jobs belong to the session** that started them, not to the process: another session's jobs
+  are invisible, ids run per session, and a job's end note goes to its own session — kept for it
+  when it is not open, delivered when it is resumed. Jobs are stored: a resumed session lists
+  what finished while it was away, and a job the process died under is shown as lost with the
+  output it had.
+- **Jobs in the terminal.** The status bar counts the session's running jobs (`2 jobs`, with `!`
+  when one ended unseen or has output the model has not read). `/jobs` lists them — kind, id,
+  description or command, state, duration — and from there `Enter` opens one and `k` stops it: a
+  command opens as its live output; a subagent is *entered*, its transcript shown in the
+  conversation's place with a header saying where it is, and anything typed goes to it (a
+  finished one starts again with the message, context intact). `Esc` leaves. `/jobs <id>` and
+  `/jobs stop <id>` do the same from the prompt. A background call's line shows its job under it
+  (`→ job7 (explore: description) running…`), and an approval card from a subagent names it.
+- **Ctrl+B** moves the command the model is running in the foreground to the background now;
+  the call returns with what it had printed and the job id.
+- Quitting (`/quit`, Ctrl+C twice, Ctrl+D on an empty box) or `/reload` with jobs running asks
+  first: `N jobs running — stop them and quit?`
+- **Over the link** (capability `jobs`, harness spec 2.0.0): a LLeMbas server lists a session's
+  jobs, reads a job's output, stops one, messages a subagent and reads its transcript
+  (`_lembas/jobs`, `_lembas/job/output|stop|send|transcript`); `job` and `job_note` events, the
+  jobs in `_lembas/session/status`, the subagent on an approval request, and a job's note as a
+  `machine` prompt. A session a terminal holds answers the same through the hub.
+- `limits.jobs` (background commands a session may run at once, default 8) and
+  `limits.subagent_steps` (a subagent's step backstop, default 50) in the configuration.
+- `lembas -p` waits for the jobs the prompt started and gives the model their notes before it
+  exits (`--no-wait` skips that); `/agents` lists and describes agents over the link too.
+
+### Changed
+
+- **A command's `timeout` is when it stops blocking, not when it dies.** A foreground `bash`
+  still running at its timeout (default `limits.bash_timeout`, 2 minutes) goes on in the
+  background as a job, and the call returns what it had printed with the job id; `Esc` still
+  kills it, so does `job_stop`. `background: true` returns at once instead of after 300 ms.
+- A finished job wakes the model in every front end — the terminal, `lembas -p` and a session
+  the web UI holds — where it used to reach only the terminal, and there as an unmarked message
+  to whatever session was open. Every such message now carries its mark, and the terminal shows
+  it as the harness's turn, not the person's.
+- A stopped command reads "stopped (SIGTERM)" rather than "exited with null".
+- The subagent's preamble and the built-in `explore` and `general` instructions are prompt texts
+  of the harness spec (`blocks/subagent.md`, `agents/*.md`), shared with the server; a subagent
+  is no longer told about `plan_write` and `ask_user`, which it does not have, nor about
+  `skill_view` when it lacks it. `explore` gets the job tools; every subagent gets `report`.
+- The capacity rule also counts the subagents already running.
+
+### Fixed
+
+- A subagent in a worktree that was stopped or failed kept its branch silently; the branch is
+  named in its report now. In a worktree, the edit-mode guard and the plan directory pointed at
+  the main checkout's `.agent`.
+- A subagent's error or notice was dropped: its report said `ended: error` with no message.
+- `/reload` with background jobs running lost them as orphans; so did quitting with one that
+  ignored SIGTERM (the kill timer never fired at exit). A command whose child kept stdout open
+  stayed "running" after it had exited.
+- An agent file with broken YAML frontmatter was silently taken as having none; it is reported
+  at start.
+- A `!command` in the terminal could not be stopped.
+- Headless runs opened a second line-reader for a parallel subagent's approval.
+- Ctrl+D on an empty prompt quit only in a comment; it does now.
+- `bun test` ran with a 5-second timeout per test, whatever `bunfig.toml` said: Bun 1.4 does not
+  read `[test] timeout`. The test script and `scripts/ci.sh` pass `--timeout` explicitly.
+
 ## [1.4.0] — 2026-10-20
 
 Harness spec 1.2.0: the library's tools are the same tools in LLeMbas.

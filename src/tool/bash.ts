@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process"
 import { z } from "zod"
-import { getJob, killJob, listJobs, startJob } from "./jobs.ts"
 import { absPath, defineTool, showPath, ToolError, truncate } from "./tool.ts"
 import { duration } from "../duration.ts"
 import { described } from "../harness.ts"
+import { commandLine } from "../jobs/note.ts"
 
 // git run by the model reads a repository's own config, which can name programs to run (an external
 // diff, an fsmonitor, a pager) — and "git diff", "git show", "git status" are allowed unasked. These
@@ -21,7 +21,7 @@ if (outerTmp !== undefined) {
   if (outerTmp) startEnv.TMPDIR = outerTmp
   else delete startEnv.TMPDIR
 }
-const ENV = {
+export const ENV = {
   ...startEnv,
   // A command can tell it runs under the agent.
   LEMBAS: "1",
@@ -32,6 +32,11 @@ const ENV = {
   GIT_CONFIG_COUNT: String(GIT_SAFE.length),
   ...Object.fromEntries(GIT_SAFE.flatMap(([k, v], i) => [[`GIT_CONFIG_KEY_${i}`, k], [`GIT_CONFIG_VALUE_${i}`, v]])),
 }
+
+/** How long a background start waits for a first line before returning. */
+const FIRST_OUTPUT_MS = 100
+/** Output a foreground command keeps; past it the oldest goes, as a job's buffer does. */
+const MAX_BUFFER = 2_000_000
 
 export const bashTool = defineTool({
   ...described("bash"),
@@ -50,19 +55,31 @@ export const bashTool = defineTool({
   },
   async run(a, ctx) {
     const cwd = absPath(a.cwd ?? ".", ctx)
+    const line = a.description ?? commandLine(a.command, 80)
     if (a.background) {
-      const job = startJob(a.command, cwd, ENV)
-      await Bun.sleep(300)
-      const early = job.output
-      job.read = early.length
+      if (!ctx.jobs) throw new ToolError("Background commands are not available here.")
+      const { sessionId, job: owner } = ctx.jobs.owner()
+      let job
+      try {
+        job = ctx.jobs.registry.start({ sessionId, command: a.command, cwd, env: ENV, ownerCallId: ctx.callId, ownerJobId: owner?.id, description: a.description })
+      } catch (e) {
+        throw new ToolError((e as Error).message)
+      }
+      // Whatever it says in its first moment goes with the answer — a port in use, a missing
+      // program — without waiting for a command that starts quietly.
+      const until = Date.now() + FIRST_OUTPUT_MS
+      while (Date.now() < until && job.state === "running" && !job.output) await Bun.sleep(10)
+      const early = ctx.jobs.registry.takeUnread(job)
+      const ended = job.state !== "running" ? ` It has already ${job.exit === null ? "stopped (SIGTERM)" : `exited with ${job.exit}`}.` : ""
       return {
-        output: `Started in the background as ${job.id} (pid ${job.child.pid}).${job.exit !== undefined ? ` It has already exited with ${job.exit}.` : ""}${early ? `\nFirst output:\n${truncate(early, 4000)}` : ""}\nRead more with bash_output, stop it with bash_kill.`,
-        title: `${a.description ?? a.command.split("\n")[0]!.slice(0, 80)} · background ${job.id}`,
+        output: `Started in the background as ${job.id}.${ended}${early ? `\nFirst output:\n${truncate(early, 4000)}` : ""}\nRead more with job_output, stop it with job_stop.`,
+        title: `${line} · background ${job.id}`,
         meta: { job: job.id },
       }
     }
     const timeout = a.timeout ?? ctx.bashTimeoutMs
-    // Own process group, so a timeout or cancel takes the whole tree down.
+    const started = Date.now()
+    // Own process group, so a cancel takes the whole tree down.
     const child = spawn("bash", ["-c", `exec 2>&1\n${a.command}`], {
       cwd,
       detached: true,
@@ -70,9 +87,11 @@ export const bashTool = defineTool({
       env: ENV,
     })
     let out = ""
-    child.stdout!.on("data", (d: Buffer) => {
-      if (out.length < 2_000_000) out += d.toString()
-    })
+    const onData = (d: Buffer) => {
+      out += d.toString()
+      if (out.length > MAX_BUFFER) out = out.slice(out.length - MAX_BUFFER)
+    }
+    child.stdout!.on("data", onData)
     let killed = ""
     const kill = (why: string) => {
       killed = why
@@ -82,73 +101,70 @@ export const bashTool = defineTool({
           try {
             process.kill(-child.pid!, "SIGKILL")
           } catch {}
-        }, 2000)
+        }, 2000).unref()
       } catch {}
     }
-    const timer = setTimeout(() => kill(`timed out after ${duration(timeout, true)}`), timeout)
+    // At the timeout the command is not killed: it goes on as a background job, and the call
+    // returns what it had printed with the job id (the timeline). Only when there is a session to
+    // own the job; the TUI's own `!` commands (bashTimeline: false) are killed as before.
+    const timeline = ctx.bashTimeline !== false && ctx.jobs !== undefined
     const onAbort = () => kill("cancelled")
     ctx.signal.addEventListener("abort", onAbort, { once: true })
-    const code: number | null = await new Promise((res) => child.on("close", (c) => res(c)))
-    clearTimeout(timer)
+    // The person asked for it in the background now (ctrl+b): the same hand-over, before the timeout.
+    let onBackground: (() => void) | undefined
+    const outcome = await new Promise<{ kind: "exit"; code: number | null } | { kind: "timeout"; why: "timeout" | "user" }>((res) => {
+      let exited = false
+      let settled = false
+      const settle = (v: { kind: "exit"; code: number | null } | { kind: "timeout"; why: "timeout" | "user" }) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        res(v)
+      }
+      if (timeline && ctx.backgroundNow) {
+        onBackground = () => settle({ kind: "timeout", why: "user" })
+        ctx.backgroundNow.addEventListener("abort", onBackground, { once: true })
+      }
+      // `close` means every pipe is drained; after `exit` a grandchild may hold them open for ever,
+      // so a short drain is all it gets.
+      child.on("close", (code) => exited && settle({ kind: "exit", code: child.signalCode ? null : code }))
+      child.on("exit", (code, signal) => {
+        exited = true
+        setTimeout(() => settle({ kind: "exit", code: signal ? null : code }), 300).unref()
+      })
+      child.on("error", () => settle({ kind: "exit", code: null }))
+      const timer = setTimeout(() => {
+        if (timeline) settle({ kind: "timeout", why: "timeout" })
+        else kill(`timed out after ${duration(timeout, true)}`)
+      }, timeout)
+    })
+    // Whatever happens to the parent's turn from here is not this process's business: a cancel
+    // after the hand-over must not kill a job the model was told about.
     ctx.signal.removeEventListener("abort", onAbort)
-    const status = killed ? killed : `exit ${code ?? "?"}`
+    if (onBackground) ctx.backgroundNow!.removeEventListener("abort", onBackground)
+    if (outcome.kind === "timeout") {
+      // From here the registry follows the process; this call stops listening.
+      child.stdout!.off("data", onData)
+      const { sessionId, job: owner } = ctx.jobs!.owner()
+      const job = ctx.jobs!.registry.adopt({ sessionId, command: a.command, cwd, child, output: out, read: out.length, started, ownerCallId: ctx.callId, ownerJobId: owner?.id, description: a.description })
+      const status =
+        outcome.why === "user"
+          ? `the user moved it to the background after ${duration(Date.now() - started, true)}, as ${job.id} — job_output to read on`
+          : `still running after ${duration(timeout, true)}; moved to the background as ${job.id} — job_output to read on`
+      return {
+        output: `${truncate(out.trimEnd()) || "(no output yet)"}\n\n[${status}]`,
+        title: `${line} · background ${job.id}`,
+        isError: false,
+        meta: { job: job.id, cwd: showPath(cwd, ctx) },
+      }
+    }
+    const code = outcome.code
+    const status = killed ? killed : code === null ? "stopped (SIGTERM)" : `exit ${code}`
     return {
       output: `${truncate(out.trimEnd()) || "(no output)"}\n\n[${status}]`,
-      title: `${a.description ?? a.command.split("\n")[0]!.slice(0, 80)} · ${status}`,
+      title: `${line} · ${status}`,
       isError: killed !== "" || code !== 0,
       meta: { exit: code, cwd: showPath(cwd, ctx) },
     }
-  },
-})
-
-export const bashOutputTool = defineTool({
-  ...described("bash_output"),
-  purpose: false,
-  access: "bash_output",
-  schema: z.object({ id: z.string(), wait: z.number().min(0).max(60).optional() }),
-  permission: () => ({ permission: "bash_output", class: "read", patterns: ["*"] }),
-  async run(a, ctx) {
-    const job = getJob(a.id)
-    if (!job) throw new ToolError(`No background job ${a.id}.`)
-    const until = Date.now() + (a.wait ?? 0) * 1000
-    while (Date.now() < until && job.exit === undefined && job.output.length === job.read && !ctx.signal.aborted) await Bun.sleep(200)
-    const fresh = job.output.slice(job.read)
-    job.read = job.output.length
-    const state = job.exit === undefined ? "still running" : `exited with ${job.exit}`
-    return { output: `${truncate(fresh.trimEnd()) || "(no new output)"}\n\n[${job.id} ${state}]`, title: `${job.id} · ${state}` }
-  },
-})
-
-export const bashKillTool = defineTool({
-  ...described("bash_kill"),
-  purpose: false,
-  access: "bash_kill",
-  schema: z.object({ id: z.string() }),
-  permission: () => ({ permission: "bash_kill", class: "execute", patterns: ["*"] }),
-  async run(a) {
-    const job = getJob(a.id)
-    if (!job) throw new ToolError(`No background job ${a.id}.`)
-    if (job.exit !== undefined) return { output: `${job.id} had already exited with ${job.exit}.`, title: `${job.id} · already exited` }
-    killJob(job)
-    return { output: `Stopped ${job.id} (${job.command.split("\n")[0]}).`, title: `${job.id} · stopped` }
-  },
-})
-
-export const bashListTool = defineTool({
-  ...described("bash_list"),
-  purpose: false,
-  access: "bash_output",
-  schema: z.object({}),
-  permission: () => ({ permission: "bash_output", class: "read", patterns: ["*"] }),
-  async run() {
-    const jobs = listJobs()
-    if (!jobs.length) return { output: "No background jobs.", title: "0 jobs" }
-    const now = Date.now()
-    const lines = jobs.map((j) => {
-      const state = j.exit === undefined ? "running" : `exited with ${j.exit}`
-      const unread = j.output.length > j.read ? " · new output" : ""
-      return `${j.id} · ${state} · ${duration(now - j.started, true)}${unread} · ${j.command.split("\n")[0]!.slice(0, 120)}`
-    })
-    return { output: lines.join("\n"), title: `${jobs.length} jobs` }
   },
 })

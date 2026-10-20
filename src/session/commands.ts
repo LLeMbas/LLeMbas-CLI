@@ -32,7 +32,7 @@ export interface CommandInfo {
  *  the built-in wins — so it is not one here either, even where the built-in is not offered. */
 export const TUI_COMMAND_NAMES = [
   "agents", "continue", "help", "model", "effort", "mode", "plan", "plans", "prototype", "review", "changelog", "init", "release", "tasks", "decisions", "decide",
-  "sessions", "resume", "remote", "delete", "new", "clear", "copy", "undo", "redo", "diff", "checkpoint", "checkpoints", "branch", "commit", "context",
+  "jobs", "sessions", "resume", "remote", "delete", "new", "clear", "copy", "undo", "redo", "diff", "checkpoint", "checkpoints", "branch", "commit", "context",
   "compact", "memory", "skills", "skill", "personality", "voice", "speak", "mcp", "login", "logout", "settings", "usage", "kb", "theme", "skin", "terminal",
   "icons", "trust", "reload", "restart", "quit", "exit", "q",
 ] as const
@@ -46,7 +46,25 @@ export const SHARED_BUILTINS: { name: string; description: string; hint?: string
   { name: "changelog", description: "update CHANGELOG.md's Unreleased section from the commits since the last tag", hint: "since" },
   { name: "init", description: "make or update the project's AGENTS.md from what the repository says", hint: "what to focus on" },
   { name: "continue", description: "carry on — after esc stopped it, or when it should keep going (ctrl+g)" },
+  { name: "agents", description: "subagents: list them, make one, or hand one a task", hint: "name" },
 ]
+
+/** `/agents [name]`: the subagents the task tool offers, or one of them — the text both the TUI and
+ *  a client over ACP show. Making one (`new`) and handing one a task need a screen: the TUI's. */
+export function agentsText(app: App, arg: string): string {
+  const list = app.agents
+  const describe = (a: (typeof list)[number]) =>
+    [
+      `${a.name} (${a.source}) — ${a.description}`,
+      `  model ${a.model ?? "the session's"} · mode ${a.mode ?? "the session's"} · tools ${a.tools?.join(", ") ?? "all a subagent may have"}${a.isolation ? " · own worktree" : ""}`,
+    ].join("\n")
+  const name = arg.trim().split(/\s+/)[0]
+  if (name) {
+    const one = list.find((a) => a.name === name)
+    return one ? describe(one) : `no agent "${name}" — ${list.map((a) => a.name).join(", ")}`
+  }
+  return [...list.map(describe), "", 'The model hands work to one through its task tool when that helps; you can ask it to ("use the explore subagent to…").'].join("\n")
+}
 
 const reserved = new Set<string>(TUI_COMMAND_NAMES)
 
@@ -154,6 +172,10 @@ export function expandSlash(app: App, text: string): Expanded | undefined {
       return arg ? { kind: "prompt", name, prompt: arg, shown: arg, attachFrom: arg, mode: "plan" } : { kind: "action", name, arg }
     case "continue":
       return { kind: "prompt", name, prompt: CONTINUE_PROMPT, shown: "↻ continue", attachFrom: "" }
+    case "agents":
+      // List and describe anywhere; `new` and `<name> <task>` are the TUI's own.
+      if (/^(new)\b/.test(arg) || arg.trim().split(/\s+/).length > 1) return { kind: "message", name, text: "/agents here lists and describes the subagents; making one or handing one a task is done at the terminal." }
+      return { kind: "message", name, text: agentsText(app, arg) }
     case "init":
       // The prompt is ours; only what was typed after the name may attach files.
       return { kind: "prompt", name, prompt: initPrompt(app, arg), shown: t, attachFrom: arg }

@@ -15,6 +15,7 @@ import { commandSet, sourcesOf } from "../session/commands.ts"
 import type { PlanReply, PlanRequest } from "../tool/plan_submit.ts"
 import type { QuestionReply, QuestionRequest } from "../tool/ask_user.ts"
 import { clampMode, effortOf, markRemote, permissionParams, planParams, planReplyFrom, questionParams, questionReplyFrom, replyFrom, STOP, type PromptResult } from "./agent.ts"
+import { jobList, jobOutput, jobSend, jobStop, jobTranscript } from "./jobs.ts"
 import type { SessionContext } from "../app.ts"
 import { sessionTurnFile, sessionTurns, type TurnLog } from "./turns.ts"
 import { dropAttachments, preparePrompt } from "./prompt.ts"
@@ -501,7 +502,26 @@ export class Share {
     // The terminal's turns: `_lembas/session/status` for a shared session asks here.
     peer.handle("hub/status", (p) => {
       this.mine(p)
-      return { ...(this.turns.running ? { turnId: this.turns.running } : {}), queued: this.turns.queued(), ...(this.turns.last ? { lastTurnId: this.turns.last } : {}), plan: this.app.engine.plan ?? null }
+      return { ...(this.turns.running ? { turnId: this.turns.running } : {}), queued: this.turns.queued(), ...(this.turns.last ? { lastTurnId: this.turns.last } : {}), plan: this.app.engine.plan ?? null, jobs: jobList(this.app) }
+    })
+    // The session's jobs (capability `jobs`): `_lembas/jobs` and `_lembas/job/*` for a session
+    // this terminal has open are answered here, by the same code the agent uses for its own.
+    peer.handle("hub/job", async (p) => {
+      this.mine(p)
+      switch (p?.op) {
+        case "list":
+          return { jobs: jobList(this.app) }
+        case "output":
+          return jobOutput(this.app, p?.id, p?.since)
+        case "stop":
+          return jobStop(this.app, p?.id)
+        case "send":
+          return jobSend(this.app, p?.id, p?.text)
+        case "transcript":
+          return jobTranscript(this.app, p?.id)
+        default:
+          throw new RpcError(INVALID_PARAMS, `no such job operation: ${String(p?.op ?? "")}`)
+      }
     })
     // The web UI is editing or regenerating from a turn: that turn and the later ones go, as /undo
     // drops one — the files stay.

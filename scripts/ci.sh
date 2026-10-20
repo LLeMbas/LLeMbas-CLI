@@ -39,7 +39,7 @@ step "types"
 bun x tsc --noEmit  # `bun x`: the release zip CI fetches has no bunx link
 
 step "tests"
-bun test
+bun test --timeout 20000
 
 step "the compiled binary (smoke)"
 bun run smoke

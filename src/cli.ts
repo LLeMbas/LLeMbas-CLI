@@ -8,7 +8,7 @@ import { ConfigError, loadConfig } from "./config/load.ts"
 import { asMode, EFFORTS, MODES, type Effort, type Mode } from "./config/schema.ts"
 import { isLocal, localRoot } from "./config/paths.ts"
 import { SettingError } from "./config/settings.ts"
-import { renderJson, renderPlain, terminalAsker } from "./headless.ts"
+import { renderJson, renderPlain, settleJobs, terminalAsker } from "./headless.ts"
 import { enterLocal, localFor, LocalError, localRefusal, localTmp, LOCAL_FLAGS } from "./project/local.ts"
 import { findProject, setTrust, trustOf } from "./project/root.ts"
 import { effortsFor } from "./provider/effort.ts"
@@ -86,6 +86,7 @@ Options for run:
       --json                events as JSON lines
       --reasoning           show the model's reasoning
       --no-store            do not record the session
+      --no-wait             do not wait for background jobs the prompt started; stop them
 `
 
 function fail(msg: string, code = 1): never {
@@ -264,6 +265,7 @@ async function main() {
         json: { type: "boolean" },
         reasoning: { type: "boolean" },
         "no-store": { type: "boolean" },
+        "no-wait": { type: "boolean" },
       },
     })
     let prompt = positionals.join(" ").trim()
@@ -291,7 +293,10 @@ async function main() {
     // connect timeout; a failure is a notice, not a stop).
     await app.mcpReady
     const atts = attachmentsFor(prompt, app.engine.o.toolCtx, app.engine.model.spec.vision === true)
-    const reason = await app.engine.prompt(prompt, atts.flatMap((a) => (a.image ? [a.text, a.image] : [a.text])))
+    // Through the turns, like every front end: a job's note wakes the session the same way.
+    const reason = await app.turns.prompt(prompt, atts.flatMap((a) => (a.image ? [a.text, a.image] : [a.text])))
+    // Jobs the prompt started: their notes come back as turns of their own, unless told not to wait.
+    await settleJobs(app, !values["no-wait"])
     // Refused before the prompt was written (capacity, a cancel at once): no empty session is left
     // to crowd `lembas sessions`. Never shared, so nobody else is told.
     app.discardIfEmpty()

@@ -17,7 +17,7 @@ export type Event =
    *  `turnId`: the turn it starts, the web UI's message id or one made here, so a client
    *  matches the turn to its own row by id rather than by timing. `attachments`: what went with it
    *  (pasted images, @files, a web upload), for chips beside the text. */
-  | { type: "prompt"; text: string; turnId?: string; attachments?: AttachmentInfo[] }
+  | { type: "prompt"; text: string; turnId?: string; attachments?: AttachmentInfo[]; /** The harness started the turn, not the person: a job's note (jobs/note.ts), beginning with its mark. */ machine?: true }
   | { type: "step"; n: number }
   /** The session was named (or renamed). */
   | { type: "title"; id: string; title: string }
@@ -54,8 +54,14 @@ export type Event =
   | { type: "plan"; plan: Plan | undefined }
   /** The conversation was replaced by a summary of it (/compact, or automatically). */
   | { type: "compacted"; summary: string }
-  /** A subagent's tool call finished (shown under the task line). */
-  | { type: "sub_tool"; callId: string; name: string; title: string; isError?: boolean }
+  /** A subagent's tool call finished (shown under the task line); `jobId`: its job, when it runs as one. */
+  | { type: "sub_tool"; callId: string; jobId?: string; name: string; title: string; isError?: boolean }
+  /** A background job of the session began, has news (new output, a subagent's step — at most four
+   *  a second per job), or ended (jobs/registry.ts). */
+  | { type: "job"; state: "start" | "update" | "end"; job: import("../jobs/registry.ts").JobInfo }
+  /** The note about that job was given to the model: inside a turn at its next step, or as the
+   *  `machine` turn whose `prompt` follows. */
+  | { type: "job_note"; jobId: string; text: string }
   /** The permission mode changed from inside a turn (plan approved). */
   | { type: "mode"; mode: Mode }
   /** The session's model or effort changed, for whatever reason — /model, /effort, the settings
@@ -108,7 +114,18 @@ export type AskReply =
 /** Whoever answers permission questions: the TUI's dialog, a y/n prompt, or a policy in headless runs. */
 export interface Asker {
   /** `preview`: the change the call would make (a unified diff), or why it could not be worked out. */
-  ask(req: { tool: string; args: unknown; request: PermissionRequest; decision: Decision; preview?: { diff?: string; error?: string }; /** What the model says the call is for. */ purpose?: string }): Promise<AskReply>
+  ask(req: {
+    tool: string
+    args: unknown
+    request: PermissionRequest
+    decision: Decision
+    preview?: { diff?: string; error?: string }
+    /** What the model says the call is for. */
+    purpose?: string
+    /** Set when a subagent running as a background job asks, so the card can say which — it may
+     *  ask while the session itself is idle. */
+    source?: { jobId: string; agent: string; description: string }
+  }): Promise<AskReply>
   /** The ask_user tool. Absent: the tool reports that nobody can be asked. `callId`: the tool call's
    *  id, which keys the card on another screen. */
   question?(req: QuestionRequest, callId?: string): Promise<QuestionReply>

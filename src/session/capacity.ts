@@ -25,6 +25,22 @@ export function capacityRefusal(main: ResolvedModel, helper: ResolvedModel): str
   return ""
 }
 
+/** The same rule between two subagents: a new one is not started where its model would unload, or
+ *  take the only slot of, a subagent already running (the spec's "beside the model of a subagent
+ *  already running"). */
+export function capacityBeside(running: ResolvedModel, helper: ResolvedModel): string {
+  if (helper.ref === running.ref) {
+    if (helper.spec.single_session) return `${helper.ref} serves one request at a time (single_session), and a subagent is already running on it; a second would wait for the first, or push it out.`
+    return ""
+  }
+  const shared = groupOf(running)
+  if (shared !== undefined && shared === groupOf(helper)) {
+    const where = running.spec.group !== undefined ? `${running.ref}'s server (group ${running.spec.group})` : running.connectionName
+    return `${where} holds one model at a time, and a subagent is already running on ${running.ref} there; one on ${helper.ref} would unload it.`
+  }
+  return ""
+}
+
 /** Which one-model-at-a-time server a model is on: its own `group`, else its connection when the
  *  connection sets one_model_at_a_time, else none. The spec's capacity.group. */
 function groupOf(m: ResolvedModel): string | undefined {

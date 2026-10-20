@@ -17,7 +17,7 @@ export type Action = (typeof ACTIONS)[number]
 
 /** Permission keys the harness spec renamed (v1; 1.1.0 folded todo into the plan tools, whose key
  *  is `plan`), read as the new ones in a config's `permission:` and in the spec's own defaults. */
-export const PERMISSION_ALIASES: Record<string, string> = { question: "ask_user", plan_exit: "plan_submit", websearch: "web_search", webfetch: "web_fetch", todo: "plan" }
+export const PERMISSION_ALIASES: Record<string, string> = { question: "ask_user", plan_exit: "plan_submit", websearch: "web_search", webfetch: "web_fetch", todo: "plan", bash_output: "job_output", bash_list: "job_list", bash_kill: "job_stop" }
 
 export function renamePermissionKeys(p: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
@@ -267,7 +267,9 @@ export const Config = z.strictObject({
   limits: z
     .strictObject({
       steps: z.number().int().positive().optional().describe("Most model steps in one prompt (default 200) — a runaway backstop, not a budget."),
-      bash_timeout: z.number().positive().optional().describe("Seconds a bash command may run (default 120)."),
+      bash_timeout: z.number().positive().optional().describe("Seconds a bash command may run in the foreground before it goes on in the background as a job (default 120)."),
+      jobs: z.number().int().positive().optional().describe("Background commands one session may have running at once (default 8)."),
+      subagent_steps: z.number().int().positive().optional().describe("Most model steps in one subagent run (default 50) — a runaway backstop, not a budget."),
       wall_seconds: z.number().positive().optional().describe("Budget for one prompt: seconds of work, not counting time spent waiting for you. Past it the model answers from what it has. Unset: none."),
       output_bytes: z.number().int().positive().optional().describe("Budget for one prompt: bytes of tool output read. Unset: none."),
       completion_tokens: z.number().int().positive().optional().describe("Budget for one prompt: tokens the model writes. Unset: none."),

@@ -92,6 +92,8 @@ export function PermissionPrompt(p: { pending: Pending }) {
   })
 
   const what = () => p.pending.request.command ?? p.pending.request.patterns.join(", ")
+  // A subagent's ask says which one: `explore (job7): bash`.
+  const title = () => (p.pending.source ? `${p.pending.source.agent} (${p.pending.source.jobId}): ${p.pending.tool}` : p.pending.tool)
   // Inside the border, the padding and the scrollbar.
   const width = () => Math.max(10, dims().width - 5)
   const purpose = () => (p.pending.purpose ? rowsOf(p.pending.purpose, width()).slice(0, 3) : [])
@@ -116,7 +118,7 @@ export function PermissionPrompt(p: { pending: Pending }) {
       .filter(Boolean)
       .join(" · ")
   return (
-    <box border borderStyle="rounded" borderColor={c().warn} paddingLeft={1} paddingRight={1} flexDirection="column" flexShrink={0} title={` ${p.pending.tool} `} titleColor={c().warn}>
+    <box border borderStyle="rounded" borderColor={c().warn} paddingLeft={1} paddingRight={1} flexDirection="column" flexShrink={0} title={` ${title()} `} titleColor={c().warn}>
       <Show when={purpose().length}>
         <text fg={c().accent} wrapMode="none">
           {purpose().join("\n")}

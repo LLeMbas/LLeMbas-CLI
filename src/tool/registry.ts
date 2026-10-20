@@ -1,5 +1,6 @@
 import { applyPatchTool } from "./apply_patch.ts"
-import { bashKillTool, bashListTool, bashOutputTool, bashTool } from "./bash.ts"
+import { bashTool } from "./bash.ts"
+import { jobListTool, jobOutputTool, jobSendTool, jobStopTool, reportTool } from "./job_tools.ts"
 import { editTool } from "./edit.ts"
 import { multieditTool } from "./multiedit.ts"
 import { askUserTool } from "./ask_user.ts"
@@ -30,9 +31,10 @@ export const BUILTIN_TOOLS: Tool[] = [
   grepTool,
   listTool,
   bashTool,
-  bashOutputTool,
-  bashListTool,
-  bashKillTool,
+  jobOutputTool,
+  jobListTool,
+  jobStopTool,
+  jobSendTool,
   webSearchTool,
   webFetchTool,
   taskTool,
@@ -54,6 +56,8 @@ export const BUILTIN_TOOLS: Tool[] = [
   skillManageTool,
   settingsTool,
   viewImageTool,
+  // Offered to subagents only (the spec's `offered: subagent`; app.ts SUBAGENT_ONLY).
+  reportTool,
 ] as Tool[]
 
 export function toolMap(tools: Tool[] = BUILTIN_TOOLS): Map<string, Tool> {

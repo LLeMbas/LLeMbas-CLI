@@ -126,6 +126,49 @@ for (const [cols, rows] of [
   check(`TUI ${cols}x${rows}: status bar on the last row`, (screen[rows - 1] ?? "").includes("manual · fake/coder"), screen[rows - 1] ?? "")
 }
 
+// 3b. jobs, at 80×24: a command the model starts in the background is counted in the status bar;
+// /jobs opens the list (the row fits the terminal) and esc closes it; quitting with it running asks
+// first, and y stops it and leaves.
+{
+  const { fake: f, home: h, cwd } = fakeHome([
+    { chunks: [delta({ content: "Starting it." }), toolCall(0, "c1", "bash", '{"command":"sleep 60","background":true,"description":"A long server that keeps running"}'), usage(900, 40)] },
+    { chunks: [delta({ content: "Started it in the background." }), usage(1200, 20)] },
+  ])
+  const d = await drive({ cols: 80, rows: 24, bin, home: h, cwd })
+  await d.waitFor("Trust this directory?")
+  await d.key("\r")
+  await d.waitFor("shift+tab mode · /help")
+  await d.type("start a server")
+  await d.key("\r")
+  const asked = await d.waitFor("Allow once")
+  await d.key("y")
+  const started = await d.waitFor("Started it in the background.")
+  const counted = await d.waitFor("1 job ·")
+  await d.type("/jobs")
+  await d.key("\r")
+  const opened = await d.waitFor("enter open · k stop")
+  // The row: id, the description, the state, the time, and the box's border after them.
+  const row = d.screen().find((l) => l.includes("job1")) ?? ""
+  const listed = /job1 .*A long server.*running +\d+s +│/.test(row)
+  const wrapped = d.wrapped()
+  const screen = d.screen()
+  await d.key("\x1b")
+  await Bun.sleep(400)
+  const closed = !d.screen().some((l) => l.includes("enter open · k stop"))
+  await d.key("\x03")
+  await d.key("\x03")
+  const confirm = await d.waitFor("1 job running — stop it and quit?")
+  await d.key("y")
+  const code = await d.close()
+  f.stop()
+  check(
+    "TUI 80x24: a background job is counted; /jobs opens and closes; quitting with it running asks, y stops it and quits",
+    asked && started && counted && opened && listed && closed && confirm && code === 0,
+    `asked=${asked} started=${started} counted=${counted} opened=${opened} listed=${listed} closed=${closed} confirm=${confirm} exit=${code}\n${screen.join("\n")}`,
+  )
+  check("TUI 80x24: the jobs list is no wider than the terminal", wrapped.length === 0, `wrapped rows: ${wrapped.join(", ")}`)
+}
+
 // 4. a fresh install: no model yet. A screen that says what to add (not an exception with the
 // terminal left in mouse-reporting mode); r once it is added opens the session; the terminal is
 // given back as it was found.

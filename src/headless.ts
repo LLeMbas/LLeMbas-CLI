@@ -63,6 +63,14 @@ export function renderPlain(bus: Bus, opts: { color: boolean; showReasoning: boo
       case "sub_tool":
         line(`    ${c(C.dim, "┊")} ${icon(e.name)} ${c(C.dim, e.name.padEnd(6))} ${e.title}`)
         break
+      case "prompt":
+        // A turn the harness started: a job's note, shown as such before the reply it brings.
+        if (e.machine) line(c(C.label, e.text))
+        break
+      case "job":
+        if (e.state === "start") line(`${c(C.dim, "┊")} ${c(C.label, e.job.id)} ${e.job.kind} started · ${e.job.description}`)
+        else if (e.state === "end") line(`${c(C.dim, "┊")} ${c(C.label, e.job.id)} ${e.job.state}${e.job.exit !== undefined ? ` (${e.job.exit === null ? "stopped" : `exit ${e.job.exit}`})` : ""} · ${e.job.description}`)
+        break
       case "tool_denied":
         line(`${c(C.dim, "┊")} ${theme.icons.denied} ${c(C.warn, e.name.padEnd(6))} ${e.reason.split("\n")[0]!.slice(0, 140)}`)
         break
@@ -88,9 +96,36 @@ export function renderJson(bus: Bus) {
   bus.on((e) => process.stdout.write(JSON.stringify(e) + "\n"))
 }
 
-/** Asks on the terminal when there is one; otherwise follows --yes, or refuses. */
+/** After the prompt: wait for the jobs it started — their notes start turns of their own, which may
+ *  start more — then stop whatever still runs (the spec's lifecycle: nobody is there to ask).
+ *  `wait: false` (--no-wait) stops them at once. */
+export async function settleJobs(app: import("./app.ts").App, wait: boolean): Promise<void> {
+  const sid = app.jobsSessionId()
+  if (wait) while (app.turns.current || app.registry.running(sid).length) await Bun.sleep(200)
+  // Quietly: a note about a job stopped on the way out would only start a turn nobody reads.
+  const left = app.registry.stopAll(sid, true)
+  if (left) await Bun.sleep(100)
+}
+
+/** Asks on the terminal when there is one; otherwise follows --yes, or refuses. One question at a
+ *  time: parallel subagents can ask at once, and two readlines on one stdin answer each other. */
 export function terminalAsker(opts: { yes: boolean; unattended?: "recommended" | "first" | "fail"; theme?: string }): Asker {
   const C = escapes(loadTheme(opts.theme).theme)
+  let queue: Promise<unknown> = Promise.resolve()
+  const serial = <T,>(fn: () => Promise<T>): Promise<T> => {
+    const p = queue.then(fn)
+    queue = p.catch(() => {})
+    return p
+  }
+  const asker = terminalAskerNow(opts, C)
+  return {
+    ...(asker.plan ? { plan: (req: PlanRequest, callId?: string) => serial(() => asker.plan!(req, callId)) } : {}),
+    question: (req: QuestionRequest, callId?: string) => serial(() => asker.question!(req, callId)),
+    ask: (req) => serial(() => asker.ask(req)),
+  }
+}
+
+function terminalAskerNow(opts: { yes: boolean; unattended?: "recommended" | "first" | "fail" }, C: ReturnType<typeof escapes>): Asker {
   return {
     // With nobody at a terminal there is no plan method at all: plan_submit then saves and stops.
     ...(process.stdin.isTTY && !opts.yes
@@ -139,14 +174,14 @@ export function terminalAsker(opts: { yes: boolean; unattended?: "recommended" |
         rl.close()
       }
     },
-    async ask({ tool, args, request, decision, preview, purpose }): Promise<AskReply> {
+    async ask({ tool, args, request, decision, preview, purpose, source }): Promise<AskReply> {
       if (opts.yes) return { kind: "once" }
       if (!process.stdin.isTTY)
         return { kind: "deny", final: true, feedback: `nobody is present to approve ${tool} in this headless run.` }
       const what = request.command ?? request.patterns.join(", ")
       const rl = createInterface({ input: process.stdin, output: process.stderr })
       try {
-        process.stderr.write(`\n${C.warn}? ${tool}${C.reset} ${what}\n`)
+        process.stderr.write(`\n${C.warn}? ${source ? `${source.agent} (${source.jobId}): ` : ""}${tool}${C.reset} ${what}\n`)
         if (purpose) process.stderr.write(`  ${C.label}${purpose}${C.reset}\n`)
         if (preview?.diff)
           for (const l of preview.diff.split("\n").filter((l) => !/^(Index:|={5,}|--- |\+\+\+ )/.test(l)))

@@ -27,6 +27,8 @@ import { PERSONALITIES, personalityText } from "../prompt/personality.ts"
 import { listPrototypes } from "../prototype/store.ts"
 import { keyMatcher } from "../voice/index.ts"
 import { PLAYER_NAMES, playerFor, recorderFor } from "../voice/audio.ts"
+import { duration } from "../duration.ts"
+import type { Job, JobInfo } from "../jobs/registry.ts"
 
 export interface CommandCtx extends Ctx {
   voice: import("../voice/index.ts").VoiceController
@@ -56,6 +58,10 @@ export interface CommandCtx extends Ctx {
   reload(): void
   /** The status bar's balance, as /usage just read it. */
   setCredits?(text: string): void
+  /** Open a command job's live output (components/jobview.tsx). */
+  openJob(id: string): void
+  /** Enter a subagent job: its transcript in place of the session's, the prompt box sends to it. */
+  enterJob(id: string): void
 }
 
 export interface Command {
@@ -68,7 +74,8 @@ export interface Command {
 
 const HELP_KEYS = [
   "enter send · shift+enter / ctrl+j new line · ↑↓ history",
-  "esc stop the model · ctrl+g continue (after a stop, or to keep going) · ctrl+c clear, twice to quit",
+  "esc stop the model · ctrl+g continue (after a stop, or to keep going) · ctrl+c clear, twice to quit · ctrl+d (empty box) quit",
+  "/jobs background jobs: enter opens one (a subagent: esc back, type to message it), k stops it · ctrl+b moves the running command to the background",
   "shift+tab cycle mode (manual → edit → plan) · ctrl+r show reasoning · ctrl+o expand tool output",
   "pgup/pgdn scroll half a screen · ctrl+↑/↓ three lines · the mouse wheel · ↑ in an empty box takes back a message waiting to go in",
 ]
@@ -364,6 +371,17 @@ export const COMMANDS: Command[] = [
       if (!m) return c.view.info("usage: /decide <title>: <decision> — e.g. /decide Storage: SQLite, one file per project", "warn")
       const d = addDecision(c.app.project.dir, m[1]!, m[2]!)
       c.view.info(`recorded: ${d.date} · ${d.title}`)
+    },
+  },
+  {
+    name: "jobs",
+    args: "[<id> | stop <id>]",
+    description: "background jobs: the list (enter opens one, k stops it); /jobs <id> opens one, /jobs stop <id> stops it",
+    run(c, arg) {
+      const [first, second] = arg.trim().split(/\s+/).filter(Boolean)
+      if (!first) return openJobs(c)
+      if (first === "stop") return second ? stopJob(c, second) : c.view.info("/jobs stop <id> — /jobs lists them", "warn")
+      openJob(c, first)
     },
   },
   {
@@ -1055,6 +1073,109 @@ export const COMMANDS: Command[] = [
   { name: "quit", aliases: ["exit", "q"], description: "leave", run: (c) => c.quit() },
 ]
 
+/** `text` cut to `width` columns (wide characters counted as the terminal draws them), an ellipsis
+ *  where it was cut — at the end, not the middle: a description is a sentence, not a path. */
+export function fitColumns(text: string, width: number): string {
+  if (Bun.stringWidth(text) <= width) return text
+  let out = ""
+  for (const ch of text) {
+    if (Bun.stringWidth(out + ch) > width - 1) break
+    out += ch
+  }
+  return `${out}…`
+}
+
+/** One row of the Jobs picker, exactly `width` columns: icon, id (6), what it is (the column that
+ *  gives), state (7), how long (6), and `!` for one that ended unseen or holds unread output. The
+ *  icon's width is the set's — every emoji here is two columns, every plain icon one — so the
+ *  columns line up by construction. */
+export function jobRow(j: JobInfo, width: number, icon: string, unseen = false): string {
+  const fixed = Bun.stringWidth(icon) + 1 + 6 + 1 + 1 + 7 + 1 + 6 + 1 + 1
+  const descW = Math.max(4, width - fixed)
+  const what = `${j.kind === "subagent" && j.agent ? `${j.agent}: ` : ""}${j.description.replace(/\s+/g, " ")}`
+  const desc = fitColumns(what, descW)
+  const pad = " ".repeat(Math.max(0, descW - Bun.stringWidth(desc)))
+  const took = duration((j.ended ?? Date.now()) - j.started, true).padStart(6)
+  const mark = unseen || j.unread > 0 ? "!" : " "
+  return `${icon} ${j.id.padEnd(6)} ${desc}${pad} ${j.state.padEnd(7)} ${took} ${mark}`
+}
+
+/** The Jobs picker: one row per job of the session, running first. Enter opens one (a command's
+ *  output, or the subagent itself), k stops it, esc closes. The list is a snapshot, so while it is
+ *  shown it redraws itself on the session's job events — at most four times a second — and the
+ *  cursor stays where it was (the dialog is the same one; only its rows change). */
+function openJobs(c: CommandCtx) {
+  if (!c.app.jobs().length) return c.view.info("no jobs in this session — the model starts one with bash background: true or task background: true, and a long command moves there at its timeout (or ctrl+b)")
+  c.view.seenJobs()
+  const width = () => Math.min(100, c.dims().width - 4)
+  const icon = (j: Job) => c.theme().toolEmoji[j.kind === "command" ? "bash" : "task"] ?? c.theme().icons.other
+  // The dialog draws two columns before the label (the current marker), and its border and padding.
+  const rows = () => c.app.jobs().map((j) => ({ label: jobRow(c.app.registry.info(j), width() - 6, icon(j), c.view.state.jobs.find((x) => x.id === j.id)?.unseen), value: j.id }))
+  let open = true
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const onClose = () => {
+    open = false
+    off()
+    clearTimeout(timer)
+  }
+  const spec = (): DialogSpec => ({
+    title: "Jobs",
+    width: width(),
+    filter: true,
+    options: rows(),
+    hint: "↑↓ move · enter open · k stop · esc close · type to filter",
+    keys: [{ when: (k) => k.name === "k" && !k.ctrl && !k.meta, run: (id) => stopJob(c, id, () => openJobs(c)) }],
+    onSelect: (id) => openJob(c, id),
+    onClose,
+  })
+  const off = c.app.bus.on((e) => {
+    if (e.type !== "job" || !open || timer) return
+    timer = setTimeout(() => {
+      timer = undefined
+      if (open) c.openDialog(spec())
+    }, 250)
+  })
+  c.openDialog(spec())
+}
+
+/** Open one job: a command's live output, or the subagent itself. */
+function openJob(c: CommandCtx, id: string) {
+  const job = c.app.registry.get(c.app.jobsSessionId(), id)
+  if (!job) return c.view.info(`no job ${id} in this session — /jobs lists them`, "warn")
+  if (job.kind === "command") c.openJob(id)
+  else c.enterJob(id)
+}
+
+/** Stop one job. A running subagent is asked about first (its report so far becomes its end note);
+ *  a command is stopped at once. `then`: what follows either way — the picker comes back. */
+function stopJob(c: CommandCtx, id: string, then?: () => void) {
+  const job = c.app.registry.get(c.app.jobsSessionId(), id)
+  if (!job) return c.view.info(`no job ${id} in this session — /jobs lists them`, "warn")
+  if (job.state !== "running") {
+    c.view.info(`${id} is not running (${job.state})`)
+    return then?.()
+  }
+  const stop = () => {
+    c.app.registry.stop(job)
+    c.flash(`stopping ${id}`)
+  }
+  if (job.kind !== "subagent") {
+    stop()
+    return then?.()
+  }
+  c.openDialog({
+    title: `Stop ${id} (${job.agent}: ${fitColumns(job.description, 40)})?`,
+    options: [
+      { label: "Stop", value: "yes", description: "what it has so far goes to the model as its end note" },
+      { label: "Cancel", value: "no" },
+    ],
+    onSelect: (v) => {
+      if (v === "yes") stop()
+      then?.()
+    },
+  })
+}
+
 function firstUserLine(c: CommandCtx, id: string): string {
   const m = c.app.store?.messages(id).find((x) => x.role === "user")
   if (!m || m.role !== "user") return ""
@@ -1113,6 +1234,8 @@ function confirmDelete(c: CommandCtx, id: string, current = false, then?: () => 
     ],
     onSelect: async (v) => {
       if (v !== "yes") return then?.()
+      // A deleted session's jobs go with it.
+      c.app.registry.stopAll(id)
       if (current) {
         c.app.cancel()
         c.app.newSession()

@@ -11,13 +11,16 @@ import type { Plan } from "../plan/plan.ts"
 import type { PlanReply, PlanRequest } from "../tool/plan_submit.ts"
 import type { QuestionReply, QuestionRequest } from "../tool/ask_user.ts"
 import { CONTINUE_PROMPT, STEER_MARK } from "../session/engine.ts"
+import { shownLine, stripMark } from "../jobs/note.ts"
+import type { JobInfo } from "../jobs/registry.ts"
 import { splitPrototypes, titleFor, type PrototypeKind } from "../prototype/fence.ts"
 import { savePrototype } from "../prototype/store.ts"
 import { CHARS_PER_TOKEN } from "../provider/tokens.ts"
 
 export type Item =
-  /** `mid`: sent while the agent worked, and given to it at a step boundary. */
-  | { kind: "user"; id: string; text: string; mid?: boolean }
+  /** `mid`: sent while the agent worked, and given to it at a step boundary. `machine`: the harness
+   *  said it (a job's note), not the person. */
+  | { kind: "user"; id: string; text: string; mid?: boolean; machine?: boolean }
   /** `prototypes`: the prototype fences in the text that have been saved, by where each starts. */
   | { kind: "assistant"; id: string; text: string; streaming: boolean; prototypes?: Record<number, SavedPrototype> }
   | { kind: "reasoning"; id: string; text: string; streaming: boolean; started: number; ms?: number; tokens?: number }
@@ -33,6 +36,10 @@ export type Item =
       diff?: string
       /** A subagent's tool lines (the task tool), newest last. */
       children?: { name: string; title: string; isError?: boolean }[]
+      /** The background job this call started (bash background, a background task), and how it is
+       *  doing — from the `job` events, for the line under the call. */
+      jobId?: string
+      job?: JobInfo
     }
   | { kind: "notice"; id: string; text: string; level: "info" | "warn" }
   | { kind: "diff"; id: string; title: string; patch: string }
@@ -73,8 +80,13 @@ export interface Pending {
   preview?: { diff?: string; error?: string }
   /** What the model says the call is for. */
   purpose?: string
+  /** The subagent (running as a job) that asks, when one does. */
+  source?: { jobId: string; agent: string; description: string }
   resolve: (r: AskReply) => void
 }
+
+/** A job as the TUI keeps it: the registry's record, and whether the person has seen it end. */
+export type TrackedJob = JobInfo & { unseen?: boolean }
 
 export interface PendingQuestion {
   req: QuestionRequest
@@ -105,14 +117,18 @@ export interface ViewState {
   queued: { texts: string[]; mode: "steer" | "queue" }
   /** The server reading the prompt (llama.cpp): set while it reads, gone once the reply starts. */
   progress?: { total: number; done: number; processed: number; ms: number }
+  /** The session's background jobs (the registry's list, kept from `job` events), running first. */
+  jobs: TrackedJob[]
 }
 
 const ATTACHMENT = /^<(file|directory|shell|image) /
+/** Running first, then by start — the registry's order. */
+const byRunning = (a: JobInfo, b: JobInfo) => Number(b.state === "running") - Number(a.state === "running") || a.started - b.started
 let seq = 0
 const nextId = () => `i${++seq}`
 
 export function createView(bus: Bus) {
-  const [state, set] = createStore<ViewState>({ items: [], phase: "idle", busySince: 0, showReasoning: false, expandTools: false, queued: { texts: [], mode: "steer" } })
+  const [state, set] = createStore<ViewState>({ items: [], phase: "idle", busySince: 0, showReasoning: false, expandTools: false, queued: { texts: [], mode: "steer" }, jobs: [] })
   let stepStart = 0
   // The task's output tokens (every step, subagents included), and the reply
   // streaming now, counted as it arrives so the number moves before the step's usage comes in.
@@ -187,6 +203,11 @@ export function createView(bus: Bus) {
         case "session":
           set("sessionId", e.id)
           break
+        case "prompt":
+          // A turn the harness started (a job's note): shown as such. A typed prompt is shown by
+          // whoever sent it (view.user), as it was typed.
+          if (e.machine) set(produce((s) => void s.items.push({ kind: "user", id: nextId(), text: e.text, machine: true })))
+          break
         case "step":
           set(produce((s) => settle(s)))
           stepStart = state.items.length
@@ -222,6 +243,10 @@ export function createView(bus: Bus) {
               it.ms = e.ms
               it.output = e.result.output
               it.diff = typeof e.result.meta?.diff === "string" ? (e.result.meta.diff as string) : undefined
+              if (typeof e.result.meta?.job === "string") {
+                it.jobId = e.result.meta.job
+                it.job = state.jobs.find((j) => j.id === it.jobId)
+              }
             }),
           )
           break
@@ -263,7 +288,23 @@ export function createView(bus: Bus) {
             (it) => it.kind === "tool" && it.id === e.callId,
             produce((it) => {
               if (it.kind !== "tool") return
-              it.children = [...(it.children ?? []), { name: e.name, title: e.title, isError: e.isError }].slice(-8)
+              // Every line while it runs; a stored session shows none (they are not kept).
+              it.children = [...(it.children ?? []), { name: e.name, title: e.title, isError: e.isError }]
+            }),
+          )
+          break
+        case "job":
+          set(
+            produce((s) => {
+              const i = s.jobs.findIndex((j) => j.id === e.job.id)
+              const was = i >= 0 ? s.jobs[i] : undefined
+              // Ended: news until the person looks at the list or at the job.
+              const unseen = e.state === "end" ? true : was?.unseen
+              const next: TrackedJob = { ...e.job, ...(unseen ? { unseen } : {}) }
+              if (i >= 0) s.jobs[i] = next
+              else s.jobs.push(next)
+              s.jobs.sort(byRunning)
+              for (const it of s.items) if (it.kind === "tool" && it.jobId === e.job.id) it.job = e.job
             }),
           )
           break
@@ -403,7 +444,19 @@ export function createView(bus: Bus) {
       set(produce((s) => void s.items.push({ kind: "diff", id: nextId(), title, patch })))
     },
     clear() {
-      set({ items: [], usage: undefined, used: undefined })
+      set({ items: [], usage: undefined, used: undefined, jobs: [] })
+    },
+    /** The session's jobs as the registry has them now (at a start or a resume, before any event). */
+    setJobs(list: JobInfo[]) {
+      set("jobs", [...list].sort(byRunning))
+    },
+    /** The person looked at the list (or at one job): nothing is unseen any more. */
+    seenJobs(id?: string) {
+      set(
+        produce((s) => {
+          for (const j of s.jobs) if (id === undefined || j.id === id) delete j.unseen
+        }),
+      )
     },
     toggleReasoning() {
       set("showReasoning", (v) => !v)
@@ -420,6 +473,10 @@ export function createView(bus: Bus) {
           items.push({ kind: "user", id: nextId(), text: "↻ continue" })
         else if (m.role === "user" && m.parts[0]?.type === "text" && m.parts[0].text.startsWith(STEER_MARK))
           items.push({ kind: "user", id: nextId(), text: m.parts[0].text.slice(STEER_MARK.length).trim(), mid: true })
+        else if (m.role === "user" && m.machine && m.parts[0]?.type === "text") items.push({ kind: "user", id: nextId(), text: shownLine(m.parts[0].text), machine: true })
+        else if (m.role === "user" && m.parts[0]?.type === "text" && stripMark(m.parts[0].text).mark)
+          // A job's note given mid-turn: without its mark, as a steer is shown.
+          items.push({ kind: "user", id: nextId(), text: stripMark(m.parts[0].text).body.trim(), mid: true, machine: true })
         else if (m.role === "user")
           // What was typed; attachments (@files, ! output) went to the model but are not shown again.
           items.push({ kind: "user", id: nextId(), text: m.parts.filter((p) => p.type === "text" && !ATTACHMENT.test(p.text)).map((p) => (p.type === "text" ? p.text : "")).join("\n") })

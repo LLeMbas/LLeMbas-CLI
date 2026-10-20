@@ -1,7 +1,6 @@
 import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
-import { jobNote, onJobExit } from "../tool/jobs.ts"
 import { stricterMode, type App as Runtime } from "../app.ts"
 import { isLocal } from "../config/paths.ts"
 import type { Effort, Mode } from "../config/schema.ts"
@@ -13,6 +12,9 @@ import { copiedMessage, copyText } from "./clipboard.ts"
 import { QuestionCard } from "./components/question.tsx"
 import { PlanCard } from "./components/plancard.tsx"
 import { PlanPanel } from "./components/plan.tsx"
+import { JobView } from "./components/jobview.tsx"
+import { SubagentView } from "./components/subagent.tsx"
+import { Bus } from "../bus/index.ts"
 import { Prompt, type PaletteEntry } from "./components/prompt.tsx"
 import { FileIndex } from "../project/files.ts"
 import { attachmentsFor } from "../project/attach.ts"
@@ -30,7 +32,7 @@ import { Welcome } from "./components/welcome.tsx"
 import { Share, type SharedPrompt } from "../acp/share.ts"
 import { mentionInfo } from "../acp/prompt.ts"
 import { TuiContext, type Ctx } from "./context.ts"
-import type { View } from "./state.ts"
+import { createView, type View } from "./state.ts"
 import { loadTheme, markdownStyle, paintBackground, reasoningStyle, themeNames, type IconSet, type Theme } from "./theme.ts"
 
 const CYCLE: Mode[] = ["manual", "edit", "plan"]
@@ -94,6 +96,78 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   const dims = useTerminalDimensions()
   const ctx: Ctx = { app, view, theme, md, thought, dims }
 
+  // Background jobs: the view's list is the registry's at the start and on every session change
+  // (resume, /new), then follows the `job` events.
+  const seedJobs = () => view.setJobs(app.jobs().map((j) => app.registry.info(j)))
+  seedJobs()
+  app.bus.on((e) => e.type === "session" && seedJobs())
+  const running = () => app.registry.running(app.jobsSessionId()).length
+  // A command job opened from /jobs (its live output), and a subagent entered (its transcript in
+  // place of the session's, the prompt box sending to it). One View per entered job, kept: its bus
+  // feeds it from the moment it is first entered, its history loaded from the child's messages.
+  const [jobPanel, setJobPanel] = createSignal<string>()
+  const [entered, setEntered] = createSignal<string>()
+  const childViews = new Map<string, View>()
+  const enterJob = (id: string) => {
+    const job = app.registry.get(app.jobsSessionId(), id)
+    if (!job || job.kind !== "subagent") return view.info(`${id} is not a subagent — /jobs lists them`, "warn")
+    if (!childViews.has(id)) {
+      const v = createView(job.subagent?.bus ?? new Bus())
+      v.load(job.subagent?.engine.messages ?? (job.childSessionId && app.store ? app.store.messages(job.childSessionId) : []))
+      childViews.set(id, v)
+    }
+    view.seenJobs(id)
+    setEntered(id)
+  }
+  const leaveJob = () => setEntered(undefined)
+  /** What is typed while a subagent is entered goes to it: its inbox while it runs, a new prompt
+   *  under the same job once it has finished. */
+  const sendToJob = (text: string) => {
+    const id = entered()!
+    const job = app.registry.get(app.jobsSessionId(), id)
+    if (!job?.subagent) return view.info(`${id} cannot be messaged any more — an earlier process ran it`, "warn")
+    if (job.state === "running") {
+      job.subagent.send(text)
+      flash(`sent to ${id} — it reads it at its next step`)
+    } else {
+      app.registry.restartSubagent(job)
+      childViews.get(id)?.user(text)
+      void job.subagent.restart(text)
+      flash(`${id} is running again with your message`)
+    }
+  }
+  /** Leaving with jobs running is asked about: `N jobs running — stop them and quit?`. `what`:
+   *  quit or reload; `then`: what happens once they are stopped (or when none run). */
+  const confirmStop = (what: string, then: () => void) => {
+    const n = running()
+    if (!n) return then()
+    const go = () => {
+      app.registry.stopAll(app.jobsSessionId())
+      then()
+    }
+    setDialog({
+      title: `${n} job${n === 1 ? "" : "s"} running — stop ${n === 1 ? "it" : "them"} and ${what}?`,
+      options: [
+        { label: `Stop and ${what}`, value: "yes", description: "a command gets SIGTERM, a subagent is cancelled" },
+        { label: "Cancel", value: "no" },
+      ],
+      hint: `y stop and ${what} · n / esc cancel`,
+      keys: [
+        { when: (k) => k.name === "y" && !k.ctrl, run: () => go() },
+        { when: (k) => k.name === "n" && !k.ctrl, run: () => {} },
+      ],
+      onSelect: (v) => v === "yes" && go(),
+    })
+  }
+  const quit = () => confirmStop("quit", () => p.onQuit())
+  /** ctrl+b: the foreground command of this step goes to the background now, as it would at its
+   *  timeout — the call returns with the output so far and the job's id. */
+  const backgroundNow = () => {
+    const bashRunning = view.state.items.some((it) => it.kind === "tool" && it.name === "bash" && it.status === "running" && !String(it.title ?? "").startsWith("! "))
+    if (bashRunning && app.engine.backgroundNow()) flash("moving the command to the background…")
+    else flash("no command is running in the foreground")
+  }
+
   // Voice: the record key, what was heard, replies read aloud.
   const voiceCfg = app.loaded.config.voice
   const recordKey = keyMatcher(voiceCfg?.record_key)
@@ -121,16 +195,6 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     if (meter) clearInterval(meter)
     void voice.close()
   })
-  // A background job that ends wakes the session (after LLeMbas): mid-task the model is
-  // told at its next step; idle, the note starts a turn of its own, as if the user had said it —
-  // shown as what it is. What the note hands over counts as read, so bash_output does not repeat it.
-  const stopJobs = onJobExit((job) => {
-    const text = jobNote(job)
-    job.read = job.output.length
-    if (app.turns.current || busy()) app.engine.note(text)
-    else void send(text, `⏎ ${job.id} finished${job.exit === null ? " (killed)" : ` (exit ${job.exit})`}`, "")
-  })
-  onCleanup(stopJobs)
   // A finished reply is read out when replies are spoken.
   app.bus.on((e) => {
     if (e.type !== "done" || e.reason !== "stop" || !voice.speakReplies) return
@@ -174,20 +238,26 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     },
     flash,
     refresh,
-    quit: () => p.onQuit(),
+    quit,
     reload() {
       if (!p.onReload) return view.info("/reload is not available here", "warn")
-      // Back on this session, with what it was using; everything else comes from the files again.
-      const e = app.engine
-      const args = [...(isLocal() ? ["-l"] : []), ...(e.sessionId ? ["-s", e.sessionId] : []), "-m", e.model.ref, "--mode", e.mode, "-e", e.effort ?? "off"]
-      void app
-        .close()
-        .catch(() => {})
-        .finally(() => {
-          app.store?.db.close()
-          p.onReload!(args)
-        })
+      // The new process would not know the jobs; they would run on, orphaned, and their notes be
+      // lost — so they are stopped first, after asking.
+      confirmStop("reload", () => {
+        // Back on this session, with what it was using; everything else comes from the files again.
+        const e = app.engine
+        const args = [...(isLocal() ? ["-l"] : []), ...(e.sessionId ? ["-s", e.sessionId] : []), "-m", e.model.ref, "--mode", e.mode, "-e", e.effort ?? "off"]
+        void app
+          .close()
+          .catch(() => {})
+          .finally(() => {
+            app.store?.db.close()
+            p.onReload!(args)
+          })
+      })
     },
+    openJob: (id) => setJobPanel(id),
+    enterJob,
     copy: (text: string) => copy(text),
     renderer,
     send: (text: string) => void send(text),
@@ -235,12 +305,8 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
       .then((reason) => {
         // What was sent during the task and never reached the model: stopped — back into the box,
         // to edit or send; otherwise (queue mode, or a turn that ended first) — sent now. After a
-        // tick, so a command's own model and mode (sendAs) are put back first.
-        // A job that ended as the task did: its own turn now.
-        const notes = app.engine.takeNotes()
-        // Stopped: they go with the next message instead of starting work nobody asked for now.
-        if (notes.length && reason === "cancelled") app.engine.pendingContext.push(...notes)
-        else if (notes.length) setTimeout(() => void send(notes.join("\n\n"), `⏎ ${notes.length} background job${notes.length === 1 ? "" : "s"} finished`, ""), 0)
+        // tick, so a command's own model and mode (sendAs) are put back first. (A job's note left
+        // over the same way is the app's business: app.ts wakes the session with it.)
         const left = app.turns.takeInbox()
         if (!left.length) return reason
         const joined = left.join("\n\n")
@@ -336,7 +402,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     const id = view.shellStart(command)
     const t0 = performance.now()
     bashTool
-      .run({ command }, { ...app.engine.o.toolCtx, signal: new AbortController().signal })
+      .run({ command }, { ...app.engine.o.toolCtx, signal: new AbortController().signal, bashTimeline: false })
       .then((r) => {
         view.shellEnd(id, r, performance.now() - t0)
         app.engine.pendingContext.push(`<shell command="${command.replaceAll('"', "'")}">\n${r.output}\n</shell>`)
@@ -348,6 +414,8 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   /** false: refused — the text stays in the box. */
   const submit = (text: string): boolean | void => {
     const t = text.trim()
+    // Inside a subagent, what is typed is for it; commands are still the session's.
+    if (entered() && !t.startsWith("/")) return void sendToJob(t)
     if (t.startsWith("!") && t.length > 1) return shell(t.slice(1).trim())
     if (t.startsWith("/")) {
       const [name, ...rest] = t.slice(1).split(/\s+/)
@@ -437,7 +505,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
         return
       }
       // A card or dialog owns the keyboard: esc there means that card's own thing.
-      const overlay = dialog() || view.state.pending || view.state.question || view.state.plan
+      const overlay = dialog() || jobPanel() || view.state.pending || view.state.question || view.state.plan
       if (!overlay && recordKey.matches(key) && (voice.canListen || voiceCfg)) {
         key.preventDefault()
         // Held down, a key repeats: in hold mode (or any repeat) only the first press counts.
@@ -462,8 +530,12 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   )
 
   const keys = (key: Parameters<Parameters<typeof useKeyboard>[0]>[0]) => {
-    if (dialog() || view.state.pending || view.state.question || view.state.plan) return
-    if (key.name === "escape" && busy()) {
+    if (dialog() || jobPanel() || view.state.pending || view.state.question || view.state.plan) return
+    if (key.name === "escape" && entered()) {
+      // Back to the session; the model is not stopped by leaving a subagent.
+      leaveJob()
+      key.preventDefault()
+    } else if (key.name === "escape" && busy()) {
       app.cancel()
       key.preventDefault()
     } else if (key.ctrl && key.name === "c" && (key.shift || renderer.hasSelection)) {
@@ -473,9 +545,16 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
       else flash("nothing selected — drag over text, or /copy the last reply")
       renderer.clearSelection()
       key.preventDefault()
+    } else if (key.ctrl && key.name === "d" && !(input?.plainText ?? "").trim()) {
+      // An empty box and ctrl+d: leave, as a shell does.
+      quit()
+      key.preventDefault()
+    } else if (key.ctrl && key.name === "b") {
+      backgroundNow()
+      key.preventDefault()
     } else if (key.ctrl && key.name === "c") {
       // The first press stops the model (if busy); a second within 1.5 s always quits.
-      if (Date.now() - quitArmed < 1500) p.onQuit()
+      if (Date.now() - quitArmed < 1500) quit()
       else {
         if (busy()) app.cancel()
         quitArmed = Date.now()
@@ -527,17 +606,25 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   return (
     <TuiContext.Provider value={ctx}>
       <box flexDirection="column" width="100%" height="100%">
-        <scrollbox
-          ref={(r: ScrollBoxRenderable) => (scroll = r)}
-          flexGrow={1}
-          stickyScroll
-          stickyStart="bottom"
-          viewportOptions={{ paddingRight: 1 }}
-          verticalScrollbarOptions={{ trackOptions: { backgroundColor: theme().colors.panel, foregroundColor: theme().colors.dim } }}
+        <Show
+          when={entered()}
+          keyed
+          fallback={
+            <scrollbox
+              ref={(r: ScrollBoxRenderable) => (scroll = r)}
+              flexGrow={1}
+              stickyScroll
+              stickyStart="bottom"
+              viewportOptions={{ paddingRight: 1 }}
+              verticalScrollbarOptions={{ trackOptions: { backgroundColor: theme().colors.panel, foregroundColor: theme().colors.dim } }}
+            >
+              <Welcome />
+              <Messages />
+            </scrollbox>
+          }
         >
-          <Welcome />
-          <Messages />
-        </scrollbox>
+          {(id: string) => <SubagentView id={id} view={childViews.get(id)!} scrollRef={(r) => (scroll = r)} />}
+        </Show>
         <box flexShrink={0} flexDirection="column">
           <PlanPanel />
           <Show when={view.state.pending}>
@@ -553,11 +640,14 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
             <Spinner />
           </Show>
           <Queued />
-          <Prompt focused={() => !dialog() && !view.state.pending && !view.state.question && !view.state.plan} busy={busy} commands={palette} files={files} onSubmit={submit} ref={(r) => (input = r)} queue={queueAccess} onWheel={(dir, lines) => scroll?.scrollBy(dir * lines)} />
+          <Prompt focused={() => !dialog() && !jobPanel() && !view.state.pending && !view.state.question && !view.state.plan} busy={busy} commands={palette} files={files} onSubmit={submit} ref={(r) => (input = r)} queue={queueAccess} onWheel={(dir, lines) => scroll?.scrollBy(dir * lines)} onBackground={backgroundNow} />
           <StatusBar mode={mode} model={model} effort={effort} branch={branch()} voice={voiceStatus} flash={flashText} remote={() => (rev(), share.label())} credits={credits} />
         </box>
         <Show when={dialog()}>
           <Dialog spec={dialog()!} close={() => setDialog(undefined)} />
+        </Show>
+        <Show when={jobPanel()} keyed>
+          {(id: string) => <JobView id={id} close={() => setJobPanel(undefined)} />}
         </Show>
       </box>
     </TuiContext.Provider>

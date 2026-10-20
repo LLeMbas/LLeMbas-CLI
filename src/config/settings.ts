@@ -59,6 +59,8 @@ export const SETTINGS: SettingDef[] = [
   { key: "memory.enabled", kind: "boolean", agent: true, scopes: ALL, reload: true, fallback: "true" },
   { key: "limits.steps", kind: "number", agent: true, scopes: ALL, fallback: "200" },
   { key: "limits.bash_timeout", kind: "number", agent: true, scopes: ALL, fallback: "120" },
+  { key: "limits.jobs", kind: "number", agent: true, scopes: ALL, fallback: "8" },
+  { key: "limits.subagent_steps", kind: "number", agent: true, scopes: ALL, fallback: "50" },
   { key: "limits.wall_seconds", kind: "number", agent: true, scopes: ALL, fallback: "none" },
   { key: "limits.output_bytes", kind: "number", agent: true, scopes: ALL, fallback: "none" },
   { key: "limits.completion_tokens", kind: "number", agent: true, scopes: ALL, fallback: "none" },

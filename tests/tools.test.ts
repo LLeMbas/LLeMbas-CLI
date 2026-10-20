@@ -3,7 +3,9 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applyPatchTool } from "../src/tool/apply_patch.ts"
-import { bashKillTool, bashOutputTool, bashTool } from "../src/tool/bash.ts"
+import { bashTool } from "../src/tool/bash.ts"
+import { jobOutputTool, jobStopTool } from "../src/tool/job_tools.ts"
+import { JobRegistry } from "../src/jobs/registry.ts"
 import { editTool } from "../src/tool/edit.ts"
 import { multieditTool } from "../src/tool/multiedit.ts"
 import { formatAnswers, questionSchema, unattendedReply, type QuestionRequest } from "../src/tool/ask_user.ts"
@@ -188,19 +190,39 @@ describe("file tools", () => {
 })
 
 describe("background bash", () => {
-  test("start, read new output, see it finish; kill a long one", async () => {
-    const c = ctx()
-    const started = await bashTool.run({ command: "echo one; sleep 0.5; echo two", background: true }, c)
+  test("start, read new output, see it finish; stop a long one", async () => {
+    const registry = new JobRegistry()
+    const c = { ...ctx(), jobs: { registry, owner: () => ({ sessionId: "s1" }) } }
+    const started = await bashTool.run({ command: "echo one; sleep 0.3; echo two; sleep 0.5; echo three", background: true }, c)
     const id = /as (job\d+)/.exec(started.output)![1]!
     expect(started.output).toContain("one")
-    const later = await bashOutputTool.run({ id, wait: 3 }, c)
+    expect(started.output).toContain("job_output")
+    const later = await jobOutputTool.run({ id, wait: 3 }, c)
     expect(later.output).toContain("two")
-    await Bun.sleep(200)
-    expect((await bashOutputTool.run({ id }, c)).output).toContain("exited with 0")
+    expect(later.output).toContain("still running")
+    await Bun.sleep(1200)
+    // Its end note took what was left (nobody held the session, so the note waits on the job), and
+    // job_output does not repeat it.
+    const job = registry.get("s1", id)!
+    expect(job.state).toBe("done")
+    expect(job.note).toContain("three")
+    expect(job.note).toStartWith("[A background job you started has finished:]")
+    expect((await jobOutputTool.run({ id }, c)).output).toBe("(no new output)\n\n[job1 exited with 0]")
     const long = await bashTool.run({ command: "sleep 30", background: true }, c)
     const id2 = /as (job\d+)/.exec(long.output)![1]!
-    expect((await bashKillTool.run({ id: id2 }, c)).output).toContain("Stopped")
-    expect((await bashOutputTool.run({ id: id2, wait: 3 }, c)).output).toMatch(/exited with (null|143|-?\d+)/)
+    expect((await jobStopTool.run({ id: id2 }, c)).output).toContain("Stopped")
+    // A signal's end never reads "null".
+    const after = (await jobOutputTool.run({ id: id2, wait: 3 }, c)).output
+    expect(after).toContain("stopped (SIGTERM)")
+    expect(after).not.toContain("null")
+  })
+
+  test("without a session to own jobs, background is refused and a timeout kills", async () => {
+    const c = ctx()
+    await expect(bashTool.run({ command: "sleep 1", background: true }, c)).rejects.toThrow("not available")
+    const r = await bashTool.run({ command: "sleep 5", timeout: 200 }, c)
+    expect(r.output).toContain("timed out after 0s")
+    expect(r.isError).toBe(true)
   })
 })
 

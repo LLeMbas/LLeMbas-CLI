@@ -13,7 +13,7 @@ export type ToolCallPart = { type: "tool_call"; id: string; name: string; args: 
 export type Message =
   /** `turnId`: the turn a prompt started, kept with it in the store for
    *  `_lembas/session/history`; never sent to a model. */
-  | { role: "user"; parts: (TextPart | ImagePart)[]; turnId?: string }
+  | { role: "user"; parts: (TextPart | ImagePart)[]; turnId?: string; /** The harness wrote it (a job's note), not the person: shown as such. */ machine?: true }
   | { role: "assistant"; parts: (TextPart | ReasoningPart | ToolCallPart)[] }
   | { role: "tool"; callId: string; name: string; content: string; isError?: boolean }
 

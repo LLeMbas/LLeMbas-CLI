@@ -7,13 +7,14 @@ import LOOP_JSON from "../harness/loop.json"
 import t_apply_patch from "../harness/tools/apply_patch.json"
 import t_ask_user from "../harness/tools/ask_user.json"
 import t_bash from "../harness/tools/bash.json"
-import t_bash_kill from "../harness/tools/bash_kill.json"
-import t_bash_list from "../harness/tools/bash_list.json"
-import t_bash_output from "../harness/tools/bash_output.json"
 import t_decisions from "../harness/tools/decisions.json"
 import t_edit from "../harness/tools/edit.json"
 import t_glob from "../harness/tools/glob.json"
 import t_grep from "../harness/tools/grep.json"
+import t_job_list from "../harness/tools/job_list.json"
+import t_job_output from "../harness/tools/job_output.json"
+import t_job_send from "../harness/tools/job_send.json"
+import t_job_stop from "../harness/tools/job_stop.json"
 import t_knowledge_get from "../harness/tools/knowledge_get.json"
 import t_knowledge_search from "../harness/tools/knowledge_search.json"
 import t_list from "../harness/tools/list.json"
@@ -26,6 +27,7 @@ import t_plan_submit from "../harness/tools/plan_submit.json"
 import t_plan_update from "../harness/tools/plan_update.json"
 import t_plan_write from "../harness/tools/plan_write.json"
 import t_read from "../harness/tools/read.json"
+import t_report from "../harness/tools/report.json"
 import t_session_search from "../harness/tools/session_search.json"
 import t_settings from "../harness/tools/settings.json"
 import t_skill_manage from "../harness/tools/skill_manage.json"
@@ -55,6 +57,8 @@ export interface ToolSpecDef {
   purpose: string | false
   /** Names each project used before spec v1; a call under one is read as this tool. */
   aliases: { cli: string[]; llembas: string[] }
+  /** `subagent`: offered only to a subagent (report), never to a session's own model. */
+  offered?: "subagent"
   argument_aliases?: Record<string, string>
   /** `{{name}}` in the description: a fact the projects differ in, filled in by each (fillDescription). */
   variables?: Record<string, string>
@@ -75,6 +79,14 @@ export const LOOP: {
   wrap_up: { message: string }
   nudges: { max: number }
   parallel: { max: number }
+  /** Background work (spec 2.0.0): the marks every note begins with, and the caps. */
+  jobs: {
+    marks: { command: string; subagent: string; message: string; to_subagent: string }
+    note_tail_chars: { default: number }
+    finished_kept: { default: number }
+    running_max: { default: number }
+    subagent_steps: { default: number }
+  }
 } = LOOP_JSON
 
 /** The `purpose` argument (harness/purpose.json). */
@@ -151,13 +163,14 @@ export function narrowParameters(parameters: Record<string, unknown>, narrow: Na
 }
 
 export const TOOL_SPECS: Record<string, ToolSpecDef> = Object.fromEntries(
-  ([t_apply_patch, t_ask_user, t_bash, t_bash_kill, t_bash_list, t_bash_output, t_decisions, t_edit, t_glob, t_grep, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_multiedit, t_note_manage, t_note_view, t_notes_search, t_plan_submit, t_plan_update, t_plan_write, t_read, t_session_search, t_settings, t_skill_manage, t_skill_view, t_skills_list, t_task, t_tasks, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
+  ([t_apply_patch, t_ask_user, t_bash, t_decisions, t_edit, t_glob, t_grep, t_job_list, t_job_output, t_job_send, t_job_stop, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_multiedit, t_note_manage, t_note_view, t_notes_search, t_plan_submit, t_plan_update, t_plan_write, t_read, t_report, t_session_search, t_settings, t_skill_manage, t_skill_view, t_skills_list, t_task, t_tasks, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
 )
 
-/** A tool's name and description as the spec has them, for its definition: `...described("read")`.
- *  With `vars`, the description filled and the values kept for its parameters (toSpec). */
-export function described(name: string, vars?: Record<string, string>): { name: string; description: string; vars?: Record<string, string> } {
+/** A tool's name, description and `exclusive` flag as the spec has them, for its definition:
+ *  `...described("read")`. With `vars`, the description filled and the values kept for its
+ *  parameters (toSpec). */
+export function described(name: string, vars?: Record<string, string>): { name: string; description: string; exclusive: boolean; vars?: Record<string, string> } {
   const t = TOOL_SPECS[name]
   if (!t) throw new Error(`harness: no tool ${name} in the spec`)
-  return vars ? { name: t.name, description: fillDescription(t.description, vars), vars } : { name: t.name, description: t.description }
+  return vars ? { name: t.name, description: fillDescription(t.description, vars), exclusive: t.exclusive, vars } : { name: t.name, description: t.description, exclusive: t.exclusive }
 }

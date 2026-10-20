@@ -2,8 +2,10 @@
 // an Engine. The TUI and `run` both start here.
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
-import { capacityRefusal } from "./session/capacity.ts"
-import { fillDescription, TOOL_SPECS } from "./harness.ts"
+import { capacityRefusal, capacityBeside } from "./session/capacity.ts"
+import { jobRegistry, type Job, type JobRegistry, type SubagentHandle } from "./jobs/registry.ts"
+import { MARKS, shownLine } from "./jobs/note.ts"
+import { fillDescription, LOOP, TOOL_SPECS } from "./harness.ts"
 import { duration } from "./duration.ts"
 import { createWorktree, finishWorktree, type Worktree } from "./git/worktree.ts"
 import { boardSummary } from "./project/board.ts"
@@ -20,9 +22,10 @@ import { assembleSystem, instructionFiles, knowledgeScope } from "./prompt/assem
 import { describeRepo, repoState } from "./git/repo.ts"
 import { findProject, persistProjectRule, trustOf, type Project } from "./project/root.ts"
 import type { Message } from "./provider/types.ts"
-import { Engine, type EngineOptions } from "./session/engine.ts"
+import { Engine } from "./session/engine.ts"
 import { agents, NOT_FOR_SUBAGENTS } from "./project/agents.ts"
-import { ToolError, type Tool } from "./tool/tool.ts"
+import { ToolError, type SpawnOptions, type SubagentHandleInfo, type Tool } from "./tool/tool.ts"
+import type { SubagentResult } from "./tool/task.ts"
 import type { Client, ResolvedModel } from "./provider/types.ts"
 import { modelTitle, firstReply, promptTitle } from "./session/title.ts"
 import { Turns } from "./session/turns.ts"
@@ -135,6 +138,16 @@ export interface App {
   embedder?: Embedder
   /** Stop whatever runs: the model's reply. */
   cancel(): void
+  /** The process's job registry (jobs/registry.ts); this app is attached to it for its session. */
+  registry: JobRegistry
+  /** The id the registry knows the open session by (the store's, or a stand-in without a store). */
+  jobsSessionId(): string
+  /** The open session's jobs, running first. */
+  jobs(): Job[]
+  /** A note for the open session (a job's end, a subagent's message), beginning with its mark: to
+   *  the model's next step while a turn runs, else a turn of its own marked `machine`. `shown`:
+   *  the line a transcript shows for it. */
+  wake(text: string, shown: string): void
   /** What the client holds for this session (the link): read into every prompt from now on. */
   context: SessionContext
   /** Replace it (`{}`: none), naming the instance it came from for the prompt's heading. */
@@ -178,6 +191,9 @@ function openInBrowser(url: string): boolean {
     return false
   }
 }
+
+/** Tools the spec offers to subagents only (`offered: subagent`): never a session's own model's. */
+export const SUBAGENT_ONLY = new Set(Object.values(TOOL_SPECS).filter((t) => t.offered === "subagent").map((t) => t.name))
 
 const MODE_RANK: Record<Mode, number> = { auto: 0, edit: 1, manual: 2, plan: 3 }
 export function stricterMode(a: Mode | undefined, b: Mode): Mode {
@@ -315,7 +331,7 @@ export function createApp(o: AppOptions): App {
   const prototypesBlock = () => (context.prototypes?.offered || (!context.prototypes && loaded.config.prototypes === true) ? { sources: context.prototypes?.sources ?? "" } : undefined)
   /** The three personal keys this session uses: the client's for it, else the config's. */
   const personal = () => (context.personalization ? personalConfig({ enabled: true, available: true, ...context.personalization }) : loaded.config)
-  const system = (m: Mode, current: ResolvedModel, subagent?: { name: string; instructions: string }, at?: { cwd: string; root: string }, plan?: Plan) =>
+  const system = (m: Mode, current: ResolvedModel, subagent?: { name: string; instructions: string; report: boolean; skills: boolean }, at?: { cwd: string; root: string }, plan?: Plan) =>
     assembleSystem({
       modelRef: current.ref,
       family: familyOf(current),
@@ -333,7 +349,8 @@ export function createApp(o: AppOptions): App {
       files: at ? undefined : frozen.files,
       subagent,
       memory: frozen.memory,
-      skills: frozen.skills,
+      // The skills block tells of skill_view; a subagent without the tool gets no block.
+      skills: subagent && !subagent.skills ? undefined : frozen.skills,
       manageSkills: true,
       // Read on every prompt: /personality and /settings change it without a restart.
       ...personalityOf(personal()),
@@ -357,9 +374,9 @@ export function createApp(o: AppOptions): App {
   // Subagents (the task tool): a child engine with its own bus and read-tracker, the agent's
   // tools and mode, the same asker (permission prompts still reach the user), no task tool of its
   // own. Only its final reply goes back; its tool lines are shown under the task line.
-  const agentList = agents(trusted ? project.dir : undefined)
+  const agentList = agents(trusted ? project.dir : undefined, loaded.warnings)
   const offered = BUILTIN_TOOLS.filter(
-    (t) => (memoryOn || t.name !== "memory") && (settingsTool !== "off" || t.name !== "settings") && !(lembasLibrary && LOCAL_LIBRARY.has(t.name)),
+    (t) => (memoryOn || t.name !== "memory") && (settingsTool !== "off" || t.name !== "settings") && !(lembasLibrary && LOCAL_LIBRARY.has(t.name)) && !SUBAGENT_ONLY.has(t.name),
   )
   // The spec's descriptions carry the facts LLeMbas CLI fills in itself (harness/README.md).
   const inWords = (sec: number) => (sec % 60 === 0 ? `${sec / 60} minute${sec === 60 ? "" : "s"}` : `${sec} seconds`)
@@ -368,7 +385,7 @@ export function createApp(o: AppOptions): App {
     bash: {
       timeout: inWords(loaded.config.limits?.bash_timeout ?? 120),
       timeout_max: inWords(600),
-      background: " For a server, a watcher or anything long, set `background: true`: it returns at once with a job id; read its output with bash_output, list jobs with bash_list, stop one with bash_kill.",
+      background: " For a server, a watcher or anything long, set `background: true`: it returns at once with a job id. Read a job's output with job_output, list jobs with job_list, stop one with job_stop; you are told when one ends.",
     },
   }
   // A tool whose values are its own (the library's, set where it is defined) is filled already;
@@ -379,13 +396,41 @@ export function createApp(o: AppOptions): App {
     const v = vars[t.name] ?? {}
     return { ...t, description: fillDescription(t.description, v), vars: { ...t.vars, ...v } }
   })
-  const spawn: NonNullable<EngineOptions["spawn"]> = async (name, prompt, signal, callId, opts = {}) => {
+  // Background jobs: one registry for the process, this app attached for whichever session it
+  // holds. Without a store a session has no id of its own; the jobs get a stand-in.
+  const registry = jobRegistry()
+  let standIn = `local_${crypto.randomUUID().slice(0, 8)}`
+  const jobsSessionId = () => engine.sessionId ?? standIn
+  const wake = (text: string, shown: string) => {
+    if (turns.current || engine.busy) return engine.note(text)
+    void turns.prompt(text, [], shown, { machine: true }).catch((e) => bus.emit({ type: "notice", level: "warn", message: `a job's note could not start a turn: ${(e as Error).message}` }))
+  }
+  const detach = registry.attach({ sessionId: jobsSessionId, bus, wake, store, runningMax: () => loaded.config.limits?.jobs ?? registry.limits.runningMax })
+  const childDetach: (() => void)[] = []
+  // A note the turn ended before delivering (stopped, or a budget): a turn of its own now, or —
+  // after Esc — with the next message, so it starts no work nobody asked for.
+  bus.on((e) => {
+    if (e.type !== "done") return
+    const left = engine.takeNotes()
+    if (!left.length) return
+    if (e.reason === "cancelled") return void engine.pendingContext.push(...left)
+    setTimeout(() => {
+      for (const n of left) wake(n, shownLine(n))
+    }, 0)
+  })
+
+  // Subagents (the task tool): a child engine with its own bus, session row and read-tracker, the
+  // agent's tools and mode, the same asker (permission prompts still reach the user, saying which
+  // subagent asked), no task tool of its own. Every one runs as a job of the session: a synchronous
+  // one's report goes back as the call's result, a background one's as a note when it ends.
+  const spawn = async (name: string, prompt: string, opts: SpawnOptions): Promise<SubagentHandleInfo> => {
     const spec = agentList.find((a) => a.name === name)
     if (!spec) throw new ToolError(`There is no agent "${name}". The agents are: ${agentList.map((a) => a.name).join(", ")}.`)
     // The model asked for (task's `model`), else the agent's own, else the session's — and whether
-    // its server can take it beside the session's (src/session/capacity.ts), before anything is made.
+    // its server can take it beside the session's and beside every subagent already running
+    // (src/session/capacity.ts), before anything is made.
     const m = opts.model ? resolveModel(loaded, opts.model) : spec.model ? resolveModel(loaded, spec.model) : engine.model
-    const refused = capacityRefusal(engine.model, m)
+    const refused = capacityRefusal(engine.model, m) || registry.running(jobsSessionId()).filter((j) => j.kind === "subagent" && j.subagent).map((j) => capacityBeside(j.subagent!.engine.model, m)).find(Boolean)
     if (refused) throw new ToolError(`${refused} Do this part yourself, or hand it to a model on another connection.`)
     // A checkout and branch of its own, when asked for (the task's worktree, the agent's isolation).
     let wt: Worktree | undefined
@@ -401,46 +446,58 @@ export function createApp(o: AppOptions): App {
     // A directory not committed yet is not in the checkout; make it, so the tools have somewhere to be.
     if (at) for (const d of [at.root, at.cwd]) mkdirSync(d, { recursive: true })
     // Isolation is the point: the main checkout is refused to it outright, in every mode —
-    // its prompt may well name files there by their absolute paths.
+    // its prompt may well name files there by their absolute paths. Its project directory and plan
+    // directory are the checkout's, so the edit-mode guard and plan mode judge the right place.
+    const childProjectDir = at ? join(at.root, relative(project.root, project.dir)) : project.dir
     const childPerm = at
       ? {
           ...perm,
           root: at.root,
+          projectDir: childProjectDir,
+          planDir: join(childProjectDir, "plans"),
           rules: [...perm.rules, { permission: "external_directory", pattern: project.gitRoot!, action: "deny" as const }, { permission: "external_directory", pattern: `${project.gitRoot!}/*`, action: "deny" as const }],
         }
       : perm
-    const childTools = tools.filter((t) => !NOT_FOR_SUBAGENTS.has(t.name) && (!spec.tools || spec.tools.includes(t.name)))
+    // `report` is every subagent's: its way of speaking to the main agent before its final reply.
+    const childTools = [...tools.filter((t) => !NOT_FOR_SUBAGENTS.has(t.name) && (!spec.tools || spec.tools.includes(t.name))), ...BUILTIN_TOOLS.filter((t) => SUBAGENT_ONLY.has(t.name))]
+    const description = opts.description ?? prompt.split("\n")[0]!.slice(0, 60)
+    const ownerSession = jobsSessionId()
+    const childRow = store?.createSession(at?.root ?? project.root, m.ref, engine.sessionId)
+    if (childRow) store!.setTitle(childRow.id, `${spec.name}: ${description}`)
+    const childSessionId = childRow?.id ?? `${ownerSession}/${crypto.randomUUID().slice(0, 8)}`
     const childBus = new Bus()
-    let steps = 0
-    let calls = 0
-    childBus.on((e) => {
-      if (e.type === "step") steps++
-      // What a subagent writes counts toward the task's tokens.
-      if (e.type === "usage") bus.emit({ type: "usage", usage: e.usage, child: true })
-      if ((e.type === "tool_end" || e.type === "tool_denied") && callId) {
-        calls++
-        bus.emit({
-          type: "sub_tool",
-          callId,
-          name: e.name,
-          title: e.type === "tool_end" ? (e.result.title ?? e.name) : `denied — ${e.reason.split("\n")[0]!.slice(0, 80)}`,
-          isError: e.type === "tool_denied" || e.result.isError,
-        })
-      }
+    let job: Job
+    // The asker is the session's; a child's ask says which subagent it comes from.
+    const askerFor = (): Asker => ({
+      ask: (req) => o.asker.ask({ ...req, source: { jobId: job.id, agent: spec.name, description } }),
+      get question() {
+        return o.asker.question
+      },
+      get plan() {
+        return o.asker.plan
+      },
     })
     const child = new Engine({
       bus: childBus,
-      asker: o.asker,
+      asker: askerFor(),
       client: m.ref === engine.model.ref ? engine.client : clientFor(m),
       model: m,
       tools: childTools,
+      store,
+      sessionId: childRow?.id,
       // An agent's own mode can make it stricter than its parent, never looser.
       mode: stricterMode(spec.mode, engine.mode),
       effort: m.ref === engine.model.ref ? engine.effort : startEffort(m),
-      maxSteps: 50,
+      maxSteps: loaded.config.limits?.subagent_steps ?? LOOP.jobs.subagent_steps.default,
       compaction,
       perm: childPerm,
-      toolCtx: at ? { ...baseToolCtx(), root: at.root, cwd: at.cwd, projectDir: undefined } : baseToolCtx(),
+      toolCtx: {
+        ...baseToolCtx(),
+        ...(at ? { root: at.root, cwd: at.cwd, projectDir: undefined } : {}),
+        jobs: { registry, owner: () => ({ sessionId: childSessionId, job }) },
+      },
+      fallback: engine.o.fallback,
+      steerMark: MARKS.to_subagent,
       system: (mode, current, plan) =>
         system(
           mode,
@@ -450,26 +507,45 @@ export function createApp(o: AppOptions): App {
             instructions: wt
               ? `${spec.instructions}\n\nYou are working in a separate checkout of the repository, at ${at!.root}, on the branch ${wt.branch} (made from the last commit — uncommitted work of the main agent is not here). Work only inside it. When you finish, your changes are committed on that branch for the main agent to merge: do not commit, merge or push yourself.`
               : spec.instructions,
+            report: childTools.some((t) => t.name === "report"),
+            skills: childTools.some((t) => t.name === "skill_view"),
           },
           at,
           plan,
         ),
     })
-    const onAbort = () => child.cancel()
-    signal.addEventListener("abort", onAbort, { once: true })
-    try {
-      const reason = await child.prompt(prompt)
+    // Its own background commands wake it at its next step while it runs; once it has ended they
+    // are stopped with it, so nothing is left to wake.
+    childDetach.push(registry.attach({ sessionId: () => childSessionId, bus: childBus, wake: (text) => void (child.busy && child.note(text)), store }))
+    const finish = async (reason: string): Promise<SubagentResult> => {
       const last = [...child.messages].reverse().find((x) => x.role === "assistant")
-      let text = last && last.role === "assistant" ? last.parts.map((p) => (p.type === "text" ? p.text : "")).join("") : ""
-      if (wt) text += `\n\n[worktree] ${finishWorktree(project.gitRoot!, wt, `${spec.name}: ${opts.description ?? prompt.split("\n")[0]!.slice(0, 60)}`).summary}`
+      const text = last && last.role === "assistant" ? last.parts.map((p) => (p.type === "text" ? p.text : "")).join("") : ""
+      // Cancelled or failed too: what it did is kept the same way, and the branch named.
+      const worktree = wt ? finishWorktree(project.gitRoot!, wt, `${spec.name}: ${description}${reason === "stop" ? "" : " (stopped)"}`).summary : undefined
       wt = undefined
-      return { text, steps, tools: calls, reason }
-    } finally {
-      signal.removeEventListener("abort", onAbort)
-      // Cancelled or failed: keep what it did, the same way.
-      if (wt) finishWorktree(project.gitRoot!, wt, `${spec.name}: ${opts.description ?? "unfinished"} (stopped)`)
+      const error = reason === "error" ? job.lastError : undefined
+      const end = registry.finishSubagent(job, { reason, report: text, ...(error ? { error } : {}), ...(worktree ? { worktree } : {}) })
+      return { text: worktree ? `${text}\n\n[worktree] ${worktree}` : text, steps: job.steps ?? 0, tools: job.tools ?? 0, reason, ...(error ? { error } : {}), ...(end.stopped ? { stopped: end.stopped } : {}) }
     }
+    const run = (text: string) => child.prompt(text).then(finish, (e) => (job.lastError = (e as Error).message, finish("error")))
+    const handle: SubagentHandle = {
+      bus: childBus,
+      engine: child,
+      send: (text) => child.enqueue(text),
+      restart: (text) => run(text).then(() => undefined),
+      cancel: () => child.cancel(),
+    }
+    job = registry.startSubagent({ sessionId: ownerSession, ownerCallId: opts.callId, ownerJobId: baseOwner().job?.id, agent: spec.name, model: m.ref, description, handle, childSessionId, silent: !opts.background })
+    // A synchronous subagent goes with its parent's turn (Esc stops both); a background one does not.
+    const onAbort = () => child.cancel()
+    opts.signal?.addEventListener("abort", onAbort, { once: true })
+    const done = run(prompt).finally(() => opts.signal?.removeEventListener("abort", onAbort))
+    // Nobody awaits a background one here; its end is its note.
+    if (opts.background) done.catch(() => {})
+    return { id: job.id, done }
   }
+  /** Whose jobs the session's own tools see. */
+  const baseOwner = () => ({ sessionId: jobsSessionId(), job: undefined as Job | undefined })
 
   const engine = new Engine({
     bus,
@@ -485,7 +561,7 @@ export function createApp(o: AppOptions): App {
     budget: { wall_seconds: loaded.config.limits?.wall_seconds, output_bytes: loaded.config.limits?.output_bytes, completion_tokens: loaded.config.limits?.completion_tokens },
     compaction,
     perm,
-    toolCtx: baseToolCtx(),
+    toolCtx: { ...baseToolCtx(), jobs: { registry, owner: baseOwner } },
     system: (m, current, plan) => system(m, current, undefined, undefined, plan),
     persistRule: trusted ? (rule) => persistProjectRule(project, rule) : undefined,
     spawn,
@@ -675,13 +751,21 @@ export function createApp(o: AppOptions): App {
     mcp,
     mcpReady,
     small,
-    close: () => mcp.close(),
+    close: () => {
+      detach()
+      for (const d of childDetach.splice(0)) d()
+      return mcp.close()
+    },
     skills: skillList,
     library,
     embedder,
     cancel() {
       engine.cancel()
     },
+    registry,
+    jobsSessionId,
+    jobs: () => registry.list(jobsSessionId()),
+    wake,
     get context() {
       return context
     },
@@ -704,6 +788,7 @@ export function createApp(o: AppOptions): App {
       firstShown = ""
       const s = store?.createSession(project.root, engine.model.ref)
       keepCwd(s?.id)
+      standIn = `local_${crypto.randomUUID().slice(0, 8)}`
       engine.newSession(s?.id)
       turns.reset()
       if (s) bus.emit({ type: "session", id: s.id, model: engine.model.ref, mode: engine.mode })
@@ -732,7 +817,10 @@ export function createApp(o: AppOptions): App {
       // makes, left behind by `-c` and /sessions as an empty, untitled row in /sessions and a chat
       // in the web UI that holds nothing. Only when it is empty: one with a word in it is kept.
       if (before && before !== id) discardEmpty(before)
-      return store.messages(id)
+      const messages = store.messages(id)
+      // Notes its jobs left while nobody had it open: a turn of their own, now.
+      setTimeout(() => registry.deliverPending(id), 0)
+      return messages
     },
   }
 }

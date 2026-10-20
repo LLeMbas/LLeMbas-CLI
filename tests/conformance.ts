@@ -19,6 +19,7 @@ import { resolveBase } from "../src/library/store.ts"
 import { NarrowError, narrowParameters, type Narrow } from "../src/harness.ts"
 import { fillPrompt } from "../src/prompt/fill.ts"
 import { applyOps, type Op, type Target } from "../src/memory/store.ts"
+import { jobNote, type NoteCase } from "../src/jobs/note.ts"
 
 type Case = Record<string, unknown>
 
@@ -94,6 +95,7 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
     const r = applyOps(c.target as Target, c.entries as string[], c.ops as Op[], c.limit as number)
     return { ok: r.ok, entries: r.ok ? r.after : c.entries, message: r.message, usage: r.usage, shown: Boolean(r.entries) }
   },
+  jobs: (c) => jobNote(c as unknown as NoteCase),
   library_scope: (c) => resolveBase(c.bases as { id: string; name: string }[], c.base as string | null),
   toolcall_index: (c) => {
     // The deltas as the OpenAI stream carries them: `function.name` and `function.arguments`.

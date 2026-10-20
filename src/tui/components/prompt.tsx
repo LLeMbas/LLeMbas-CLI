@@ -40,6 +40,9 @@ export function Prompt(p: {
   queue?: { count(): number; take(index: number): string | undefined; putBack(index: number, text: string): void }
   /** A burst of ↑/↓ that was a mouse wheel: scroll the transcript `lines` up (-1) or down (1). */
   onWheel?: (dir: -1 | 1, lines: number) => void
+  /** ctrl+b: the foreground command goes to the background now. Taken here because the textarea
+   *  itself binds ctrl+b (move left) and would keep the key. */
+  onBackground?: () => void
 }) {
   const { theme } = useTui()
   const c = () => theme().colors
@@ -233,6 +236,10 @@ export function Prompt(p: {
           onKeyDown={(e) => {
             if (!area) return
             if (e.ctrl && e.name === "v" && pasteClipboardImage()) return e.preventDefault()
+            if (e.ctrl && e.name === "b" && p.onBackground) {
+              p.onBackground()
+              return e.preventDefault()
+            }
             const pop = popup()
             if (pop) {
               const n = pop.items.length

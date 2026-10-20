@@ -14,6 +14,20 @@ export interface SessionRow {
   title: string
   root: string
   model: string
+  /** A subagent's session: the session whose task started it. Null for a session of its own. */
+  parent_id?: string | null
+}
+
+/** A background job's row (jobs/registry.ts persists one per job): the record as JSON, with the
+ *  columns a list needs beside it. */
+export interface StoredJob {
+  id: string
+  session_id: string
+  kind: string
+  state: string
+  started: number
+  ended: number | null
+  json: string
 }
 
 const SCHEMA = `
@@ -28,6 +42,11 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_session_kind ON messages(session_id, kind, id);
 CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, id);
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT NOT NULL, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL, json TEXT NOT NULL, state TEXT NOT NULL, started INTEGER NOT NULL, ended INTEGER,
+  PRIMARY KEY (session_id, id)
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text, content='', contentless_delete=1);
 CREATE TABLE IF NOT EXISTS session_meta (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, key TEXT NOT NULL, value TEXT NOT NULL,
@@ -76,14 +95,39 @@ export class Store {
     this.db.exec(SCHEMA.split("CREATE INDEX IF NOT EXISTS messages_session_kind")[0]!)
     const cols = (this.db.query("PRAGMA table_info(messages)").all() as { name: string }[]).map((c) => c.name)
     if (!cols.includes("kind")) this.db.run("ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'")
+    // A subagent's session hangs off its parent's and goes with it (spec 2.0.0).
+    const sessionCols = (this.db.query("PRAGMA table_info(sessions)").all() as { name: string }[]).map((c) => c.name)
+    if (!sessionCols.includes("parent_id")) this.db.run("ALTER TABLE sessions ADD COLUMN parent_id TEXT REFERENCES sessions(id) ON DELETE CASCADE")
     this.db.exec(SCHEMA)
   }
 
-  createSession(root: string, model: string): SessionRow {
+  /** `parentId`: a subagent's session, which belongs to the one whose task started it — listed
+   *  nowhere on its own, deleted with it. */
+  createSession(root: string, model: string, parentId?: string): SessionRow {
     const now = Date.now()
     const id = `ses_${now.toString(36)}${Math.random().toString(36).slice(2, 8)}`
-    this.db.query("INSERT INTO sessions (id, created, updated, root, model) VALUES (?, ?, ?, ?, ?)").run(id, now, now, root, model)
-    return { id, created: now, updated: now, title: "", root, model }
+    this.db.query("INSERT INTO sessions (id, created, updated, root, model, parent_id) VALUES (?, ?, ?, ?, ?, ?)").run(id, now, now, root, model, parentId ?? null)
+    return { id, created: now, updated: now, title: "", root, model, parent_id: parentId ?? null }
+  }
+
+  /** A subagent's sessions under this one. */
+  children(sessionId: string): string[] {
+    return (this.db.query("SELECT id FROM sessions WHERE parent_id = ?").all(sessionId) as { id: string }[]).map((r) => r.id)
+  }
+
+  saveJob(j: StoredJob) {
+    this.db
+      .query("INSERT INTO jobs (id, session_id, kind, json, state, started, ended) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (session_id, id) DO UPDATE SET json = excluded.json, state = excluded.state, started = excluded.started, ended = excluded.ended")
+      .run(j.id, j.session_id, j.kind, j.json, j.state, j.started, j.ended)
+  }
+
+  /** A session's jobs as the store has them, oldest first. */
+  jobs(sessionId: string): StoredJob[] {
+    return this.db.query("SELECT id, session_id, kind, json, state, started, ended FROM jobs WHERE session_id = ? ORDER BY started, id").all(sessionId) as StoredJob[]
+  }
+
+  deleteJob(sessionId: string, id: string) {
+    this.db.query("DELETE FROM jobs WHERE session_id = ? AND id = ?").run(sessionId, id)
   }
 
   append(sessionId: string, m: Message): number {
@@ -99,7 +143,8 @@ export class Store {
    *  deleting the chat it is. The search index has no content of its own, so its rows go by id. */
   deleteSession(sessionId: string): boolean {
     const del = this.db.transaction(() => {
-      this.db.query("DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_id = ?)").run(sessionId)
+      // Its subagents' sessions go with it (ON DELETE CASCADE), so their index rows go here too.
+      this.db.query("DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_id = ? OR session_id IN (SELECT id FROM sessions WHERE parent_id = ?))").run(sessionId, sessionId)
       return this.db.query("DELETE FROM sessions WHERE id = ?").run(sessionId).changes > 0
     })
     // IMMEDIATE: the write lock taken up front, so busy_timeout applies. A deferred
@@ -179,9 +224,10 @@ export class Store {
   }
 
   /** Newest first. `withMessages`: only sessions somebody said something in (every start and /new
-   *  makes one, so the empty ones would crowd out the rest). */
+   *  makes one, so the empty ones would crowd out the rest). A subagent's session is never listed:
+   *  it is reached through the job that ran it. */
   sessions(limit = 50, root?: string, withMessages = false): SessionRow[] {
-    const where = [root ? "s.root = ?" : "", withMessages ? "EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id AND m.kind = 'message')" : ""].filter(Boolean)
+    const where = ["s.parent_id IS NULL", root ? "s.root = ?" : "", withMessages ? "EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id AND m.kind = 'message')" : ""].filter(Boolean)
     return this.db
       .query(`SELECT s.* FROM sessions s ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY s.updated DESC LIMIT ?`)
       .all(...(root ? [root] : []), limit) as SessionRow[]
@@ -195,7 +241,7 @@ export class Store {
     const ex = o.exclude ?? []
     const order = (t: string) => (o.sort === "newest" ? `${t}.created DESC, ${t}.id DESC` : o.sort === "oldest" ? `${t}.created ASC, ${t}.id ASC` : `${t}.r, ${t}.id`)
     const inner = `SELECT m.session_id, m.id, m.role, m.json, m.created, f.rank AS r FROM messages_fts f JOIN messages m ON m.id = f.rowid
-         ${o.root !== undefined ? "JOIN sessions s ON s.id = m.session_id AND s.root = ?" : ""}
+         JOIN sessions s ON s.id = m.session_id AND s.parent_id IS NULL${o.root !== undefined ? " AND s.root = ?" : ""}
          WHERE messages_fts MATCH ? AND m.kind = 'message' AND m.role IN (${roles.map(() => "?").join(",")})
          ${ex.length ? `AND m.session_id NOT IN (${ex.map(() => "?").join(",")})` : ""}`
     const sql = o.perSession

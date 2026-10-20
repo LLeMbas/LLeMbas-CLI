@@ -1,6 +1,6 @@
 import { RGBA, TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import { useTui } from "../context.ts"
 
 export interface Option {
@@ -24,6 +24,12 @@ export interface DialogSpec {
   /** The footer in place of `↑↓ move · enter choose · esc close`, to name those keys: a
    *  binding nobody is told about is one nobody finds, which is how delete went unseen in /sessions. */
   hint?: string
+  /** Columns the box may take (72 by default; the terminal less four is the ceiling either way):
+   *  a list whose rows are columns of their own (/jobs) asks for more. */
+  width?: number
+  /** The dialog is gone, however it went (chosen, esc, replaced): a list that follows events
+   *  while it is shown stops following here. */
+  onClose?: () => void
 }
 
 const CUSTOM = "\u0000custom"
@@ -41,6 +47,14 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
   })
   const start = Math.max(0, p.spec.options.findIndex((o) => o.current))
   const [sel, setSel] = createSignal(start)
+  // The spec is live: a list that redraws itself with fewer rows keeps the cursor on a row.
+  createEffect(() => {
+    const n = shown().length
+    if (n && sel() >= n) setSel(n - 1)
+  })
+  // Taken once: the spec that opened the dialog says what to do when it goes.
+  const onClose = p.spec.onClose
+  onCleanup(() => onClose?.())
   const visible = () => Math.max(3, Math.min(14, dims().height - 10))
   const offset = () => Math.max(0, Math.min(sel() - Math.floor(visible() / 2), shown().length - visible()))
 
@@ -80,7 +94,7 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
     key.stopPropagation()
   })
 
-  const width = () => Math.min(72, dims().width - 4)
+  const width = () => Math.min(p.spec.width ?? 72, dims().width - 4)
   return (
     <box position="absolute" zIndex={100} left={0} top={0} width={dims().width} height={dims().height} alignItems="center" paddingTop={Math.max(1, Math.floor(dims().height / 6))} backgroundColor={RGBA.fromInts(0, 0, 0, 140)}>
       <box width={width()} border borderStyle="rounded" borderColor={c().border} backgroundColor={c().menu} flexDirection="column" paddingLeft={1} paddingRight={1} title={` ${p.spec.title} `} titleColor={c().title}>

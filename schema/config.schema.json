@@ -189,9 +189,21 @@
           "maximum": 9007199254740991
         },
         "bash_timeout": {
-          "description": "Seconds a bash command may run (default 120).",
+          "description": "Seconds a bash command may run in the foreground before it goes on in the background as a job (default 120).",
           "type": "number",
           "exclusiveMinimum": 0
+        },
+        "jobs": {
+          "description": "Background commands one session may have running at once (default 8).",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "subagent_steps": {
+          "description": "Most model steps in one subagent run (default 50) — a runaway backstop, not a budget.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         },
         "wall_seconds": {
           "description": "Budget for one prompt: seconds of work, not counting time spent waiting for you. Past it the model answers from what it has. Unset: none.",

@@ -15,6 +15,9 @@ import blockAgentsGit from "../../harness/prompts/blocks/agents-git.md" with { t
 import blockAgentsKeep from "../../harness/prompts/blocks/agents-keep.md" with { type: "text" }
 import blockLibrary from "../../harness/prompts/blocks/library.md" with { type: "text" }
 import blockPrototypes from "../../harness/prompts/blocks/prototypes.md" with { type: "text" }
+import blockSubagent from "../../harness/prompts/blocks/subagent.md" with { type: "text" }
+import agentExplore from "../../harness/prompts/agents/explore.md" with { type: "text" }
+import agentGeneral from "../../harness/prompts/agents/general.md" with { type: "text" }
 import modeManual from "../../harness/prompts/modes/manual.md" with { type: "text" }
 import modeEdit from "../../harness/prompts/modes/edit.md" with { type: "text" }
 import modeAuto from "../../harness/prompts/modes/auto.md" with { type: "text" }
@@ -49,6 +52,9 @@ const BUILTIN: Record<string, string> = {
   "blocks/agents-keep.md": blockAgentsKeep,
   "blocks/library.md": blockLibrary,
   "blocks/prototypes.md": blockPrototypes,
+  "blocks/subagent.md": blockSubagent,
+  "agents/explore.md": agentExplore,
+  "agents/general.md": agentGeneral,
   "modes/manual.md": modeManual,
   "modes/edit.md": modeEdit,
   "modes/auto.md": modeAuto,
@@ -93,7 +99,17 @@ export function fill(text: string, vars: Record<string, string>): string {
 const INTRO = "Use the instructions below and the tools you have to help with software engineering and with running the project."
 const SURFACE = "Your output is shown in a terminal and rendered as GitHub-flavoured markdown in a monospace font."
 const FILE_TOOLS = "Use the dedicated tools for files: read (not cat), edit and write (not sed or heredocs), grep and glob (not find or grep in bash)."
-const BACKGROUND = "A long-running command (a server, a watcher) runs with bash `background: true`; check it with bash_output and stop it with bash_kill."
+const BACKGROUND = "A long-running command (a server, a watcher) runs with bash `background: true`; a foreground command still running at its timeout goes on in the background too. Read a job's output with job_output, list jobs with job_list, stop one with job_stop. A finished job or subagent announces itself to you: you are told when one ends, so do not poll."
+// The two bullets a subagent does not get: it has no plan tools and nobody to ask (the spec's
+// `plan_tools` and `ask_tool` variables of system/default.md).
+const PLAN_TOOLS =
+  "For work with three or more steps, write a plan with plan_write from the start and keep it current with plan_update as you go rather than at the end: mark a task doing when you start it and done once you have checked it works, drop one that turns out to be unnecessary, and add work the plan did not anticipate when you find it. The plan is what somebody reads to see where you are, so a plan updated only at the end is a report rather than a plan. If what you find makes the plan wrong rather than merely incomplete, say so and ask with ask_user rather than quietly planning something else."
+const ASK_TOOL =
+  "When a decision is genuinely the user's — a trade-off only they can weigh, a requirement the request leaves open — ask with ask_user: everything you need in one call, with the options you consider plausible and the one you would choose marked recommended. Do not ask what you can find out yourself."
+/** `{{report}}` of blocks/subagent.md, when the subagent has the report tool. */
+const SUBAGENT_REPORT = " Before that, the report tool sends the main agent a message — a finding it should act on at once, or a question you cannot settle yourself — and a message from it may reach you meanwhile."
+/** `{{read_only}}` of blocks/subagent.md, in plan mode. */
+const SUBAGENT_READ_ONLY = " You can read and search; you cannot change anything."
 const GIT_SECTION = [
   "# Git",
   "- How git is used in this project — whether you commit on your own, and on which branch — is in the \"## Git\" section of its AGENTS.md. Follow it. Where nothing says, only commit, amend, push, tag or create branches when the user asks.",
@@ -182,8 +198,9 @@ export interface PromptContext {
   files?: { path: string; text: string }[]
   /** Open items on the project's task board. */
   tasks?: string
-  /** Set for a subagent: who it is and what it is for; replaces the mode's own instructions. */
-  subagent?: { name: string; instructions: string }
+  /** Set for a subagent: who it is and what it is for; replaces the mode's own instructions.
+   *  `report`: it has the report tool. */
+  subagent?: { name: string; instructions: string; report?: boolean }
   /** The memory snapshot taken when the session started ("" when both files are empty);
    *  undefined when memory is off. */
   memory?: string
@@ -225,6 +242,9 @@ export function assembleSystem(ctx: PromptContext): string {
     background: BACKGROUND,
     git: GIT_SECTION,
     plan_context: planContext(ctx.plan),
+    // A subagent has neither: the bullets go with the empty values (fill.ts).
+    plan_tools: ctx.subagent ? "" : PLAN_TOOLS,
+    ask_tool: ctx.subagent ? "" : ASK_TOOL,
   }
   const sections: string[] = []
   // Who: the built-in line.
@@ -290,7 +310,12 @@ export function assembleSystem(ctx: PromptContext): string {
 
   if (ctx.subagent)
     sections.push(
-      `You are the "${ctx.subagent.name}" subagent. You work for the main agent, not for the user directly, on one task it gave you; you cannot ask anyone anything. ${ctx.subagent.instructions}\n\nOnly your final reply reaches the main agent — make it complete on its own: the result, then the evidence (file:line), then anything you could not settle.${ctx.mode === "plan" ? " You can read and search; you cannot change anything." : ""}`,
+      fillPrompt(promptText("blocks/subagent.md"), {
+        name: ctx.subagent.name,
+        instructions: ctx.subagent.instructions,
+        report: ctx.subagent.report ? SUBAGENT_REPORT : "",
+        read_only: ctx.mode === "plan" ? SUBAGENT_READ_ONLY : "",
+      }),
     )
   else sections.push(fillPrompt(promptText(`modes/${ctx.mode}.md`), vars))
   if (ctx.unattended) sections.push(fillPrompt(promptText("modes/unattended.md"), { ...vars, refused: ctx.unattended }))
