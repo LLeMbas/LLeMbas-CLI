@@ -2,7 +2,7 @@
 // up to what the server last reported when it reported anything.
 import type { Engine } from "./engine.ts"
 import { contextWindow } from "../provider/discover.ts"
-import { estimateTokens } from "../provider/tokens.ts"
+import { estimateTokens, imageTokens } from "../provider/tokens.ts"
 import { toSpec, type Tool } from "../tool/tool.ts"
 
 export interface ContextRow {
@@ -29,7 +29,7 @@ export function contextBreakdown(engine: Engine, system: string, instructions: {
         else if (p.type === "tool_call") by.calls += estimateTokens(p.name + p.args)
         else {
           imageCount++
-          by.images += 800 // providers bill an image at roughly this for a typical screenshot
+          by.images += imageTokens(p.data) // by its dimensions, as contextUsed counts it
         }
       }
   }

@@ -11,7 +11,7 @@ import { learned, learnEfforts, learnNoProgress, learnNoStreamOptions } from "./
 import { historyArgs, Parts, record, recordFailure, retrying, statusOf, SwapBanner } from "./common.ts"
 import { sseJson } from "./sse.ts"
 import { ThinkSplitter } from "./think.ts"
-import { estimateTokens } from "./tokens.ts"
+import { estimateTokens, estimateValue } from "./tokens.ts"
 import {
   ProviderError,
   type ChatRequest,
@@ -274,7 +274,7 @@ export class OpenAIChatClient implements Client {
     const parts = message.parts
     if (!usage) {
       const out = parts.reduce((n, p) => n + estimateTokens(p.type === "tool_call" ? p.name + p.args : p.text), 0)
-      usage = { type: "usage", usage: { input: estimateTokens(JSON.stringify(body.messages)), output: out, estimated: true } }
+      usage = { type: "usage", usage: { input: estimateValue(body.messages), output: out, estimated: true } }
     }
     yield usage
     yield { type: "finish", reason: finish, message }

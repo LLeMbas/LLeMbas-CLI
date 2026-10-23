@@ -6,7 +6,7 @@ import { resolveKey } from "../config/load.ts"
 import { Parts, record, recordFailure, retrying, statusOf, SwapBanner } from "./common.ts"
 import { authHeaders, joinUrl, request, tlsFor } from "./http.ts"
 import { sseJson } from "./sse.ts"
-import { estimateTokens } from "./tokens.ts"
+import { estimateTokens, estimateValue } from "./tokens.ts"
 import { ProviderError, type ChatRequest, type Client, type DiscoveredModel, type Message, type ResolvedModel, type StreamEvent, type ToolCallPart } from "./types.ts"
 
 /** Thinking budgets by effort, when the model's config gives no effort_map. */
@@ -216,7 +216,7 @@ export class AnthropicClient implements Client {
     const reason = finish === "max_tokens" ? "length" : finish === "tool_use" || message.parts.some((p) => p.type === "tool_call") ? "tool_calls" : "stop"
     yield sawUsage
       ? { type: "usage", usage: { input, output, cached } }
-      : { type: "usage", usage: { input: estimateTokens(JSON.stringify(body.messages)), output: message.parts.reduce((n, p) => n + estimateTokens(p.type === "tool_call" ? p.args : p.text), 0), estimated: true } }
+      : { type: "usage", usage: { input: estimateValue(body.messages), output: message.parts.reduce((n, p) => n + estimateTokens(p.type === "tool_call" ? p.args : p.text), 0), estimated: true } }
     yield { type: "finish", reason, message }
   }
 

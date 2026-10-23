@@ -16,7 +16,7 @@ import { fill, promptText } from "../prompt/assemble.ts"
 import { resolveCall } from "../tool/names.ts"
 import { contextWindow } from "../provider/discover.ts"
 import { summaryTurns, type Store } from "./store.ts"
-import { estimateTokens } from "../provider/tokens.ts"
+import { estimateTokens, estimateValue } from "../provider/tokens.ts"
 import { duration } from "../duration.ts"
 
 export interface EngineOptions {
@@ -244,7 +244,7 @@ export class Engine {
    *  last reply's output but will not be in the next request. */
   contextUsed(): number | undefined {
     if (!this.usage) return undefined
-    return this.usage.input + this.usage.output - this.droppedThinking() + estimateTokens(JSON.stringify(this.messages.slice(this.usageAt)))
+    return this.usage.input + this.usage.output - this.droppedThinking() + estimateValue(this.messages.slice(this.usageAt))
   }
 
   private droppedThinking(): number {
@@ -262,7 +262,7 @@ export class Engine {
     let saved = 0
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const m = this.messages[i]!
-      const size = estimateTokens(JSON.stringify(m))
+      const size = estimateValue(m)
       if (recent < protect) {
         recent += size
         continue

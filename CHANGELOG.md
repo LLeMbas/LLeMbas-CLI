@@ -6,6 +6,23 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-10-23
+
+A screenshot no longer makes the session compact.
+
+### Fixed
+
+- **An image counted as half a million tokens.** The context estimate measured an image's base64
+  as text, so a 1–3 MB screenshot read as "context at 150–280%" the moment `view_image` (or an
+  `@` attachment) added it, and the session was compacted -- after every image, since the summary
+  drops pictures and the model looked again. The provider's own count, a few thousand tokens, was
+  never in question. An image now counts by its dimensions (28-pixel patches, at most 16k tokens;
+  a flat 1600 when the size cannot be read), everywhere the CLI estimates: the context meter,
+  pruning, `/context`, and the estimate a provider that reports no usage falls back to.
+- **Screenshots are sent at 1600 px.** Any image over 1600 px or 500 KB is shrunk to 1600 px on
+  its longer edge when ImageMagick is there (only files over 3.5 MB were before): no more detail
+  than the model is billed for, and a lighter request.
+
 ## [1.5.0] — 2026-10-20
 
 Harness spec 2.0.0: background work is one thing — a job — for commands and subagents alike, and

@@ -7,7 +7,7 @@
 import { resolveKey } from "../config/load.ts"
 import { Parts, record, recordFailure, retrying, statusOf } from "./common.ts"
 import { authHeaders, joinUrl, request, tlsFor } from "./http.ts"
-import { estimateTokens } from "./tokens.ts"
+import { estimateTokens, estimateValue } from "./tokens.ts"
 import { ProviderError, type ChatRequest, type Client, type DiscoveredModel, type Message, type ResolvedModel, type StreamEvent } from "./types.ts"
 
 export function toOllamaMessages(system: string, messages: Message[], vision: boolean): Record<string, unknown>[] {
@@ -160,7 +160,7 @@ export class OllamaClient implements Client {
     }
     const message = out.message()
     if (calls && finish !== "length") finish = "tool_calls"
-    yield usage ?? { type: "usage", usage: { input: estimateTokens(JSON.stringify(body.messages)), output: message.parts.reduce((n, p) => n + estimateTokens(p.type === "tool_call" ? p.args : p.text), 0), estimated: true } }
+    yield usage ?? { type: "usage", usage: { input: estimateValue(body.messages), output: message.parts.reduce((n, p) => n + estimateTokens(p.type === "tool_call" ? p.args : p.text), 0), estimated: true } }
     yield { type: "finish", reason: finish, message }
   }
 

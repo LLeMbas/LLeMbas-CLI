@@ -6,7 +6,7 @@ import { historyArgs, Parts, record, recordFailure, retrying, statusOf, SwapBann
 import { authHeaders, joinUrl, request, tlsFor } from "./http.ts"
 import { contextFrom } from "./openai-chat.ts"
 import { sseJson } from "./sse.ts"
-import { estimateTokens } from "./tokens.ts"
+import { estimateTokens, estimateValue } from "./tokens.ts"
 import { ProviderError, type ChatRequest, type Client, type DiscoveredModel, type Message, type ResolvedModel, type StreamEvent } from "./types.ts"
 
 type Item = Record<string, unknown>
@@ -161,7 +161,7 @@ export class ResponsesClient implements Client {
     if (finish !== "length" && message.parts.some((p) => p.type === "tool_call")) finish = "tool_calls"
     yield usage ?? {
       type: "usage",
-      usage: { input: estimateTokens(JSON.stringify(body.input)), output: message.parts.reduce((n, p) => n + estimateTokens(p.type === "tool_call" ? p.args : p.text), 0), estimated: true },
+      usage: { input: estimateValue(body.input), output: message.parts.reduce((n, p) => n + estimateTokens(p.type === "tool_call" ? p.args : p.text), 0), estimated: true },
     }
     yield { type: "finish", reason: finish, message }
   }

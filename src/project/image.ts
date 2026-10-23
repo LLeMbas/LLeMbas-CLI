@@ -1,17 +1,21 @@
 // Images for vision models: read, size-checked, downscaled when ImageMagick is there.
 import { readFileSync, statSync } from "node:fs"
 import { extname } from "node:path"
+import { imageSize } from "../provider/tokens.ts"
 import type { ImagePart } from "../provider/types.ts"
 
 export const IMAGE_TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" }
 const MAX_BYTES = 3_500_000
+const SHRINK_ABOVE_BYTES = 500_000
+const MAX_EDGE = 1600
 const magick = Bun.which("magick") ?? Bun.which("convert")
 
 export function isImage(path: string): boolean {
   return extname(path).toLowerCase() in IMAGE_TYPES
 }
 
-/** The image as a part, or a reason it cannot be one. Large ones are shrunk to 1600 px if possible. */
+/** The image as a part, or a reason it cannot be one. Anything over 1600 px or 500 KB is shrunk to
+ *  1600 px when ImageMagick is there. */
 export function loadImage(path: string): ImagePart | string {
   const mime = IMAGE_TYPES[extname(path).toLowerCase()]
   if (!mime) return `${path} is not a supported image (png, jpg, gif, webp)`
@@ -21,7 +25,13 @@ export function loadImage(path: string): ImagePart | string {
   } catch {
     return `${path} does not exist`
   }
-  if (size <= MAX_BYTES) return { type: "image", mime, data: readFileSync(path).toString("base64") }
+  const bytes = readFileSync(path)
+  const dims = imageSize(bytes)
+  // A screenshot of a large monitor is sent at 1600 px on its longer edge, as the LLeMbas server
+  // scales uploads: a model sees no more detail in 2560 px than it is billed tokens for, and a
+  // half-megabyte PNG is a slow request for nothing. Without ImageMagick it goes as it is.
+  const big = size > SHRINK_ABOVE_BYTES || (dims !== undefined && Math.max(dims.width, dims.height) > MAX_EDGE)
+  if (size <= MAX_BYTES && (!big || !magick)) return { type: "image", mime, data: bytes.toString("base64") }
   if (!magick) return `${path} is ${(size / 1e6).toFixed(1)} MB — too large to send, and ImageMagick is not installed to shrink it`
   // The coder named from the extension: ImageMagick otherwise decides by content, and a file named
   // .png that is really SVG or MVG can make it read other files or fetch URLs.
