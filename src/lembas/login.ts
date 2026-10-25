@@ -9,9 +9,9 @@
 // `login` again refreshes them and `logout` removes exactly them. Without a login nothing here is
 // read, and LLeMbas CLI runs on its hand-written config as before.
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { parseDocument } from "yaml"
-import { globalPaths, isLocal, paths } from "../config/paths.ts"
+import { expandHome, globalPaths, isLocal, paths } from "../config/paths.ts"
 import { awaitToken, discover, LembasError, signOut, spoken, startDevice, type DeviceStart, type Discovery, type InstanceInfo, type ServedModel, type Tls } from "./client.ts"
 import { dropCache, fetchWebui, isChatModel, readCache, specFor } from "./webui.ts"
 
@@ -390,12 +390,17 @@ function webuiCount(): number {
 }
 
 export async function login(address: string, o: LoginOptions): Promise<LoginResult> {
-  const { discovery, tls } = await discover(address, o.ca ? { ca: o.ca } : undefined)
+  // Kept as a full path: `lembas service` and Desktop read it from another directory.
+  const ca = o.ca ? resolve(expandHome(o.ca)) : undefined
+  const { discovery, tls } = await discover(address, ca ? { ca } : undefined)
   const start = await startDevice(discovery, tls)
   o.onCode(start, discovery)
   const granted = await awaitToken(discovery, start, tls, { signal: o.signal, sleep: o.sleep })
 
   const connection = connectionNameFor(discovery.base_url, discovery.connection)
+  // Logging in again under the same name: the token being replaced, read before its file is.
+  const before = ownInstances()[connection]
+  const replaced = before?.base_url === discovery.base_url && existsSync(ownKeyFile(connection)) ? readFileSync(ownKeyFile(connection), "utf8").trim() : ""
   mkdirSync(keyDir(), { recursive: true, mode: 0o700 })
   writeFileSync(ownKeyFile(connection), granted.access_token + "\n", { mode: 0o600 })
   chmodSync(ownKeyFile(connection), 0o600)
@@ -403,13 +408,20 @@ export async function login(address: string, o: LoginOptions): Promise<LoginResu
   const instanceDefault = fetched.instance?.default_model ?? fetched.models.find((m) => m.default)?.id ?? undefined
 
   const changes: string[] = []
+  // The old token is signed out too: this machine holds one, the new one. Over the TLS that has
+  // just worked (the old login's CA may be what was wrong), naming the new token, so the instance
+  // moves the old device's agent chats to it instead of keeping an offline twin.
+  const handOver = async (old: string) => {
+    if (old && old !== granted.access_token && !(await signOut(discovery.base_url, old, tls, granted.access_token)))
+      changes.push("the previous login could not be signed out: revoke it under User → Security → Devices on the instance")
+  }
+  await handOver(replaced)
   // Only logins this mode made: in local mode, the user's own login to the same instance is not
   // signed out or replaced — it is not this project's.
   const known = ownInstances()
   for (const [name, old] of Object.entries(known))
     if (name !== connection && old.base_url === discovery.base_url) {
-      // The old token is signed out too: this machine holds one, the new one.
-      if (existsSync(ownKeyFile(name))) await signOut(old.base_url, readFileSync(ownKeyFile(name), "utf8").trim(), old.ca ? { ca: old.ca } : undefined)
+      if (existsSync(ownKeyFile(name))) await handOver(readFileSync(ownKeyFile(name), "utf8").trim())
       changes.push(...replaceOld(name, connection, instanceDefault))
       delete known[name]
     }

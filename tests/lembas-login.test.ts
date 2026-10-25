@@ -22,6 +22,8 @@ interface Fake {
   stop(): void
   polls: number
   revoked: string[]
+  /** What each DELETE /api/v1/token said it was replaced by. */
+  replacedBy: (string | undefined)[]
   models: unknown[]
   approveAfter: number
   deny?: boolean
@@ -52,6 +54,7 @@ function lembas(o: Partial<Pick<Fake, "approveAfter" | "deny" | "protocol" | "mo
     stop: () => {},
     polls: 0,
     revoked: [],
+    replacedBy: [],
     approveAfter: o.approveAfter ?? 1,
     deny: o.deny,
     protocol: o.protocol ?? PROTOCOL,
@@ -98,6 +101,8 @@ function lembas(o: Partial<Pick<Fake, "approveAfter" | "deny" | "protocol" | "mo
       }
       if (u.pathname === "/api/v1/token" && req.method === "DELETE") {
         state.revoked.push(auth ?? "")
+        const text = await req.text()
+        state.replacedBy.push(text ? (JSON.parse(text) as { replaced_by?: string }).replaced_by : undefined)
         return new Response(null, { status: 204 })
       }
       if (!ours) return new Response("no", { status: 401 })
@@ -338,6 +343,33 @@ test("login again reads the models now", async () => {
   const again = await sync("example")
   expect(again.models.map((m) => m.id)).toEqual(["llama"])
   expect(JSON.parse(readFileSync(cacheFile("example"), "utf8")).models[0].id).toBe("llama")
+})
+
+test("login again signs the old token out, naming the new one, so its chats follow", async () => {
+  fake = lembas()
+  await login(fake.url, { ...quick, onCode: () => {} })
+  fake.token = "lmb_newer"
+  fake.polls = 0
+  const r = await login(fake.url, { ...quick, onCode: () => {} })
+  expect(fake.revoked).toEqual(["Bearer lmb_secret"])
+  expect(fake.replacedBy).toEqual(["lmb_newer"])
+  expect(readFileSync(keyFile(r.connection), "utf8").trim()).toBe("lmb_newer")
+  expect(r.changes.join("\n")).not.toContain("could not be signed out")
+})
+
+test("a CA given as a relative path is kept as a full one", async () => {
+  fake = lembas()
+  const dir = join(paths.config, "certs")
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, "ca.crt"), "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n")
+  const cwd = process.cwd()
+  process.chdir(paths.config)
+  try {
+    const r = await login(fake.url, { ...quick, ca: "certs/ca.crt", onCode: () => {} })
+    expect(instances()[r.connection]!.ca).toBe(join(dir, "ca.crt"))
+  } finally {
+    process.chdir(cwd)
+  }
 })
 
 test("logout revokes the token and removes exactly what login wrote", async () => {

@@ -8,6 +8,8 @@
 // account lost the permission) ends the link for good: retrying it would only knock on a closed door.
 import { existsSync, readFileSync } from "node:fs"
 import { hostname } from "node:os"
+import { resolve as resolvePath } from "node:path"
+import { expandHome } from "../config/paths.ts"
 import { remoteBlock } from "../config/remote.ts"
 import { refusedLocally } from "../project/local.ts"
 import type { Mode } from "../config/schema.ts"
@@ -143,7 +145,11 @@ export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
     o.onStatus?.(s)
     return s
   }
-  const ca = instance.ca && existsSync(instance.ca) ? readFileSync(instance.ca, "utf8") : undefined
+  // The CA the login was given, as a full path (an older login kept what was typed: relative, or
+  // with ~, which a service started elsewhere does not find). One that is gone is said, not skipped.
+  const caPath = instance.ca ? resolvePath(expandHome(instance.ca)) : undefined
+  const caGone = caPath && !existsSync(caPath) ? caPath : undefined
+  const loginCa = caPath && !caGone ? readFileSync(caPath, "utf8") : undefined
   /** A 4400 to a hello that said 2: the protocols known were stale (or discovery said more than the
    *  link takes) — the next dial, at once, says 1; only a 4400 to that stops the link. */
   let downgraded = false
@@ -154,11 +160,20 @@ export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
     // What the instance speaks now: asked at every dial, since it may have been updated
     // since the login; what was said last when it cannot be asked.
     let protocols = instances()[instance.connection]?.protocols ?? instance.protocols
+    // What the socket trusts is what discovery just got through with: the login's CA, or the
+    // system's bundle when the instance's certificate needs it (Bun's own roots do not hold a
+    // private CA). Why discovery failed is why the dial will, said in the status.
+    let ca = loginCa
+    let why: string | undefined
     try {
-      const { discovery } = await discover(instance.base_url, ca ? { ca: instance.ca } : undefined)
-      protocols = spoken(discovery)
+      const found = await discover(instance.base_url, loginCa ? { ca: caPath! } : undefined)
+      protocols = spoken(found.discovery)
       rememberProtocols(instance.connection, protocols)
-    } catch {}
+      if (found.tls?.ca && found.tls.ca !== caPath) ca = readFileSync(found.tls.ca, "utf8")
+    } catch (e) {
+      why = (e as Error).message
+    }
+    const unreachable = [caGone && `the CA file given at login, ${caGone}, is not there`, why ?? "could not reach the instance"].filter(Boolean).join("; ")
     const protocol = downgraded ? 1 : linkProtocol(protocols)
     const outcome = await new Promise<{ refused?: string; dropped?: string; final?: boolean; changed?: boolean }>((resolve) => {
       let opened = false
@@ -202,7 +217,7 @@ export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
         if ([4401, 4403, 1008].includes(e.code)) return resolve({ refused: e.reason || "the instance refused this device's token" })
         // 4400: the hello's protocol is not one it speaks. Dialling again would say the same.
         if (e.code === 4400) return resolve({ refused: "the instance and this CLI speak different link protocols — update one of them", final: true })
-        resolve({ dropped: opened ? `the link dropped (${e.code}${e.reason ? `: ${e.reason}` : ""})` : "could not reach the instance" })
+        resolve({ dropped: opened ? `the link dropped (${e.code}${e.reason ? `: ${e.reason}` : ""})` : unreachable })
       })
       ws.addEventListener("error", () => {})
     })

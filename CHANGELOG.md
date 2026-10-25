@@ -6,6 +6,25 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [1.5.2] — 2026-10-25
+
+Logging in again leaves one device, and a link that cannot connect says why.
+
+### Fixed
+
+- **Logging in again left an offline twin of this device on the instance.** A second
+  `lembas login` to the same instance overwrote the old token without signing it out, so the web
+  UI showed the device twice -- the new one linked, the old one offline and holding its agent
+  chats. The old token is now signed out, naming the new one, and a LLeMbas server 1.7.2 or later
+  moves the old device's agent chats to it. A sign-out that fails is said, with where to revoke it.
+- **`lembas service` could not link when the login was given its CA as a relative path.** `login
+  --ca` kept the path as typed, and the service, started in another directory, did not find it and
+  dialled with no CA at all. The path is now kept in full, and a link to an instance whose
+  certificate is signed by a CA in the system's store gets through even without `--ca`, as the
+  rest of the CLI already did.
+- **"Could not reach the instance" now says why**: a CA file given at login that is gone, a
+  certificate that is not trusted, or what else the connection met.
+
 ## [1.5.1] — 2026-10-23
 
 A screenshot no longer makes the session compact.

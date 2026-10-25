@@ -425,3 +425,26 @@ test("the link says protocol 1 to an instance that lists only 1, and stops on 44
   expect(three.detail).toBe("the instance and this CLI speak different link protocols — update one of them")
   expect(dials).toBe(5)
 })
+
+test("a link that cannot dial says why: a CA file gone since the login, and what discovery met", async () => {
+  mkdirSync(paths.config, { recursive: true })
+  const closed = Bun.serve({ port: 0, fetch: () => new Response("no") })
+  const port = closed.port
+  closed.stop(true)
+  writeFileSync(join(paths.config, "lembas.json"), JSON.stringify({ instances: { fake: { base_url: `http://127.0.0.1:${port}`, connection: "fake", ca: "gone/ca.crt", logged_in_at: "" } } }))
+  mkdirSync(join(paths.config, "lembas"), { recursive: true })
+  writeFileSync(join(paths.config, "lembas", "fake.key"), "lmb_device\n", { mode: 0o600 })
+  const stop = new AbortController()
+  const waits: string[] = []
+  await runLink({
+    backoffMs: [10, 20],
+    signal: stop.signal,
+    onStatus: (s) => {
+      if (s.state !== "waiting") return
+      waits.push(s.detail ?? "")
+      stop.abort()
+    },
+  })
+  expect(waits[0]).toContain(`the CA file given at login, ${join(process.cwd(), "gone/ca.crt")}, is not there`)
+  expect(waits[0]).not.toContain("could not reach the instance;")
+})

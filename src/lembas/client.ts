@@ -255,9 +255,15 @@ export async function instanceInfo(base: string, token: string, tls: Tls | undef
 
 /** Revoke this machine's token on the instance. Best-effort: signing out locally goes ahead even
  *  when the instance cannot be reached, and says so. */
-export async function signOut(baseUrl: string, token: string, tls: Tls | undefined): Promise<boolean> {
+/** DELETE /api/v1/token: the token revokes itself. `replacedBy`, a login again's new token: an
+ *  instance that knows it hands the old device's agent chats to the new one first (one that does
+ *  not ignores the body and only revokes). */
+export async function signOut(baseUrl: string, token: string, tls: Tls | undefined, replacedBy?: string): Promise<boolean> {
   try {
-    const res = await call(`${baseUrl}/api/v1/token`, { method: "DELETE", headers: { authorization: `Bearer ${token}` } }, tls)
+    const headers: Record<string, string> = { authorization: `Bearer ${token}` }
+    if (replacedBy) headers["content-type"] = "application/json"
+    const body = replacedBy ? JSON.stringify({ replaced_by: replacedBy }) : undefined
+    const res = await call(`${baseUrl}/api/v1/token`, { method: "DELETE", headers, body }, tls)
     return res.ok || res.status === 401
   } catch {
     return false
