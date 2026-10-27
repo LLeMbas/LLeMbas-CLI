@@ -18,7 +18,7 @@ function setup(script: Parameters<typeof fakeProvider>[0], config = "") {
   mkdirSync(paths.config, { recursive: true })
   writeFileSync(
     join(paths.config, "connections.yaml"),
-    `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models:\n      m: { context: 32768 }\n      tiny: { context: 8192 }\n`,
+    `connections:\n  fake:\n    type: webui\n    url: ${fake.url}\n    models:\n      fake/m: { context: 32768 }\n      fake/tiny: { context: 8192 }\n`,
     { mode: 0o600 },
   )
   writeFileSync(join(paths.config, "config.yaml"), `model: fake/m\n${config}`)
@@ -111,8 +111,8 @@ describe("a session gets a title", () => {
     const app = createApp({ cwd: dir, asker: noAsk, store, snapshots: false })
     await app.engine.prompt("something")
     await until(() => store.session(app.engine.sessionId!)!.title === "Tiny title")
-    expect(fake!.requests[0].model).toBe("m")
-    expect(fake!.requests[1].model).toBe("tiny")
+    expect(fake!.requests[0].model).toBe("fake/m")
+    expect(fake!.requests[1].model).toBe("fake/tiny")
   })
 
   test("a failed title request leaves the prompt's title", async () => {

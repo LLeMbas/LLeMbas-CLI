@@ -51,7 +51,7 @@ describe("an image counts by its dimensions, never its encoding", () => {
       { chunks: [delta({ content: "a screenshot" }), usage(56_000, 5)] },
     ])
     mkdirSync(paths.config, { recursive: true })
-    writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models:\n      m: { vision: true, context: 262144 }\n`, { mode: 0o600 })
+    writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models:\n      f/m: { vision: true, context: 262144 }\n`, { mode: 0o600 })
     writeFileSync(join(paths.config, "config.yaml"), "model: f/m\n")
     const root = mkdtempSync(join(tmpdir(), "ph-img-"))
     writeFileSync(join(root, "shot.png"), png(2560, 1440, 1_500_000))

@@ -19,7 +19,7 @@ export type Source = "default" | "global" | "project" | "session"
 
 export interface SettingDef {
   key: string
-  /** model: a configured `connection/model`; effort: one the model takes, or off; list: comma-separated. */
+  /** model: a model the server serves, by its id; effort: one the model takes, or off; list: comma-separated. */
   kind: "enum" | "model" | "effort" | "number" | "boolean" | "list" | "string"
   values?: readonly string[]
   /** The agent may change it (through the settings tool, with approval). */

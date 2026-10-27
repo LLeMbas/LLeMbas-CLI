@@ -14,7 +14,7 @@ afterEach(() => setup?.renderer.destroy())
 async function boot(cwd: string) {
   const fake = fakeProvider([])
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  fake:\n    type: webui\n    url: ${fake.url}\n    models: { fake/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: fake/m\n")
   let quit = 0
   setup = await testRender(() => <Boot options={{ cwd, store: false }} onQuit={() => quit++} />, { width: 100, height: 30 })

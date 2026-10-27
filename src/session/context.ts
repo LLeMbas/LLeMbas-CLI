@@ -1,7 +1,7 @@
 // /context: where the window goes. Estimates (≈4 characters a token) per part, scaled so they add
 // up to what the server last reported when it reported anything.
 import type { Engine } from "./engine.ts"
-import { contextWindow } from "../provider/discover.ts"
+import { contextWindow } from "../provider/index.ts"
 import { estimateTokens, imageTokens } from "../provider/tokens.ts"
 import { toSpec, type Tool } from "../tool/tool.ts"
 

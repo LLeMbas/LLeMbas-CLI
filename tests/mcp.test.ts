@@ -181,7 +181,7 @@ describe("through the engine", () => {
       { chunks: [delta({ content: "It said it." }, "stop"), usage(20, 5)] },
     ])
     mkdirSync(paths.config, { recursive: true })
-    writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models:\n      m: { context: 32768 }\n`, { mode: 0o600 })
+    writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  fake:\n    type: webui\n    url: ${fake.url}\n    models:\n      fake/m: { context: 32768 }\n`, { mode: 0o600 })
     writeFileSync(join(paths.config, "config.yaml"), `model: fake/m\nmcp:\n  fix:\n    command: ["${BUN}", "${SERVER}"]\n`)
     const dir = mkdtempSync(join(tmpdir(), "lembas-mcp-"))
     const asked: string[] = []

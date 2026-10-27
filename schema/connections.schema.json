@@ -4,564 +4,225 @@
   "properties": {
     "connections": {
       "default": {},
-      "description": "Each LLM endpoint by a name of your choosing; a model is then `name/model-id`. `type: webui` is a LLeMbas instance, whose models come from it.",
+      "description": "The LLeMbas server this machine is logged in to, as `lembas login` writes it: its address and this machine's token. Its models come from it at every start.",
       "type": "object",
       "propertyNames": {
         "type": "string"
       },
       "additionalProperties": {
-        "anyOf": [
-          {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "webui",
+            "description": "A LLeMbas instance: its models, their settings, its voice and its web search."
+          },
+          "url": {
+            "type": "string",
+            "description": "The instance's address, e.g. https://ai.example.org (no /v1)."
+          },
+          "api_key": {
+            "description": "This machine's token, as login wrote it: {file:~/.config/lembas/lembas/<name>.key}.",
+            "type": "string"
+          },
+          "tls": {
+            "description": "For an instance behind a private CA: `ca`, the PEM file that signed its certificate.",
             "type": "object",
             "properties": {
-              "type": {
-                "type": "string",
-                "const": "webui",
-                "description": "A LLeMbas instance: its models, their settings, its voice and its web search."
-              },
-              "url": {
-                "type": "string",
-                "description": "The instance's address, e.g. https://ai.example.org (no /v1)."
-              },
-              "api_key": {
-                "description": "This machine's token, as login wrote it: {file:~/.config/lembas/lembas/<name>.key}. Or key_cmd.",
+              "ca": {
                 "type": "string"
               },
-              "key_cmd": {
-                "type": "string"
-              },
-              "tls": {
-                "description": "For an instance behind a private CA: `ca`, the PEM file that signed its certificate.",
-                "type": "object",
-                "properties": {
-                  "ca": {
-                    "type": "string"
-                  },
-                  "insecure": {
-                    "type": "boolean"
-                  }
-                },
-                "additionalProperties": false
-              },
-              "timeout": {
-                "description": "Seconds of silence allowed in a reply, as for any connection (default 600).",
-                "type": "number",
-                "exclusiveMinimum": 0
-              },
-              "quirks": {
-                "description": "Server oddities; auto is right almost always.",
-                "type": "object",
-                "properties": {
-                  "stream_usage": {
-                    "description": "Ask for token usage in the stream (stream_options); auto learns when a server refuses it.",
-                    "type": "string",
-                    "enum": [
-                      "auto",
-                      "on",
-                      "off"
-                    ]
-                  },
-                  "prompt_progress": {
-                    "description": "Ask how far the server is through reading the prompt (llama.cpp's return_progress), shown while it reads; auto learns when a server refuses it, and one that ignores it shows nothing.",
-                    "type": "string",
-                    "enum": [
-                      "auto",
-                      "on",
-                      "off"
-                    ]
-                  },
-                  "think_tags": {
-                    "description": "<think>…</think> in a reply is taken as reasoning; off leaves it as text.",
-                    "type": "string",
-                    "enum": [
-                      "auto",
-                      "on",
-                      "off"
-                    ]
-                  },
-                  "max_tokens_field": {
-                    "description": "OpenAI reasoning models refuse `max_tokens`; most local servers only know it.",
-                    "type": "string",
-                    "enum": [
-                      "max_tokens",
-                      "max_completion_tokens"
-                    ]
-                  }
-                },
-                "additionalProperties": false
-              },
-              "models": {
-                "description": "Only to change what the instance says about a model, here: each entry goes over the instance's. Usually absent.",
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "type": "object",
-                  "properties": {
-                    "name": {
-                      "description": "A display name; the id is what is sent.",
-                      "type": "string"
-                    },
-                    "family": {
-                      "description": "Picks the prompt overlay: anthropic | gpt | gemini | local. Guessed from the id when absent.",
-                      "type": "string"
-                    },
-                    "context": {
-                      "description": "Total context window in tokens. 0 / absent = unknown: no percentage, no auto-compaction.",
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "max_output": {
-                      "description": "Max tokens per reply.",
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "temperature": {
-                      "description": "Sampling temperature; absent = the server's default.",
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 2
-                    },
-                    "top_p": {
-                      "description": "Nucleus sampling; absent = the server's default.",
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "efforts": {
-                      "description": "The model's own effort vocabulary, in offering order.",
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "enum": [
-                          "minimal",
-                          "low",
-                          "medium",
-                          "high",
-                          "xhigh",
-                          "max"
-                        ]
-                      }
-                    },
-                    "effort": {
-                      "description": "Default effort; `off` sends none.",
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "minimal",
-                            "low",
-                            "medium",
-                            "high",
-                            "xhigh",
-                            "max"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "const": "off"
-                        }
-                      ]
-                    },
-                    "effort_style": {
-                      "description": "openai-chat only: where the effort goes. llama.cpp drops top-level, so `both` is the default.",
-                      "type": "string",
-                      "enum": [
-                        "top",
-                        "kwargs",
-                        "both"
-                      ]
-                    },
-                    "effort_map": {
-                      "description": "anthropic/gemini: effort → thinking budget tokens.",
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string",
-                        "enum": [
-                          "minimal",
-                          "low",
-                          "medium",
-                          "high",
-                          "xhigh",
-                          "max"
-                        ]
-                      },
-                      "additionalProperties": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "vision": {
-                      "description": "The model reads images: @image files, pasted paths and view_image.",
-                      "type": "boolean"
-                    },
-                    "tools": {
-                      "description": "false: a model without tool calls — it can only talk.",
-                      "type": "boolean"
-                    },
-                    "cache": {
-                      "description": "anthropic: prompt caching breakpoints.",
-                      "type": "boolean"
-                    },
-                    "headers": {
-                      "description": "Extra HTTP headers for this model's requests.",
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {
-                        "type": "string"
-                      }
-                    },
-                    "body": {
-                      "description": "Merged into every request body for this model.",
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "notes": {
-                      "description": "What this model is good at, in a line: the model in use is told which others there are, for handing work over (task) or switching.",
-                      "type": "string",
-                      "maxLength": 300
-                    },
-                    "fallback": {
-                      "description": "Other models (connection/model), in order, to switch to when this one's server cannot be reached at all — never once a reply has begun.",
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "single_session": {
-                      "description": "The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused.",
-                      "type": "boolean"
-                    },
-                    "group": {
-                      "description": "Models sharing one server that holds one model at a time (llama-swap), named by any string: a subagent on another model of the same group would unload this one, so it is refused. One connection's one_model_at_a_time is the same rule for all its models; this is for models one connection serves from several such servers (a LLeMbas instance).",
-                      "type": "string"
-                    }
-                  },
-                  "additionalProperties": false
-                }
+              "insecure": {
+                "type": "boolean"
               }
             },
-            "required": [
-              "type",
-              "url"
-            ],
             "additionalProperties": false
           },
-          {
+          "timeout": {
+            "description": "Seconds of silence allowed in a reply, as for any connection (default 600).",
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "quirks": {
+            "description": "Server oddities; auto is right almost always.",
             "type": "object",
             "properties": {
-              "dialect": {
+              "stream_usage": {
+                "description": "Ask for token usage in the stream (stream_options); auto learns when a server refuses it.",
                 "type": "string",
                 "enum": [
-                  "openai-chat",
-                  "responses",
-                  "anthropic",
-                  "gemini",
-                  "ollama"
-                ],
-                "description": "The API it speaks: openai-chat (llama.cpp, vLLM, LM Studio, OpenAI…), responses (OpenAI Responses), anthropic, gemini, ollama (its native /api/chat)."
-              },
-              "base_url": {
-                "type": "string",
-                "description": "Where the API is, e.g. https://api.openai.com/v1 or http://localhost:8080/v1."
-              },
-              "api_key": {
-                "description": "Never pasted: {env:NAME} or {file:~/path}. Or use key_cmd.",
-                "type": "string"
-              },
-              "key_cmd": {
-                "description": "A command whose output is the key, e.g. pass show openai.",
-                "type": "string"
-              },
-              "auth": {
-                "description": "How the key is sent. Default per dialect: anthropic x-api-key, gemini x-goog-api-key, others bearer.",
-                "type": "string",
-                "enum": [
-                  "bearer",
-                  "x-api-key",
-                  "x-goog-api-key",
-                  "none"
+                  "auto",
+                  "on",
+                  "off"
                 ]
               },
-              "headers": {
-                "description": "Extra HTTP headers for every request.",
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "type": "string"
-                }
-              },
-              "body": {
-                "description": "Merged into every request body.",
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
-              },
-              "tls": {
-                "description": "TLS for endpoints behind a private CA. `ca` is a PEM file added to the trusted roots; `insecure` skips verification entirely (last resort). The system store is always trusted.",
-                "type": "object",
-                "properties": {
-                  "ca": {
-                    "type": "string"
-                  },
-                  "insecure": {
-                    "type": "boolean"
-                  }
-                },
-                "additionalProperties": false
-              },
-              "timeout": {
-                "description": "Seconds of silence allowed: waiting for the response, then between two pieces of a streamed reply. Not a limit on how long a reply may take. Default 600.",
-                "type": "number",
-                "exclusiveMinimum": 0
-              },
-              "discover": {
-                "description": "Merge ids and context lengths from GET /models.",
-                "type": "boolean"
-              },
-              "unload_url": {
-                "description": "llama-swap style: frees VRAM when switching away.",
-                "type": "string"
-              },
-              "one_model_at_a_time": {
-                "description": "The server holds one model at a time (llama-swap in front of one GPU): a subagent on another of its models would unload the session's, so it is refused. The session's own model may still be its own subagent.",
-                "type": "boolean"
-              },
-              "unload_method": {
-                "description": "How unload_url is called (default POST).",
+              "prompt_progress": {
+                "description": "Ask how far the server is through reading the prompt (llama.cpp's return_progress), shown while it reads; auto learns when a server refuses it, and one that ignores it shows nothing.",
                 "type": "string",
                 "enum": [
-                  "GET",
-                  "POST"
+                  "auto",
+                  "on",
+                  "off"
                 ]
               },
-              "quirks": {
-                "description": "Server oddities; auto is right almost always.",
-                "type": "object",
-                "properties": {
-                  "stream_usage": {
-                    "description": "Ask for token usage in the stream (stream_options); auto learns when a server refuses it.",
-                    "type": "string",
-                    "enum": [
-                      "auto",
-                      "on",
-                      "off"
-                    ]
-                  },
-                  "prompt_progress": {
-                    "description": "Ask how far the server is through reading the prompt (llama.cpp's return_progress), shown while it reads; auto learns when a server refuses it, and one that ignores it shows nothing.",
-                    "type": "string",
-                    "enum": [
-                      "auto",
-                      "on",
-                      "off"
-                    ]
-                  },
-                  "think_tags": {
-                    "description": "<think>…</think> in a reply is taken as reasoning; off leaves it as text.",
-                    "type": "string",
-                    "enum": [
-                      "auto",
-                      "on",
-                      "off"
-                    ]
-                  },
-                  "max_tokens_field": {
-                    "description": "OpenAI reasoning models refuse `max_tokens`; most local servers only know it.",
-                    "type": "string",
-                    "enum": [
-                      "max_tokens",
-                      "max_completion_tokens"
-                    ]
-                  }
-                },
-                "additionalProperties": false
+              "think_tags": {
+                "description": "<think>…</think> in a reply is taken as reasoning; off leaves it as text.",
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "on",
+                  "off"
+                ]
               },
-              "models": {
-                "default": {},
-                "description": "The models to offer, by the id the server knows them by.",
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "type": "object",
-                  "properties": {
-                    "name": {
-                      "description": "A display name; the id is what is sent.",
-                      "type": "string"
-                    },
-                    "family": {
-                      "description": "Picks the prompt overlay: anthropic | gpt | gemini | local. Guessed from the id when absent.",
-                      "type": "string"
-                    },
-                    "context": {
-                      "description": "Total context window in tokens. 0 / absent = unknown: no percentage, no auto-compaction.",
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "max_output": {
-                      "description": "Max tokens per reply.",
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "temperature": {
-                      "description": "Sampling temperature; absent = the server's default.",
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 2
-                    },
-                    "top_p": {
-                      "description": "Nucleus sampling; absent = the server's default.",
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "efforts": {
-                      "description": "The model's own effort vocabulary, in offering order.",
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "enum": [
-                          "minimal",
-                          "low",
-                          "medium",
-                          "high",
-                          "xhigh",
-                          "max"
-                        ]
-                      }
-                    },
-                    "effort": {
-                      "description": "Default effort; `off` sends none.",
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "minimal",
-                            "low",
-                            "medium",
-                            "high",
-                            "xhigh",
-                            "max"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "const": "off"
-                        }
-                      ]
-                    },
-                    "effort_style": {
-                      "description": "openai-chat only: where the effort goes. llama.cpp drops top-level, so `both` is the default.",
-                      "type": "string",
-                      "enum": [
-                        "top",
-                        "kwargs",
-                        "both"
-                      ]
-                    },
-                    "effort_map": {
-                      "description": "anthropic/gemini: effort → thinking budget tokens.",
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string",
-                        "enum": [
-                          "minimal",
-                          "low",
-                          "medium",
-                          "high",
-                          "xhigh",
-                          "max"
-                        ]
-                      },
-                      "additionalProperties": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "vision": {
-                      "description": "The model reads images: @image files, pasted paths and view_image.",
-                      "type": "boolean"
-                    },
-                    "tools": {
-                      "description": "false: a model without tool calls — it can only talk.",
-                      "type": "boolean"
-                    },
-                    "cache": {
-                      "description": "anthropic: prompt caching breakpoints.",
-                      "type": "boolean"
-                    },
-                    "headers": {
-                      "description": "Extra HTTP headers for this model's requests.",
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {
-                        "type": "string"
-                      }
-                    },
-                    "body": {
-                      "description": "Merged into every request body for this model.",
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "notes": {
-                      "description": "What this model is good at, in a line: the model in use is told which others there are, for handing work over (task) or switching.",
-                      "type": "string",
-                      "maxLength": 300
-                    },
-                    "fallback": {
-                      "description": "Other models (connection/model), in order, to switch to when this one's server cannot be reached at all — never once a reply has begun.",
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "single_session": {
-                      "description": "The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused.",
-                      "type": "boolean"
-                    },
-                    "group": {
-                      "description": "Models sharing one server that holds one model at a time (llama-swap), named by any string: a subagent on another model of the same group would unload this one, so it is refused. One connection's one_model_at_a_time is the same rule for all its models; this is for models one connection serves from several such servers (a LLeMbas instance).",
-                      "type": "string"
-                    }
-                  },
-                  "additionalProperties": false
-                }
+              "max_tokens_field": {
+                "description": "OpenAI reasoning models refuse `max_tokens`; most local servers only know it.",
+                "type": "string",
+                "enum": [
+                  "max_tokens",
+                  "max_completion_tokens"
+                ]
               }
             },
-            "required": [
-              "dialect",
-              "base_url"
-            ],
             "additionalProperties": false
+          },
+          "models": {
+            "description": "Only to change what the instance says about a model, here: each entry goes over the instance's. Usually absent.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "A display name; the id is what is sent.",
+                  "type": "string"
+                },
+                "family": {
+                  "description": "Picks the prompt overlay: anthropic | gpt | gemini | local. Guessed from the id when absent.",
+                  "type": "string"
+                },
+                "context": {
+                  "description": "Total context window in tokens. 0 / absent = unknown: no percentage, no auto-compaction.",
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "max_output": {
+                  "description": "Max tokens per reply.",
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "temperature": {
+                  "description": "Sampling temperature; absent = the server's default.",
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2
+                },
+                "top_p": {
+                  "description": "Nucleus sampling; absent = the server's default.",
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "efforts": {
+                  "description": "The model's own effort vocabulary, in offering order.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "minimal",
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max"
+                    ]
+                  }
+                },
+                "effort": {
+                  "description": "Default effort; `off` sends none.",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "const": "off"
+                    }
+                  ]
+                },
+                "effort_style": {
+                  "description": "Where the effort goes in a request: top-level, in chat_template_kwargs, or both (the default: llama.cpp drops top-level).",
+                  "type": "string",
+                  "enum": [
+                    "top",
+                    "kwargs",
+                    "both"
+                  ]
+                },
+                "vision": {
+                  "description": "The model reads images: @image files, pasted paths and view_image.",
+                  "type": "boolean"
+                },
+                "tools": {
+                  "description": "false: a model without tool calls — it can only talk.",
+                  "type": "boolean"
+                },
+                "headers": {
+                  "description": "Extra HTTP headers for this model's requests.",
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "body": {
+                  "description": "Merged into every request body for this model.",
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "notes": {
+                  "description": "What this model is good at, in a line: the model in use is told which others there are, for handing work over (task) or switching.",
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "single_session": {
+                  "description": "The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused.",
+                  "type": "boolean"
+                },
+                "group": {
+                  "description": "Models sharing one GPU server that holds one model at a time (llama-swap), as the LLeMbas server says (capacity.group): a subagent on another model of the same group would unload this one, so it is refused.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
           }
-        ]
+        },
+        "required": [
+          "type",
+          "url"
+        ],
+        "additionalProperties": false
       }
     }
   },
   "additionalProperties": false,
   "title": "LLeMbas CLI connections.yaml",
-  "description": "~/.config/lembas/connections.yaml: the LLM endpoints. Global only. Keys as {env:NAME}, {file:path} or key_cmd — never pasted."
+  "description": "~/.config/lembas/connections.yaml: the LLeMbas server this machine is logged in to, as lembas login writes it. Global only."
 }

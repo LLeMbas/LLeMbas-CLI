@@ -13,7 +13,7 @@ afterEach(() => {
 })
 
 function model(url: string, spec: ResolvedModel["spec"] = {}, conn: Partial<Connection> = {}): ResolvedModel {
-  const connection: Connection = { dialect: "openai-chat", base_url: url, models: { m: spec }, ...conn }
+  const connection: Connection = { base_url: url, models: { m: spec }, ...conn }
   return { ref: `c${Math.random().toString(36).slice(2, 7)}/m`, connectionName: "c", connection, id: "m", spec }
 }
 

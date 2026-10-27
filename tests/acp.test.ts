@@ -36,7 +36,7 @@ function pair(): [Transport, Transport] {
 
 function config(url: string, extra = "") {
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), `model: f/m\n${extra}`)
 }
 
@@ -210,19 +210,19 @@ test("_lembas/directories is for the link only: an editor's ACP session has no r
 test("the chat's model and effort: named by the instance, at the start and between prompts", async () => {
   fake = fakeProvider([{ chunks: [delta({ content: "one" })] }, { chunks: [delta({ content: "two" })] }])
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  example:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { bonsai: {}, deepseek-flash: { efforts: [low, medium, high] } }\n`, { mode: 0o600 })
-  writeFileSync(join(paths.config, "config.yaml"), "model: example/bonsai\n")
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  example:\n    type: webui\n    url: ${fake.url}\n    models: { bonsai: {}, deepseek-flash: { efforts: [low, medium, high] } }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "config.yaml"), "model: bonsai\n")
   const root = project()
   const { c } = await client({ roots: [root], maxMode: "auto", approvalTimeoutMs: 50, requireTrust: true }, undefined, "example")
   // Not the device's own default: the model the chat was started on there.
   const s: any = await c.request("session/new", { cwd: root, _meta: { mode: "auto", lembas_model: "deepseek-flash", effort: "high" } })
-  expect(s._meta.lembas).toMatchObject({ model: "example/deepseek-flash", effort: "high" })
+  expect(s._meta.lembas).toMatchObject({ model: "deepseek-flash", effort: "high" })
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "hi" }] })
   expect(fake.requests[0].model).toBe("deepseek-flash")
   expect(JSON.stringify(fake.requests[0])).toContain('"reasoning_effort":"high"')
   // Changed in the web UI between two prompts.
   const changed: any = await c.request("_lembas/configure", { sessionId: s.sessionId, model: "bonsai", effort: "off" })
-  expect(changed).toEqual({ model: "example/bonsai", effort: "off" })
+  expect(changed).toEqual({ model: "bonsai", effort: "off" })
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "again" }] })
   expect(fake.requests.at(-1).model).toBe("bonsai")
   expect(JSON.stringify(fake.requests.at(-1))).not.toContain("reasoning_effort")

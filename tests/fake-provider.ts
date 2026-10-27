@@ -11,8 +11,12 @@ export interface Fake {
   stop(): void
 }
 
-/** `show`: what Ollama's /api/show answers (404 when not given); it takes no scripted response. */
-export function fakeProvider(script: Scripted[], opts: { show?: unknown } = {}): Fake {
+/** `route`: another fake that answers for a model (by the id in the request), as one LLeMbas server
+ *  serves models from several backends — the request is passed to it whole, and recorded there. */
+/** `served`: what GET /v1/models lists, as a LLeMbas server lists its models (default two
+ *  placeholders). Any other GET — the instance's own description, its personalization — is a 404,
+ *  which a client reads as "this server does not have it". */
+export function fakeProvider(script: Scripted[], opts: { route?: (model: string) => Fake | undefined; served?: Record<string, unknown>[] } = {}): Fake {
   const requests: any[] = []
   const calls: { path: string; headers: Record<string, string> }[] = []
   let i = 0
@@ -21,11 +25,13 @@ export function fakeProvider(script: Scripted[], opts: { show?: unknown } = {}):
     async fetch(req) {
       const url = new URL(req.url)
       if (req.method !== "POST" || url.pathname.endsWith("/unload")) calls.push({ path: url.pathname + url.search, headers: Object.fromEntries(req.headers.entries()) })
-      if (url.pathname.endsWith("/models")) return Response.json({ data: [{ id: "m1", meta: { n_ctx: 32768 } }, { id: "m2", max_model_len: 8192 }] })
+      if (url.pathname.endsWith("/models")) return Response.json({ data: opts.served ?? [{ id: "m1", meta: { n_ctx: 32768 } }, { id: "m2", max_model_len: 8192 }] })
       if (url.pathname.endsWith("/props")) return url.pathname.includes("/upstream/swapped/") ? Response.json({ default_generation_settings: { n_ctx: 16384 } }) : new Response("no", { status: 404 })
       if (url.pathname.endsWith("/unload")) return new Response("ok")
-      if (url.pathname.endsWith("/api/show")) return opts.show ? Response.json(opts.show) : new Response("not found", { status: 404 })
-      const body = await req.json()
+      if (req.method === "GET") return new Response("not found", { status: 404 })
+      const body = (await req.json()) as any
+      const to = typeof body?.model === "string" ? opts.route?.(body.model) : undefined
+      if (to) return fetch(to.url.replace(/\/v1$/, "") + url.pathname + url.search, { method: "POST", headers: req.headers, body: JSON.stringify(body) })
       requests.push(body)
       calls.push({ path: url.pathname + url.search, headers: Object.fromEntries(req.headers.entries()) })
       const r = script[i++]

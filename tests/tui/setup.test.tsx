@@ -31,16 +31,16 @@ test("no model yet: the sign-in is first and focused; ctrl+r opens the session o
     return setup!.captureCharFrame()
   }
   let f = await frame()
-  expect(f).toContain("no model to talk to yet")
+  // 2.0: the server's models or none — the screen is the sign-in, and nothing else to fill in.
+  expect(f).toContain("not logged in to a LLeMbas server")
   expect(f).toContain("Log in to a LLeMbas instance")
-  // Before the file instructions: the screen opens on the sign-in.
-  expect(f.indexOf("Log in to a LLeMbas instance")).toBeLessThan(f.indexOf("connections.yaml"))
+  expect(f).not.toContain("connections.yaml")
   // Focused: what is typed is the address, without pressing l first.
   await setup.mockInput.typeText("ai.example")
   f = await frame()
   expect(f).toContain("Address: ai.example")
   // A model added meanwhile: ctrl+r, a letter-free key, opens the session.
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  fake:\n    type: webui\n    url: ${fake.url}\n    models: { fake/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: fake/m\n")
   setup.mockInput.pressKey("r", { ctrl: true })
   f = await frame()

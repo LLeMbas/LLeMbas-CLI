@@ -3,8 +3,8 @@ import { join } from "node:path"
 import { isScalar, parse, parseDocument } from "yaml"
 import { z } from "zod"
 import { connectionFiles, isLocal, paths } from "./paths.ts"
-import { asMode, Config, Connection, ConnectionsFile, McpServer, PERSONALITIES, renamePermissionKeys, WebuiConnection, type PermissionConfig } from "./schema.ts"
-import { runKeyCmd, substituteDeep } from "./substitute.ts"
+import { asMode, Config, McpServer, PERSONALITIES, renamePermissionKeys, WebuiConnection, type Connection, type PermissionConfig } from "./schema.ts"
+import { substituteDeep } from "./substitute.ts"
 import { expandWebui, refreshFailures, type WebuiMark } from "../lembas/webui.ts"
 import { defaultLibrary, withInstancePersonalization } from "../lembas/personal.ts"
 import { instances } from "../lembas/login.ts"
@@ -14,8 +14,8 @@ export class ConfigError extends Error {}
 
 export interface Loaded {
   config: Config
-  /** A `type: webui` entry is here as the openai-chat connection it is spoken to as, with the
-   *  instance's models and a `webui` mark. */
+  /** The LLeMbas server this machine is logged in to — at most one: its `webui` entry as the
+   *  `/v1` it is spoken to at, with its models and a `webui` mark (custom connections are gone). */
   connections: Record<string, Connection & { webui?: WebuiMark }>
   /** Connections whose {env:}/{file:} substitution failed, with the reason. Unusable, not fatal. */
   broken: Record<string, string>
@@ -270,41 +270,47 @@ export function loadConfig(opts: { projectConfigDir?: string; trusted?: boolean 
 
   const connections: Loaded["connections"] = {}
   const broken: Record<string, string> = {}
-  // Validate each raw file, then substitute each connection on its own: a missing variable for one
-  // connection must not stop the others from working. In local mode, the user's own file first
-  // (read, never written), then the local one, whose entries win by name.
+  // The login: a `webui` entry, as `lembas login` writes it. An entry of any other kind is a custom
+  // connection from 1.x, gone in 2.0 (the CLI is LLeMbas-server-specific): said, and read past, so
+  // an old file still starts. In local mode, the user's own file first (read, never written), then
+  // the local one, whose entries win by name. Each entry is substituted on its own.
   const raw: Record<string, unknown> = {}
   for (const connFile of connectionFiles()) {
     files.push(connFile)
     const mode = statSync(connFile).mode & 0o777
     if (mode & 0o077) warnings.push(`${connFile} is mode ${mode.toString(8)}; chmod 600 it — it references credentials`)
-    Object.assign(raw, validate(ConnectionsFile, readYaml(connFile), connFile).connections)
+    const doc = readYaml(connFile)
+    const entries = doc && typeof doc === "object" ? (doc as { connections?: unknown }).connections : undefined
+    if (entries === undefined || entries === null) continue
+    if (typeof entries !== "object" || Array.isArray(entries)) throw new ConfigError(`${connFile} is invalid:\n  connections: expected the login as written by lembas login`)
+    for (const [name, c] of Object.entries(entries as Record<string, unknown>)) {
+      if ((c as { type?: string } | null)?.type === "webui") raw[name] = c
+      else warnings.push(`${connFile}: ${name} is a custom connection, and LLeMbas CLI 2.0 has none — it talks only to the LLeMbas server it is logged in to (lembas login <address>). Ignored; delete it.`)
+    }
   }
-  for (const [name, c] of Object.entries(raw)) {
+  // One server: the login made last, where several are left from 1.x.
+  const logins = instances()
+  const names = Object.keys(raw)
+  const chosen = names.length > 1 ? [...names].sort((a, b) => (logins[b]?.logged_in_at ?? "").localeCompare(logins[a]?.logged_in_at ?? ""))[0]! : names[0]
+  if (names.length > 1) warnings.push(`connections.yaml holds ${names.length} LLeMbas logins (${names.join(", ")}); LLeMbas CLI 2.0 uses one server — ${chosen}, the latest. lembas logout the others.`)
+  if (chosen) {
+    const name = chosen
     try {
-      if ((c as { type?: string }).type === "webui") {
-        const w = WebuiConnection.safeParse(substituteDeep(c, `connections.${name}`))
-        if (w.success) {
-          const c = (connections[name] = expandWebui(name, w.data))
-          if (refreshFailures[name])
-            warnings.push(
-              `${name}: the instance could not be asked for its models (${refreshFailures[name]}); ${c.webui.fetched_at ? `using what it said at ${c.webui.fetched_at.slice(0, 16).replace("T", " ")}` : "none known yet"}`,
-            )
-        }
-        else broken[name] = `once {env:}/{file:} are filled in: ${w.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
-        continue
-      }
-      // Again once filled in: "{env:LLM_URL}" passed as a placeholder; what it became must be a URL.
-      const r = Connection.safeParse(substituteDeep(c, `connections.${name}`))
-      if (r.success) connections[name] = r.data
-      else broken[name] = `once {env:}/{file:} are filled in: ${r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
+      const w = WebuiConnection.safeParse(substituteDeep(raw[name], `connections.${name}`))
+      if (w.success) {
+        const c = (connections[name] = expandWebui(name, w.data))
+        if (refreshFailures[name])
+          warnings.push(
+            `${name}: the instance could not be asked for its models (${refreshFailures[name]}); ${c.webui.fetched_at ? `using what it said at ${c.webui.fetched_at.slice(0, 16).replace("T", " ")}` : "none known yet"}`,
+          )
+      } else broken[name] = `once {env:}/{file:} are filled in: ${w.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
     } catch (e) {
       broken[name] = (e as Error).message
     }
   }
 
-  /** The webui connection a voice half or the search means: the one named, or the only one. A
-   *  string says why there is none. */
+  /** The server a voice half or the search goes through: the login (`connection:` may still name
+   *  it). A string says why there is none. */
   const webuiFor = (named?: string): { name: string; c: Loaded["connections"][string] } | string => {
     if (named) return connections[named]?.webui ? { name: named, c: connections[named]! } : broken[named] ? `${named} is unusable: ${broken[named]}` : `there is no webui connection named ${named}`
     const all = Object.entries(connections).filter(([, c]) => c.webui)
@@ -408,10 +414,7 @@ export function loadConfig(opts: { projectConfigDir?: string; trusted?: boolean 
   config = personal.config
   if (config.library === undefined && !isLocal() && defaultLibrary()) config = { ...config, library: "lembas" }
 
-  // An instance that speaks protocol 2 serves `<provider>/<model>` ids.
-  const logins = instances()
-  for (const [name, c] of Object.entries(connections)) if (c.webui && logins[name]?.protocols?.includes(2)) c.webui.v2 = true
-  const refs = modelRefs(connections, Object.keys(logins))
+  const refs = modelRefs(connections)
   // A config.yaml naming the model the way it was named before providers (`example/deepseek-flash`)
   // is rewritten to the new name, once (migrateRefs). Only that form: a pinned `<login>/<provider>/
   // <model>` means what it says, and `embedding` stays as written — its name keys the stored vectors.
@@ -480,9 +483,7 @@ function localOnly(config: Config, connections: Loaded["connections"], warnings:
   return out
 }
 
-/** The API key for a connection: `api_key` (already substituted) or the output of `key_cmd`. */
-export function resolveKey(name: string, c: Connection): string | undefined {
-  if (c.api_key) return c.api_key
-  if (c.key_cmd) return runKeyCmd(c.key_cmd, `connections.${name}.key_cmd`)
-  return undefined
+/** The server's token: the login's `api_key`, already substituted from its key file. */
+export function resolveKey(_name: string, c: Pick<Connection, "api_key">): string | undefined {
+  return c.api_key || undefined
 }

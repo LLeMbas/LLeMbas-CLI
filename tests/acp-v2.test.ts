@@ -40,7 +40,7 @@ function pair(): [Transport, Transport] {
 
 function config(url: string, extra = "", model = "{}") {
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${url}\n    models: { m: ${model} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${url}\n    models: { f/m: ${model} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), `model: f/m\n${extra}`)
 }
 
@@ -535,7 +535,7 @@ test("answered at the terminal first: the web UI's card is settled", async () =>
 test("the model event: said whenever the model or effort changes, forwarded to LLeMbas", async () => {
   fake = fakeProvider([])
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  example:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { a: { efforts: [low, high] }, b: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  example:\n    type: webui\n    url: ${fake.url}\n    models: { example/a: { efforts: [low, high] }, example/b: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: example/a\n")
   const root = project()
   const { c, events } = await client(limitsFor(root), { instance: "example" })
@@ -771,13 +771,13 @@ test("a command's mode from the web is clamped to remote.max_mode in a terminal 
 test("a command naming a model gives the session its model and its effort back afterwards", async () => {
   fake = fakeProvider([{ chunks: [delta({ content: "ok" })] }])
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: { efforts: [low, high], effort: low }, other: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: { efforts: [low, high], effort: low }, f/other: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\n")
   const root = project({ ".agent/config.yaml": "", ".agent/commands/quick.md": "---\nmodel: f/other\n---\nQuick." })
   const { c } = await client(limitsFor(root))
   const s: any = await c.request("session/new", { cwd: root, _meta: { effort: "high" } })
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "/quick" }] })
-  expect(fake.requests[0].model).toBe("other")
+  expect(fake.requests[0].model).toBe("f/other")
   expect(await c.request<any>("_lembas/configure", { sessionId: s.sessionId })).toEqual({ model: "f/m", effort: "high" })
 })
 

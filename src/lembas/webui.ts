@@ -19,7 +19,7 @@ import { join } from "node:path"
 import { parse } from "yaml"
 import { connectionFiles, isLocal, paths } from "../config/paths.ts"
 import type { Connection, ModelSpec, WebuiConnection } from "../config/schema.ts"
-import { runKeyCmd, substituteDeep } from "../config/substitute.ts"
+import { substituteDeep } from "../config/substitute.ts"
 import { instanceInfo, LembasError, models as listModels, normalise, personalization, type InstanceInfo, type Personalization, type ServedModel, type Tls } from "./client.ts"
 
 /** What a loaded webui connection carries besides an openai-chat connection's fields. */
@@ -33,14 +33,9 @@ export interface WebuiMark {
   services?: InstanceInfo["services"]
   /** When the models were last read from the instance; absent: never. */
   fetched_at?: string
-  /** Each served model's provider, where the instance said it (`provider`). */
-  providers?: Record<string, string>
   /** The served ids of its embedding models, which are not chat models and so not in
    *  `models`: `embedding: llama/nomic-embed` finds its connection by them (library/embed.ts). */
   embeddings?: string[]
-  /** The instance speaks link protocol 2: its ids are `<provider>/<model>` even
-   *  where a model does not say its provider. Set by loadConfig from the login. */
-  v2?: boolean
 }
 
 export type WebuiLoaded = Connection & { webui: WebuiMark }
@@ -134,18 +129,12 @@ export function expandWebui(name: string, w: WebuiConnection, cache = readCache(
   for (const m of ordered) models[m.id] = { ...specFor(m, name), ...(overrides.get(m.id) ?? {}) }
   // A model the entry names that the instance does not (yet) list: kept, as written.
   for (const [id, spec] of unmatched) models[id] ??= spec
-  const providers = Object.fromEntries(served.filter((m) => m.provider && m.id.startsWith(`${m.provider}/`)).map((m) => [m.id, m.provider!]))
   return {
-    dialect: "openai-chat",
     base_url: `${url}/v1`,
     ...(w.api_key !== undefined ? { api_key: w.api_key } : {}),
-    ...(w.key_cmd !== undefined ? { key_cmd: w.key_cmd } : {}),
     ...(w.tls ? { tls: w.tls } : {}),
     ...(w.timeout ? { timeout: w.timeout } : {}),
     ...(w.quirks ? { quirks: w.quirks } : {}),
-    // The instance decides which models exist: one it serves that the cache does not know yet is
-    // still a model, not an error.
-    discover: true,
     models,
     webui: {
       url,
@@ -153,7 +142,6 @@ export function expandWebui(name: string, w: WebuiConnection, cache = readCache(
       ...(cache?.instance?.name ? { name: cache.instance.name } : {}),
       ...(cache?.instance?.services ? { services: cache.instance.services } : {}),
       ...(cache && cache.url === url ? { fetched_at: cache.fetched_at } : {}),
-      ...(Object.keys(providers).length ? { providers } : {}),
       ...(embeddings.length ? { embeddings } : {}),
     },
   }
@@ -200,7 +188,7 @@ export async function refreshWebui(o: { timeoutMs?: number; only?: string } = {}
     entries.map(async ([name, c]): Promise<Refreshed> => {
       try {
         const w = substituteDeep(c, `connections.${name}`) as WebuiConnection
-        const token = w.api_key ?? (w.key_cmd ? runKeyCmd(w.key_cmd, `connections.${name}.key_cmd`) : undefined)
+        const token = w.api_key
         if (!token) throw new LembasError("no key (lembas login)")
         const got = await fetchWebui(name, w.url, token.trim(), w.tls, o.timeoutMs ?? 4000)
         delete refreshFailures[name]

@@ -5,10 +5,7 @@ import { join } from "node:path"
 import { createApp } from "../src/app.ts"
 import type { AskReply, Event } from "../src/bus/index.ts"
 import { paths } from "../src/config/paths.ts"
-import { discoverContext } from "../src/provider/discover.ts"
 import { resetLearned } from "../src/provider/learned.ts"
-import { OpenAIChatClient } from "../src/provider/openai-chat.ts"
-import type { ResolvedModel } from "../src/provider/types.ts"
 import { contextBreakdown, renderBreakdown } from "../src/session/context.ts"
 import { delta, fakeProvider, toolCall, usage, type Fake } from "./fake-provider.ts"
 
@@ -18,7 +15,6 @@ afterEach(() => {
   resetLearned()
 })
 
-const rm = (url: string, id: string): ResolvedModel => ({ ref: `c/${id}`, connectionName: "c", id, spec: {}, connection: { dialect: "openai-chat", base_url: url, models: {} } })
 
 function app(yaml: string, script: Parameters<typeof fakeProvider>[0], config = "") {
   fake = fakeProvider(script)
@@ -31,24 +27,10 @@ function app(yaml: string, script: Parameters<typeof fakeProvider>[0], config = 
 }
 
 describe("context", () => {
-  test("discovery: the model list first, then llama-server /props through llama-swap's passthrough", async () => {
-    fake = fakeProvider([])
-    expect(await discoverContext(rm(fake.url, "m1"), new OpenAIChatClient(rm(fake.url, "m1")))).toBe(32768)
-    expect(await discoverContext(rm(fake.url, "swapped"), new OpenAIChatClient(rm(fake.url, "swapped")))).toBe(16384)
-    expect(fake.calls.map((c) => c.path)).toContain("/upstream/swapped/props")
-  })
-
-  test("switching to another connection calls the old one's unload_url", async () => {
-    const a = app(`connections:\n  f:\n    dialect: openai-chat\n    base_url: URL\n    unload_url: URL/../unload\n    unload_method: GET\n    models: { m: {} }\n  g:\n    dialect: openai-chat\n    base_url: URL\n    models: { n: {} }\n`, [])
-    a.switchModel("g/n")
-    await Bun.sleep(100)
-    expect(fake!.calls.some((c) => c.path.endsWith("/unload"))).toBe(true)
-  })
-
   test("past auto_at: nothing already sent is cut; the conversation is compacted, with a table of the reads", async () => {
     // window 16000, auto_at 0.6 → limit 9600. Harness spec 3.0.0 (context.md): old tool outputs are
     // never pruned in place — that would make the server read everything after them again.
-    const a = app(`connections:\n  f:\n    dialect: openai-chat\n    base_url: URL\n    models: { m: { context: 16000 } }\n`, [
+    const a = app(`connections:\n  f:\n    type: webui\n    url: URL\n    models: { f/m: { context: 16000 } }\n`, [
       { chunks: [toolCall(0, "c1", "read", '{"path":"big.txt"}'), usage(1000, 10)] },
       { chunks: [toolCall(0, "c2", "read", '{"path":"big2.txt"}'), usage(6600, 10)] },
       { chunks: [delta({ content: "## Summary\nRead two files." })] },
@@ -75,7 +57,7 @@ describe("context", () => {
   })
 
   test("too full: compacted mid-task, then told to carry on", async () => {
-    const a = app(`connections:\n  f:\n    dialect: openai-chat\n    base_url: URL\n    models: { m: { context: 4000 } }\n`, [
+    const a = app(`connections:\n  f:\n    type: webui\n    url: URL\n    models: { f/m: { context: 4000 } }\n`, [
       { chunks: [delta({ content: "y".repeat(8000) }), toolCall(0, "c1", "list", "{}"), usage(3900, 2000)] },
       { chunks: [delta({ content: "## What we are doing\nA long task." })] },
       { chunks: [delta({ content: "carried on" }), usage(500, 5)] },
@@ -93,7 +75,7 @@ describe("context", () => {
   })
 
   test("/context: parts of the system prompt, tools, the conversation, against the window", async () => {
-    const a = app(`connections:\n  f:\n    dialect: openai-chat\n    base_url: URL\n    models: { m: { context: 32768 } }\n`, [{ chunks: [toolCall(0, "c1", "read", '{"path":"big.txt"}'), usage(1500, 20)] }, { chunks: [delta({ content: "ok" }), usage(3100, 5)] }])
+    const a = app(`connections:\n  f:\n    type: webui\n    url: URL\n    models: { f/m: { context: 32768 } }\n`, [{ chunks: [toolCall(0, "c1", "read", '{"path":"big.txt"}'), usage(1500, 20)] }, { chunks: [delta({ content: "ok" }), usage(3100, 5)] }])
     await a.engine.prompt("read it")
     const system = a.engine.o.system(a.engine.mode, a.engine.model)
     const text = renderBreakdown(contextBreakdown(a.engine, system, [], undefined, a.engine.o.tools))

@@ -1,7 +1,7 @@
 {
   "name": "lembas-cli",
   "version": "1.5.2",
-  "description": "LLeMbas CLI: a terminal coding agent and project manager — OpenTUI, any LLM API, memory, skills, MCP, git-native.",
+  "description": "LLeMbas CLI: a terminal coding agent and project manager for a LLeMbas server — OpenTUI, memory, skills, MCP, git-native.",
   "license": "MIT",
   "private": true,
   "type": "module",

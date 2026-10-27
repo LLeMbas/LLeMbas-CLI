@@ -19,8 +19,8 @@ export function capacityRefusal(main: ResolvedModel, helper: ResolvedModel): str
   }
   const shared = groupOf(main)
   if (shared !== undefined && shared === groupOf(helper)) {
-    const where = main.spec.group !== undefined ? `${main.ref}'s server (group ${main.spec.group})` : main.connectionName
-    return `${where} holds one model at a time (${main.spec.group !== undefined ? "group" : "one_model_at_a_time"}), so a subagent on ${helper.ref} would unload ${main.ref}, and this session's cached prompt with it, while its turn waits.`
+    const where = `${main.ref}'s server (group ${main.spec.group})`
+    return `${where} holds one model at a time, so a subagent on ${helper.ref} would unload ${main.ref}, and this session's cached prompt with it, while its turn waits.`
   }
   return ""
 }
@@ -35,15 +35,14 @@ export function capacityBeside(running: ResolvedModel, helper: ResolvedModel): s
   }
   const shared = groupOf(running)
   if (shared !== undefined && shared === groupOf(helper)) {
-    const where = running.spec.group !== undefined ? `${running.ref}'s server (group ${running.spec.group})` : running.connectionName
+    const where = `${running.ref}'s server (group ${running.spec.group})`
     return `${where} holds one model at a time, and a subagent is already running on ${running.ref} there; one on ${helper.ref} would unload it.`
   }
   return ""
 }
 
-/** Which one-model-at-a-time server a model is on: its own `group`, else its connection when the
- *  connection sets one_model_at_a_time, else none. The spec's capacity.group. */
+/** Which one-model-at-a-time server a model is on, as the LLeMbas server says (`capacity.group`,
+ *  the spec's), or none. */
 function groupOf(m: ResolvedModel): string | undefined {
-  if (m.spec.group !== undefined) return `group:${m.spec.group}`
-  return m.connection.one_model_at_a_time ? `connection:${m.connectionName}` : undefined
+  return m.spec.group !== undefined ? `group:${m.spec.group}` : undefined
 }

@@ -25,14 +25,16 @@ test("draft-07, described, and no string held to a format ({env:} stands in for 
   const props = (schemas.config as any).properties
   expect(props.mode.enum).toEqual(["manual", "edit", "auto", "plan"])
   expect(props.small_model.description).toContain("session titles")
-  const kinds = (schemas.connections as any).properties.connections.additionalProperties.anyOf
-  expect(kinds[0].properties.type.const ?? kinds[0].properties.type.enum[0]).toBe("webui")
-  expect(kinds[1].properties.base_url.description).toContain("Where the API is")
+  // 2.0: the login is the only kind of entry.
+  const login = (schemas.connections as any).properties.connections.additionalProperties
+  expect(login.properties.type.const ?? login.properties.type.enum[0]).toBe("webui")
+  expect(login.properties.url.description).toContain("The instance's address")
+  expect(login.properties.dialect).toBeUndefined()
 })
 
 const goodConfig = `
-model: local/qwen3
-small_model: local/tiny
+model: llama/qwen3
+small_model: llama/tiny
 titles: prompt
 mode: edit
 icons: plain
@@ -59,19 +61,14 @@ mcp:
 `
 const goodConnections = `
 connections:
-  local:
-    dialect: openai-chat
-    base_url: "{env:LLM_URL}"
+  example:
+    type: webui
+    url: https://ai.example.org
+    api_key: "{file:~/.config/lembas/lembas/example.key}"
     tls: { ca: ~/ca.crt }
     quirks: { stream_usage: off }
     models:
-      qwen3: { context: 131072, max_output: 65536, efforts: [low, high], effort: low, vision: true }
-  anthropic:
-    dialect: anthropic
-    base_url: https://api.anthropic.com
-    api_key: "{env:ANTHROPIC_API_KEY}"
-    models:
-      claude: { effort_map: { low: 4000, high: 32000 }, cache: true }
+      llama/qwen3: { context: 131072, max_output: 65536, efforts: [low, high], effort: low, vision: true }
 `
 
 test("what the loader accepts, the schema accepts", () => {
@@ -94,7 +91,8 @@ test("…and what it refuses, the schema marks", () => {
     expect(Config.safeParse(bad).success).toBe(false)
     expect(checkConfig(bad)).toBe(false)
   }
-  for (const bad of [{ connections: { x: { dialect: "openai", base_url: "http://h/v1" } } }, { connections: { x: { dialect: "anthropic" } } }, { connections: { x: { dialect: "anthropic", base_url: "u", models: { m: { context: -1 } } } } }]) {
+  // A custom connection (1.x): the loader reads past it with a warning, and the schema marks it.
+  for (const bad of [{ connections: { x: { dialect: "openai-chat", base_url: "http://h/v1" } } }, { connections: { x: { type: "webui" } } }, { connections: { x: { type: "webui", url: "https://h", models: { m: { context: -1 } } } } }, { connections: { x: { type: "webui", url: "https://h", key_cmd: "pass x" } } }]) {
     expect(checkConnections(bad)).toBe(false)
   }
 })

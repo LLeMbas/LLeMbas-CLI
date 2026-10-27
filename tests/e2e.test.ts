@@ -17,7 +17,7 @@ function setup(script: Parameters<typeof fakeProvider>[0]) {
   mkdirSync(paths.config, { recursive: true })
   writeFileSync(
     join(paths.config, "connections.yaml"),
-    `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models:\n      m: { context: 32768 }\n`,
+    `connections:\n  fake:\n    type: webui\n    url: ${fake.url}\n    models:\n      fake/m: { context: 32768 }\n`,
     { mode: 0o600 },
   )
   writeFileSync(join(paths.config, "config.yaml"), "model: fake/m\n")

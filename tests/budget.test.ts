@@ -16,7 +16,7 @@ afterEach(() => fake?.stop())
 function app(limits: string, script: Parameters<typeof fakeProvider>[0], ask: () => Promise<AskReply> = async () => ({ kind: "once" })) {
   fake = fakeProvider(script)
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), `model: f/m\ntitles: prompt\nlimits: { ${limits} }\n`)
   const cwd = mkdtempSync(join(tmpdir(), "ph-budget-"))
   writeFileSync(join(cwd, "big.txt"), "x".repeat(5000) + "\n")

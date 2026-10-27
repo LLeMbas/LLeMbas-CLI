@@ -3,11 +3,11 @@
   "type": "object",
   "properties": {
     "model": {
-      "description": "The model a session starts with: `connection/model`, a connection from connections.yaml and one of its models.",
+      "description": "The model a session starts with: one the LLeMbas server you are logged in to serves, by its id there (`deepseek/deepseek-flash`). Default: the server's default for your account.",
       "type": "string"
     },
     "small_model": {
-      "description": "`connection/model` for small jobs — session titles, commit messages. Default: the session's model. On a server that holds one model at a time (llama-swap), another model here swaps.",
+      "description": "The model for small jobs — session titles, commit messages, by its id on the server. Default: the session's model.",
       "type": "string"
     },
     "titles": {
@@ -866,7 +866,7 @@
       }
     },
     "embedding": {
-      "description": "Global config only. connection/model of an embedding model (OpenAI-shaped /embeddings, or Ollama): knowledge bases are then searched by meaning as well as by words. lembas kb reindex after changing it.",
+      "description": "Global config only. An embedding model the LLeMbas server serves, by its id there: knowledge bases are then searched by meaning as well as by words. lembas kb reindex after changing it.",
       "type": "string"
     },
     "effort": {

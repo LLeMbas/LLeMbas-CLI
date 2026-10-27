@@ -24,7 +24,7 @@ function setup(script: Parameters<typeof fakeProvider>[0], connections: (url: st
 }
 
 const two = (url: string) =>
-  `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${url}\n    models:\n      main: {}\n      big: { name: Big One, notes: slow but careful; best at reviews }\n`
+  `connections:\n  f:\n    type: webui\n    url: ${url}\n    models:\n      f/main: {}\n      f/big: { name: Big One, notes: slow but careful; best at reviews }\n`
 
 test("the model is told which other models there are, with their notes", async () => {
   const { app } = setup([{ chunks: [delta({ content: "ok" }, "stop")] }], two)
@@ -44,38 +44,8 @@ test("task runs a subagent on the model asked for", async () => {
     two,
   )
   expect(await app.engine.prompt("ask the big one")).toBe("stop")
-  expect(fake!.requests.map((r) => r.model)).toEqual(["main", "big", "main"])
+  expect(fake!.requests.map((r) => r.model)).toEqual(["f/main", "f/big", "f/main"])
   const result = app.engine.messages.find((m) => m.role === "tool")
   expect(result && result.role === "tool" && result.content).toContain("Yes.")
 })
 
-test("a server that cannot be reached: the model's fallback takes over, said and kept", async () => {
-  const { app, events } = setup([{ chunks: [delta({ content: "from the fallback" }, "stop")] }], (url) =>
-    [
-      "connections:",
-      "  gone:",
-      "    dialect: openai-chat",
-      "    base_url: http://127.0.0.1:9/v1",
-      "    timeout: 5",
-      "    models:",
-      "      main: { fallback: [f/main] }",
-      "  f:",
-      "    dialect: openai-chat",
-      `    base_url: ${url}`,
-      "    models:",
-      "      main: {}",
-      "",
-    ].join("\n"),
-  )
-  app.settings.set("model", "gone/main")
-  expect(await app.engine.prompt("hi")).toBe("stop")
-  expect(app.engine.model.ref).toBe("f/main")
-  expect(events.some((e) => e.type === "notice" && e.message.includes("switching to f/main, its fallback"))).toBe(true)
-  expect(events.some((e) => e.type === "setting" && e.key === "model")).toBe(true)
-})
-
-test("no fallback: the error stands", async () => {
-  const { app } = setup([], (url) => `connections:\n  gone:\n    dialect: openai-chat\n    base_url: http://127.0.0.1:9/v1\n    models:\n      main: {}\n  f:\n    dialect: openai-chat\n    base_url: ${url}\n    models:\n      main: {}\n`)
-  app.settings.set("model", "gone/main")
-  expect(await app.engine.prompt("hi")).toBe("error")
-})

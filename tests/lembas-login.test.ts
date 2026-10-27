@@ -187,14 +187,14 @@ test("login writes one webui connection named after the instance, and no models"
 
   const loaded = loadConfig()
   const c = loaded.connections.example!
-  expect(c.dialect).toBe("openai-chat")
+  expect(c.webui?.url).toBe(fake.url)
   expect(c.base_url).toBe(`${fake.url}/v1`)
   expect(c.api_key).toBe("lmb_secret")
   // The instance's models with its settings, the default first; the group named after the connection.
   expect(Object.keys(c.models)).toEqual(["qwen", "gemma"])
   expect(c.models.qwen).toEqual({ name: "Qwen", context: 131072, temperature: 0.6, top_p: 0.95, efforts: ["low", "high"], tools: true, group: "example:gpu" })
   expect(c.models.gemma).toEqual({ context: 32768, vision: true, single_session: true, group: "example:gpu" })
-  expect(resolveModel(loaded, undefined).ref).toBe("example/qwen")
+  expect(resolveModel(loaded, undefined).ref).toBe("qwen")
 })
 
 test("a model changed on the instance is here at the next start, without logging in again", async () => {
@@ -205,7 +205,7 @@ test("a model changed on the instance is here at the next start, without logging
   expect(r).toEqual([{ name: "example", ok: true, models: 1 }])
   const loaded = loadConfig()
   expect(Object.keys(loaded.connections.example!.models)).toEqual(["llama"])
-  expect(resolveModel(loaded, undefined).ref).toBe("example/llama")
+  expect(resolveModel(loaded, undefined).ref).toBe("llama")
   // A model the instance does not list yet is still asked for, not refused here.
   expect(resolveModel(loaded, "example/brand-new").id).toBe("brand-new")
 })
@@ -266,7 +266,7 @@ test("an older kind of login is replaced: the old connection, its key and its pi
   const c = cfg()
   // It was the instance's default, so the instance decides it now; the rest follow the new name.
   expect(c.model).toBeUndefined()
-  expect(c.small_model).toBe("example/gemma")
+  expect(c.small_model).toBe("gemma")
   expect(r.changes.join("\n")).toContain("the connection ai from an earlier login is now example")
 })
 

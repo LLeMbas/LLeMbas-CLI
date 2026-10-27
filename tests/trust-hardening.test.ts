@@ -39,7 +39,7 @@ test("The CLI's own files under .agent that are links are refused, not written t
 
 test("an untrusted project's task board is neither in the prompt nor writable", async () => {
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    dialect: openai-chat\n    base_url: http://127.0.0.1:9/v1\n    models: { m: {} }\n", { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    type: webui\n    url: http://127.0.0.1:9/v1\n    models: { f/m: {} }\n", { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\n")
   const root = mkdtempSync(join(tmpdir(), "ph-untrusted-"))
   mkdirSync(join(root, ".agent"))

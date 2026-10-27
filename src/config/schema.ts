@@ -1,6 +1,5 @@
 import { z } from "zod"
 
-export const DIALECTS = ["openai-chat", "responses", "anthropic", "gemini", "ollama"] as const
 export const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const
 export const MODES = ["manual", "edit", "auto", "plan"] as const
 /** The personality presets (harness/prompts/personality/, shared with the web UI), then custom. */
@@ -54,46 +53,44 @@ export const ModelSpec = z.strictObject({
   top_p: z.number().min(0).max(1).optional().describe("Nucleus sampling; absent = the server's default."),
   efforts: z.array(z.enum(EFFORTS)).optional().describe("The model's own effort vocabulary, in offering order."),
   effort: z.union([z.enum(EFFORTS), z.literal("off")]).optional().describe("Default effort; `off` sends none."),
-  effort_style: z.enum(["top", "kwargs", "both"]).optional().describe("openai-chat only: where the effort goes. llama.cpp drops top-level, so `both` is the default."),
-  effort_map: z.partialRecord(z.enum(EFFORTS), z.number().int().positive()).optional().describe("anthropic/gemini: effort → thinking budget tokens."),
+  effort_style: z.enum(["top", "kwargs", "both"]).optional().describe("Where the effort goes in a request: top-level, in chat_template_kwargs, or both (the default: llama.cpp drops top-level)."),
   vision: z.boolean().optional().describe("The model reads images: @image files, pasted paths and view_image."),
   tools: z.boolean().optional().describe("false: a model without tool calls — it can only talk."),
-  cache: z.boolean().optional().describe("anthropic: prompt caching breakpoints."),
   headers: z.record(z.string(), z.string()).optional().describe("Extra HTTP headers for this model's requests."),
   body: z.record(z.string(), z.unknown()).optional().describe("Merged into every request body for this model."),
   notes: z.string().max(300).optional().describe("What this model is good at, in a line: the model in use is told which others there are, for handing work over (task) or switching."),
-  fallback: z.array(z.string()).optional().describe("Other models (connection/model), in order, to switch to when this one's server cannot be reached at all — never once a reply has begun."),
   single_session: z.boolean().optional().describe("The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused."),
-  group: z.string().optional().describe("Models sharing one server that holds one model at a time (llama-swap), named by any string: a subagent on another model of the same group would unload this one, so it is refused. One connection's one_model_at_a_time is the same rule for all its models; this is for models one connection serves from several such servers (a LLeMbas instance)."),
+  group: z.string().optional().describe("Models sharing one GPU server that holds one model at a time (llama-swap), as the LLeMbas server says (capacity.group): a subagent on another model of the same group would unload this one, so it is refused."),
 })
 export type ModelSpec = z.infer<typeof ModelSpec>
 
-export const Connection = z.strictObject({
-  dialect: z.enum(DIALECTS).describe("The API it speaks: openai-chat (llama.cpp, vLLM, LM Studio, OpenAI…), responses (OpenAI Responses), anthropic, gemini, ollama (its native /api/chat)."),
-  base_url: Url.describe("Where the API is, e.g. https://api.openai.com/v1 or http://localhost:8080/v1."),
-  api_key: z.string().optional().describe("Never pasted: {env:NAME} or {file:~/path}. Or use key_cmd."),
-  key_cmd: z.string().optional().describe("A command whose output is the key, e.g. pass show openai."),
-  auth: z.enum(["bearer", "x-api-key", "x-goog-api-key", "none"]).optional().describe("How the key is sent. Default per dialect: anthropic x-api-key, gemini x-goog-api-key, others bearer."),
-  headers: z.record(z.string(), z.string()).optional().describe("Extra HTTP headers for every request."),
-  body: z.record(z.string(), z.unknown()).optional().describe("Merged into every request body."),
-  tls: Tls.optional().describe("TLS for endpoints behind a private CA. `ca` is a PEM file added to the trusted roots; `insecure` skips verification entirely (last resort). The system store is always trusted."),
-  timeout: z.number().positive().optional().describe("Seconds of silence allowed: waiting for the response, then between two pieces of a streamed reply. Not a limit on how long a reply may take. Default 600."),
-  discover: z.boolean().optional().describe("Merge ids and context lengths from GET /models."),
-  unload_url: Url.optional().describe("llama-swap style: frees VRAM when switching away."),
-  one_model_at_a_time: z.boolean().optional().describe("The server holds one model at a time (llama-swap in front of one GPU): a subagent on another of its models would unload the session's, so it is refused. The session's own model may still be its own subagent."),
-  unload_method: z.enum(["GET", "POST"]).optional().describe("How unload_url is called (default POST)."),
-  quirks: z
-    .strictObject({
-      stream_usage: Tristate.optional().describe("Ask for token usage in the stream (stream_options); auto learns when a server refuses it."),
-      prompt_progress: Tristate.optional().describe("Ask how far the server is through reading the prompt (llama.cpp's return_progress), shown while it reads; auto learns when a server refuses it, and one that ignores it shows nothing."),
-      think_tags: Tristate.optional().describe("<think>…</think> in a reply is taken as reasoning; off leaves it as text."),
-      max_tokens_field: z.enum(["max_tokens", "max_completion_tokens"]).optional().describe("OpenAI reasoning models refuse `max_tokens`; most local servers only know it."),
-    })
-    .optional()
-    .describe("Server oddities; auto is right almost always."),
-  models: z.record(z.string(), ModelSpec).default({}).describe("The models to offer, by the id the server knows them by."),
-})
-export type Connection = z.infer<typeof Connection>
+/** Server oddities; auto is right almost always. */
+export const Quirks = z
+  .strictObject({
+    stream_usage: Tristate.optional().describe("Ask for token usage in the stream (stream_options); auto learns when a server refuses it."),
+    prompt_progress: Tristate.optional().describe("Ask how far the server is through reading the prompt (llama.cpp's return_progress), shown while it reads; auto learns when a server refuses it, and one that ignores it shows nothing."),
+    think_tags: Tristate.optional().describe("<think>…</think> in a reply is taken as reasoning; off leaves it as text."),
+    max_tokens_field: z.enum(["max_tokens", "max_completion_tokens"]).optional().describe("OpenAI reasoning models refuse `max_tokens`; most local servers only know it."),
+  })
+  .optional()
+  .describe("Server oddities; auto is right almost always.")
+
+/** The LLeMbas server as LLeMbas CLI speaks to it: its OpenAI-shaped `/v1` with this machine's
+ *  token, and the models it serves. Not something a person writes — custom connections were removed
+ *  in 2.0 (CLI rule 2: the CLI is LLeMbas-server-specific); `lembas login` writes the one `webui`
+ *  entry below, and the loader turns it into this (lembas/webui.ts, expandWebui). */
+export interface Connection {
+  base_url: string
+  api_key?: string
+  tls?: z.infer<typeof Tls>
+  /** Seconds of silence allowed in a reply (default 600). */
+  timeout?: number
+  quirks?: z.infer<typeof Quirks>
+  /** Extra headers and body fields for every request (none from a login; tests use them). */
+  headers?: Record<string, string>
+  body?: Record<string, unknown>
+  models: Record<string, ModelSpec>
+}
 
 /** A LLeMbas instance: its address and this machine's key, and nothing else. The models,
  *  their settings, and — where config.yaml says `provider: webui` — the voice and the web search come
@@ -101,20 +98,22 @@ export type Connection = z.infer<typeof Connection>
 export const WebuiConnection = z.strictObject({
   type: z.literal("webui").describe("A LLeMbas instance: its models, their settings, its voice and its web search."),
   url: Url.describe("The instance's address, e.g. https://ai.example.org (no /v1)."),
-  api_key: z.string().optional().describe("This machine's token, as login wrote it: {file:~/.config/lembas/lembas/<name>.key}. Or key_cmd."),
-  key_cmd: z.string().optional(),
+  api_key: z.string().optional().describe("This machine's token, as login wrote it: {file:~/.config/lembas/lembas/<name>.key}."),
   tls: Tls.optional().describe("For an instance behind a private CA: `ca`, the PEM file that signed its certificate."),
   timeout: z.number().positive().optional().describe("Seconds of silence allowed in a reply, as for any connection (default 600)."),
-  quirks: Connection.shape.quirks,
+  quirks: Quirks,
   models: z.record(z.string(), ModelSpec).optional().describe("Only to change what the instance says about a model, here: each entry goes over the instance's. Usually absent."),
 })
 export type WebuiConnection = z.infer<typeof WebuiConnection>
 
+/** connections.yaml: the login, as `lembas login` writes it. An entry of any other kind — a custom
+ *  connection from 1.x — is read past with a warning (config/load.ts), not refused, so an old file
+ *  still starts. */
 export const ConnectionsFile = z.strictObject({
   connections: z
-    .record(z.string(), z.union([WebuiConnection, Connection]))
+    .record(z.string(), WebuiConnection)
     .default({})
-    .describe("Each LLM endpoint by a name of your choosing; a model is then `name/model-id`. `type: webui` is a LLeMbas instance, whose models come from it."),
+    .describe("The LLeMbas server this machine is logged in to, as `lembas login` writes it: its address and this machine's token. Its models come from it at every start."),
 })
 export type ConnectionsFile = z.infer<typeof ConnectionsFile>
 
@@ -231,8 +230,8 @@ export const Update = z.strictObject({
 export type Update = z.infer<typeof Update>
 
 export const Config = z.strictObject({
-  model: z.string().optional().describe("The model a session starts with: `connection/model`, a connection from connections.yaml and one of its models."),
-  small_model: z.string().optional().describe("`connection/model` for small jobs — session titles, commit messages. Default: the session's model. On a server that holds one model at a time (llama-swap), another model here swaps."),
+  model: z.string().optional().describe("The model a session starts with: one the LLeMbas server you are logged in to serves, by its id there (`deepseek/deepseek-flash`). Default: the server's default for your account."),
+  small_model: z.string().optional().describe("The model for small jobs — session titles, commit messages, by its id on the server. Default: the session's model."),
   titles: z.enum(["model", "prompt"]).optional().describe("Session titles: model (default) — named from the first prompt, then by the model after its first reply; prompt — only from the first prompt, no extra request."),
   mode: z.enum(MODES).optional().describe("The permission mode a session starts in (default manual)."),
   theme: z.string().optional().describe("Colours: moria (default), shire, lembas, lembas-light, hermes, mono, or a themes/<name>.yaml of your own."),
@@ -293,7 +292,7 @@ export const Config = z.strictObject({
   voice: Voice.optional().describe("Voice in and out. Global only — it carries endpoints and keys, like a connection."),
   mcp: z.record(z.string(), McpServer).optional().describe("MCP servers by name. `{env:}`/`{file:}` are filled in per server (a missing one disables that server only). A project's servers count only once the project is trusted."),
   knowledge: z.array(z.string()).optional().describe("The knowledge bases searched (lembas kb); absent: all of them. A project's own config narrows it to what that project needs."),
-  embedding: z.string().optional().describe("Global config only. connection/model of an embedding model (OpenAI-shaped /embeddings, or Ollama): knowledge bases are then searched by meaning as well as by words. lembas kb reindex after changing it."),
+  embedding: z.string().optional().describe("Global config only. An embedding model the LLeMbas server serves, by its id there: knowledge bases are then searched by meaning as well as by words. lembas kb reindex after changing it."),
   effort: z.union([z.enum(EFFORTS), z.literal("off")]).optional().describe("The effort a session starts with, when the model takes it; otherwise the model's own default."),
   settings_tool: z.enum(["ask", "allow", "off"]).optional().describe("Global config only. The agent's settings tool: ask (default) — each change is approved like any tool call; allow — changes go through without asking (a less strict mode still asks); off — no settings tool."),
   update: Update.optional().describe("Global config only. Updating LLeMbas CLI itself."),

@@ -85,7 +85,7 @@ const pendingCodes = new Map<string, (text: string) => void>()
 
 const AGENT_TEMPLATE = (name: string) => `---
 description: what ${name} is for — the model reads this when it picks a subagent
-# model: connection/model      # run it on another model (default: the session's)
+# model: provider/model        # run it on another of the server's models (default: the session's)
 # mode: plan                   # plan: read-only; edit; manual (asks you) — never looser than yours
 # tools: [read, glob, grep, list, bash, web_search, web_fetch]   # default: every tool a subagent may have
 # isolation: worktree          # work in a git checkout and branch of its own
@@ -153,7 +153,7 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "model",
-    args: "[connection/model]",
+    args: "[model]",
     description: "switch model",
     run(c, arg) {
       const refs = c.app.modelRefs()

@@ -16,7 +16,7 @@ afterEach(() => fake?.stop())
 function app(edit: string, config = "") {
   fake = fakeProvider([{ chunks: [toolCall(0, "b1", "bash", '{"command":"echo one"}')] }, { chunks: [delta({ content: "ok" }, "stop")] }])
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), `model: f/m\ntitles: prompt\n${config}`)
   return createApp({ cwd: mkdtempSync(join(tmpdir(), "ph-approve-")), mode: "manual", store: false, snapshots: false, asker: { ask: async (): Promise<AskReply> => ({ kind: "once", command: edit }) } })
 }

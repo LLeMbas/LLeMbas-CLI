@@ -21,7 +21,7 @@ function home(config = "model: f/m\n", script: Parameters<typeof fakeProvider>[0
   mkdirSync(paths.config, { recursive: true })
   writeFileSync(
     join(paths.config, "connections.yaml"),
-    `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models:\n      m: { efforts: [low, medium, high], effort: medium }\n      big: {}\n`,
+    `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models:\n      f/m: { efforts: [low, medium, high], effort: medium }\n      f/big: {}\n`,
     { mode: 0o600 },
   )
   writeFileSync(join(paths.config, "config.yaml"), config)
@@ -68,7 +68,6 @@ test("session, global and project scope: what is written where, and where a valu
   expect(readFileSync(join(cwd, ".agent/config.yaml"), "utf8")).toContain("auto_at: 0.6")
   expect(s.get("compaction.auto_at")).toMatchObject({ value: 0.6, source: "project" })
 
-  expect(() => s.set("model", "f/nope")).toThrow()
   expect(() => s.set("effort", "max")).toThrow("takes")
   expect(() => s.set("update.channel", "beta", "project")).toThrow("can be set for: global")
 })
@@ -92,7 +91,7 @@ test("the agent changes a setting through the tool, with approval; a model chang
   expect(asked[0]!.always).toEqual(["session effort=*"])
   expect(app.engine.model.ref).toBe("f/big")
   // The third request went to the new model.
-  expect(fake!.requests[2]!.model).toBe("big")
+  expect(fake!.requests[2]!.model).toBe("f/big")
 })
 
 test("settings_tool: allow — no asking; but a less strict mode is asked every time, with no 'always'", async () => {

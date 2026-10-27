@@ -7,7 +7,8 @@
 // pasted into the YAML. The models are not written anywhere: a webui connection reads them from the
 // instance at every start (webui.ts). `lembas.json` remembers which connections a login made, so
 // `login` again refreshes them and `logout` removes exactly them. Without a login nothing here is
-// read, and LLeMbas CLI runs on its hand-written config as before.
+// read, and LLeMbas CLI has no model to talk to: 2.0 talks to the server it is logged in to, one at
+// a time, and nothing else.
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { parseDocument } from "yaml"
@@ -416,6 +417,15 @@ export async function login(address: string, o: LoginOptions): Promise<LoginResu
       changes.push("the previous login could not be signed out: revoke it under User → Security → Devices on the instance")
   }
   await handOver(replaced)
+  // One server at a time (2.0: the CLI is LLeMbas-server-specific): a login to another one signs
+  // this machine out of the one it was logged in to.
+  for (const [name, old] of Object.entries(ownInstances()))
+    if (name !== connection && old.base_url !== discovery.base_url) {
+      const out = await logout(name).catch(() => undefined)
+      if (!out) continue
+      changes.push(`signed out of ${old.instance_name ?? old.base_url} (${name}): LLeMbas CLI uses one server at a time`)
+      if (out.modelLeft) changes.push(`config.yaml still starts on ${out.modelLeft}, a model of that server: change it with lembas config set model <id>, or remove it to start on this server's default`)
+    }
   // Only logins this mode made: in local mode, the user's own login to the same instance is not
   // signed out or replaced — it is not this project's.
   const known = ownInstances()

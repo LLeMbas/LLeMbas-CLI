@@ -51,7 +51,7 @@ test("the instance's library replaces this machine's, under the tools' own names
   mkdirSync(join(paths.config, "lembas"), { recursive: true })
   writeFileSync(join(paths.config, "lembas.json"), JSON.stringify({ instances: { ai: { base_url: lembas.base, connection: "ai", logged_in_at: "" } } }))
   writeFileSync(join(paths.config, "lembas", "ai.key"), "lmb_lib\n", { mode: 0o600 })
-  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    dialect: openai-chat\n    base_url: http://127.0.0.1:1/v1\n    models: { m: {} }\n", { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    type: webui\n    url: http://127.0.0.1:1/v1\n    models: { f/m: {} }\n", { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\nlibrary: lembas\n")
   const app = createApp({ cwd: mkdtempSync(join(tmpdir(), "ph-lib-")), store: false, asker: { ask: async (): Promise<AskReply> => ({ kind: "once" }) } })
   await app.mcpReady
@@ -74,7 +74,7 @@ test("a session the client gave a library scope sends its id on every call to th
   mkdirSync(join(paths.config, "lembas"), { recursive: true })
   writeFileSync(join(paths.config, "lembas.json"), JSON.stringify({ instances: { ai: { base_url: lembas.base, connection: "ai", logged_in_at: "" } } }))
   writeFileSync(join(paths.config, "lembas", "ai.key"), "lmb_lib\n", { mode: 0o600 })
-  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    dialect: openai-chat\n    base_url: http://127.0.0.1:1/v1\n    models: { m: {} }\n", { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    type: webui\n    url: http://127.0.0.1:1/v1\n    models: { f/m: {} }\n", { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\nlibrary: lembas\n")
   const app = createApp({ cwd: mkdtempSync(join(tmpdir(), "ph-lib-")), asker: { ask: async (): Promise<AskReply> => ({ kind: "once" }) } })
   stops.push(() => void app.close())
@@ -104,7 +104,7 @@ test("a session the client gave a library scope sends its id on every call to th
 
 test("without a login it says so and keeps this machine's library", () => {
   writeFileSync(join(paths.config, "lembas.json"), JSON.stringify({ instances: {} }))
-  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    dialect: openai-chat\n    base_url: http://127.0.0.1:1/v1\n    models: { m: {} }\n", { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    type: webui\n    url: http://127.0.0.1:1/v1\n    models: { f/m: {} }\n", { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\nlibrary: lembas\n")
   const app = createApp({ cwd: mkdtempSync(join(tmpdir(), "ph-lib-")), store: false, asker: { ask: async (): Promise<AskReply> => ({ kind: "once" }) } })
   expect(app.loaded.warnings.join(" ")).toContain("not logged in")

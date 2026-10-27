@@ -56,7 +56,7 @@ export interface ChatRequest {
 }
 
 export interface ResolvedModel {
-  /** `connection/model` */
+  /** The served id (`deepseek/deepseek-flash`). */
   ref: string
   connectionName: string
   connection: Connection

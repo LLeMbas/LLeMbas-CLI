@@ -14,7 +14,7 @@ import { fillPrompt } from "../prompt/fill.ts"
 import { splitPurpose, toSpec, ToolError, type Tool, type ToolContext, type ToolResult } from "../tool/tool.ts"
 import { fill, promptText } from "../prompt/assemble.ts"
 import { resolveCall } from "../tool/names.ts"
-import { contextWindow } from "../provider/discover.ts"
+import { contextWindow } from "../provider/index.ts"
 import { summaryTurns, type Store } from "./store.ts"
 import { estimateTokens, estimateValue } from "../provider/tokens.ts"
 import { duration } from "../duration.ts"
@@ -43,9 +43,6 @@ export interface EngineOptions {
   compaction?: { autoAt?: number }
   /** Starts a subagent for the task tool; absent in a subagent. */
   spawn?: ToolContext["spawn"]
-  /** The model to switch to when this one's server cannot be reached (its `fallback` list), or
-   *  undefined when there is none left to try. */
-  fallback?: (current: ResolvedModel, tried: Set<string>) => { model: ResolvedModel; client: Client; effort: Effort | null } | undefined
   /** What a message sent mid-turn starts with: the user's words for a session, the main agent's for
    *  a subagent (loop.json jobs.marks to_subagent). */
   steerMark?: string
@@ -264,7 +261,7 @@ export class Engine {
   }
 
   private droppedThinking(): number {
-    if (!this.usage || this.model.connection.dialect !== "openai-chat") return 0
+    if (!this.usage) return 0
     const reply = this.messages[this.usageAt - 1]
     if (reply?.role !== "assistant") return 0
     const estimate = reply.parts.reduce((n, p) => n + (p.type === "reasoning" ? estimateTokens(p.text) : 0), 0)
@@ -468,7 +465,6 @@ export class Engine {
     let ranOut: { limit: string; said: string } | undefined
     let nudges = 0
     let midRetries = 0
-    const tried = new Set<string>()
 
     for (let step = 1; ; step++) {
       // Checked between steps, never mid-reply: a reply cut off mid-sentence is worth nothing.
@@ -518,19 +514,6 @@ export class Engine {
           if (partial.trim()) this.push({ role: "assistant", parts: [{ type: "text", text: partial }] })
           bus.emit({ type: "done", reason: "cancelled" })
           return "cancelled"
-        }
-        // The server is not there at all: the model's fallback, if it has one, for the rest of the
-        // session — said, and shown in the status bar.
-        if (e instanceof ProviderError && e.unreachable && this.o.fallback) {
-          tried.add(this.model.ref)
-          const next = this.o.fallback(this.model, tried)
-          if (next) {
-            bus.emit({ type: "notice", message: `${e.message.split("\n")[0]!.slice(0, 160)} — switching to ${next.model.ref}, its fallback` })
-            this.setModel(next.model, next.client, next.effort)
-            bus.emit({ type: "setting", key: "model", value: next.model.ref })
-            step--
-            continue
-          }
         }
         // A server failure part-way through a reply (llama.cpp failing to parse gpt-oss's own
         // output is the one seen) is worth two more goes. What was already shown is discarded.

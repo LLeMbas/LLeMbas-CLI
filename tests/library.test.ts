@@ -96,10 +96,13 @@ test("an OpenAI-shaped /embeddings: in order, unit length", async () => {
       return Response.json({ data: input.map((_, i) => ({ index: i, embedding: [3, 4] })).reverse() })
     },
   })
-  const e = embedderFor({ connections: { emb: { dialect: "openai-chat", base_url: `http://127.0.0.1:${server.port}/v1`, models: {} } } } as never, "emb/nomic")!
+  // The server's embedding model, by its served id.
+  const loaded = { connections: { emb: { base_url: `http://127.0.0.1:${server.port}/v1`, models: {}, webui: { url: `http://127.0.0.1:${server.port}`, embeddings: ["llama/nomic"] } } }, refs: [] } as never
+  const e = embedderFor(loaded, "llama/nomic")!
   const [v] = await e.embed(["x", "y"])
   expect(Array.from(v!)).toEqual([0.6000000238418579, 0.800000011920929])
-  expect(() => embedderFor({ connections: { a: { dialect: "anthropic", base_url: "http://x", models: {} } } } as never, "a/b")).toThrow("no embeddings")
+  // Not logged in: said.
+  expect(() => embedderFor({ connections: {}, refs: [] } as never, "llama/nomic")).toThrow("not logged in")
 })
 
 test("ingest: text and code; HTML as markdown; binaries skipped; long text cut and said; links out of the directory ignored", async () => {
@@ -135,7 +138,7 @@ test("the tools: knowledge_search is offered only with something to search; a pr
     { chunks: [delta({ content: "ok" }, "stop")] },
   ])
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\ntitles: prompt\n")
   const cwd = mkdtempSync(join(tmpdir(), "ph-libtools-"))
   mkdirSync(join(cwd, ".agent"))

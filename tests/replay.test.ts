@@ -18,7 +18,7 @@ afterEach(() => fake?.stop())
 
 async function replay(name: string) {
   fake = fakeProvider([{ chunks: [], raw: fixture(name) }])
-  const m: ResolvedModel = { ref: "swap/x", connectionName: "swap", id: "x", spec: {}, connection: { dialect: "openai-chat", base_url: fake.url, models: {} } }
+  const m: ResolvedModel = { ref: "swap/x", connectionName: "swap", id: "x", spec: {}, connection: { base_url: fake.url, models: {} } }
   const events: StreamEvent[] = []
   for await (const e of new OpenAIChatClient(m).stream({ system: "", messages: [{ role: "user", parts: [{ type: "text", text: "x" }] }], tools: [] }))
     events.push(e)
@@ -48,7 +48,7 @@ describe("recorded llama-swap streams", () => {
   test("qwen35: an answer given only inside reasoning is followed by one request for the answer", async () => {
     fake = fakeProvider([{ chunks: [], raw: fixture("qwen35-answer-only-in-reasoning.sse") }, { chunks: [delta({ content: "The divisor was off by one." })] }])
     mkdirSync(paths.config, { recursive: true })
-    writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+    writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
     writeFileSync(join(paths.config, "config.yaml"), "model: f/m\n")
     const dir = mkdtempSync(join(tmpdir(), "lembas-replay-"))
     const app = createApp({ cwd: dir, mode: "edit", store: false, asker: { ask: async (): Promise<AskReply> => ({ kind: "deny" }) } })
@@ -95,7 +95,7 @@ describe("effort refused inside a 200 stream (llama-swap loading, then the templ
       connectionName: "swap",
       id: "bonsai",
       spec: { efforts: ["low", "medium", "high"] },
-      connection: { dialect: "openai-chat", base_url: fake.url, models: {} },
+      connection: { base_url: fake.url, models: {} },
     }
     const events: StreamEvent[] = []
     for await (const e of new OpenAIChatClient(m).stream({ system: "", messages: [{ role: "user", parts: [{ type: "text", text: "x" }] }], tools: [], effort: "high" }))
@@ -111,7 +111,7 @@ describe("effort refused inside a 200 stream (llama-swap loading, then the templ
 
   test("an error after output has started is not retried", async () => {
     fake = fakeProvider([{ chunks: [], raw: 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\nerror: {"error":{"code":500,"message":"Unexpected reasoning effort high"}}\n\n' }])
-    const m: ResolvedModel = { ref: "swap/late", connectionName: "swap", id: "x", spec: { efforts: ["high"] }, connection: { dialect: "openai-chat", base_url: fake.url, models: {} } }
+    const m: ResolvedModel = { ref: "swap/late", connectionName: "swap", id: "x", spec: { efforts: ["high"] }, connection: { base_url: fake.url, models: {} } }
     const run = async () => {
       for await (const _ of new OpenAIChatClient(m).stream({ system: "", messages: [], tools: [], effort: "high" })) void _
     }
@@ -123,7 +123,7 @@ describe("effort refused inside a 200 stream (llama-swap loading, then the templ
 describe("llama-swap unloads the model under a running request", () => {
   test("'group: model unloaded' (a string code) is a server error: retried once, and the reply arrives", async () => {
     fake = fakeProvider([{ chunks: [], raw: fixture("llama-swap-model-unloaded.sse") }, { chunks: [delta({ content: "second try" })] }])
-    const m: ResolvedModel = { ref: "swap/x", connectionName: "swap", id: "x", spec: {}, connection: { dialect: "openai-chat", base_url: fake.url, models: {} } }
+    const m: ResolvedModel = { ref: "swap/x", connectionName: "swap", id: "x", spec: {}, connection: { base_url: fake.url, models: {} } }
     const events: StreamEvent[] = []
     for await (const e of new OpenAIChatClient(m).stream({ system: "", messages: [{ role: "user", parts: [{ type: "text", text: "x" }] }], tools: [] })) events.push(e)
     expect(events.some((e) => e.type === "notice" && e.message.includes("group: model unloaded"))).toBe(true)

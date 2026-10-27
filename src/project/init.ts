@@ -8,7 +8,7 @@ const CONFIG_TEMPLATE = `# LLeMbas CLI settings for this project. Merged over ~/
 # and read only while the project is trusted. Connections cannot be set here.
 #
 # mode: edit                     # manual | edit | auto | plan
-# model: connection/model
+# model: provider/model
 # permission:
 #   bash:
 #     "npm test *": allow

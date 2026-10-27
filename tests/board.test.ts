@@ -33,7 +33,7 @@ describe("the project board", () => {
       { chunks: [delta({ content: "next" })] },
     ])
     mkdirSync(paths.config, { recursive: true })
-    writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+    writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
     writeFileSync(join(paths.config, "config.yaml"), "model: f/m\n")
     const cwd = mkdtempSync(join(tmpdir(), "ph-board-"))
     mkdirSync(join(cwd, ".agent"))

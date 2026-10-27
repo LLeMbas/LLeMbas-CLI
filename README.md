@@ -4,12 +4,11 @@
 
 # LLeMbas CLI
 
-A terminal coding agent and project manager: the `lembas` command. It talks to any LLM API
-(OpenAI-compatible servers such as llama.cpp, vLLM or LM Studio, the OpenAI Responses API,
-Anthropic, Gemini, Ollama), works in your project with four permission modes and a git snapshot of
-every turn, remembers what it learns across sessions, and can sign in to a
-[LLeMbas](https://github.com/LLeMbas/LLeMbas) server to use its models, library and search — and
-let its web UI work the same sessions. Linux, x64 and arm64.
+A terminal coding agent and project manager: the `lembas` command. It signs in to a
+[LLeMbas](https://github.com/LLeMbas/LLeMbas) server and uses its models, memory and search, works
+in your project with four permission modes and a git snapshot of every turn, keeps its own notes,
+knowledge bases and skills on your machine, and lets the server's web UI work the same sessions.
+Linux, x64 and arm64.
 
 ## Install
 
@@ -24,12 +23,12 @@ checksum before installing anything ([SECURITY.md](SECURITY.md) shows how to che
 ## First steps
 
 ```sh
-cd your-project && lembas              # the TUI
-lembas login https://your-server       # sign in to a LLeMbas server and use its models
+lembas login https://your-server       # sign in to your LLeMbas server
+cd your-project && lembas              # the TUI, on the server's models
 ```
 
-Without a server, add a connection to `~/.config/lembas/connections.yaml` and set `model:` in
-`~/.config/lembas/config.yaml`.
+From 2.0 the CLI talks only to the LLeMbas server it is logged in to; the custom connections of 1.x
+(`dialect:` entries in `connections.yaml`) are gone.
 
 `lembas` updates itself (`lembas update` does it now); `lembas uninstall` removes it, and
 `--purge` takes settings and sessions too.

@@ -68,7 +68,7 @@ test("the engine keeps the plan with the session: said on the bus, stored, back 
     { chunks: [delta({ content: "ok" })] },
   ])
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\ntitles: prompt\n")
   const cwd = mkdtempSync(join(tmpdir(), "ph-planstore-"))
   const store = new Store(join(cwd, "sessions.db"))

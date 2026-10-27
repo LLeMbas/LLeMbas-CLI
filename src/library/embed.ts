@@ -1,6 +1,6 @@
-// Embeddings for the library: `embedding: connection/model` in config.yaml, over the connection's
-// OpenAI-shaped /embeddings (llama.cpp with --embedding, vLLM, LM Studio, OpenAI…) or Ollama's
-// /api/embed. Vectors are made unit length here, so a dot product is the cosine.
+// Embeddings for the library: `embedding:` in config.yaml names an embedding model of the LLeMbas
+// server, reached at its OpenAI-shaped /v1/embeddings. Vectors are made unit length here, so a dot
+// product is the cosine.
 import { resolveKey, type Loaded } from "../config/load.ts"
 import { authHeaders, joinUrl, request, tlsFor } from "../provider/http.ts"
 import { resolveModel } from "../provider/index.ts"
@@ -15,46 +15,32 @@ function unit(v: number[]): Float32Array {
 
 export function embedderFor(loaded: Loaded, ref: string | undefined): Embedder | undefined {
   if (!ref) return undefined
-  // Through the same resolver as every model ref: an instance's model by its provider
-  // (`llama/nomic-embed`) or in the older form (`example/nomic-embed`). The name stored with the
-  // vectors stays the ref as written, so a library indexed under it is still found.
-  // An embedding model need not be listed on its connection (`connection/<any id>`, as before).
-  let name: string
+  // An embedding model of the server, by its served id (`llama/nomic-embed`) — not a chat model, so
+  // not a model ref (lembas/webui.ts, isChatModel): found among the ids the server says it serves
+  // for embeddings, or as a ref in any of its forms. The name stored with the vectors stays the ref
+  // as written, so a library indexed under it is still found.
+  const [name, c] = Object.entries(loaded.connections)[0] ?? []
+  if (!name || !c) throw new Error("embedding: not logged in to a LLeMbas server (lembas login)")
   let id: string
-  try {
-    const resolved = resolveModel(loaded, ref)
-    name = resolved.connectionName
-    id = resolved.id
-  } catch (e) {
-    // An instance's embedding model by its served id (`llama/nomic-embed`): not a
-    // model ref, since only chat models are (lembas/webui.ts, isChatModel), so found by the ids
-    // its connection says it serves.
-    const served = Object.entries(loaded.connections).find(([, c]) => (c as { webui?: { embeddings?: string[] } }).webui?.embeddings?.includes(ref))
-    const slash = ref.indexOf("/")
-    if (served) {
-      name = served[0]
-      id = ref
-    } else {
-      if (slash <= 0) throw new Error(`embedding: "${ref}" must be written connection/model`)
-      name = ref.slice(0, slash)
-      id = ref.slice(slash + 1)
-      if (!loaded.connections[name]) throw new Error(`embedding: ${(e as Error).message}`)
+  if (c.webui?.embeddings?.includes(ref)) id = ref
+  else if (ref.startsWith(`${name}/`) && c.webui?.embeddings?.includes(ref.slice(name.length + 1))) id = ref.slice(name.length + 1)
+  else {
+    try {
+      id = resolveModel(loaded, ref).id
+    } catch (e) {
+      throw new Error(`embedding: ${(e as Error).message}`)
     }
   }
-  const c = loaded.connections[name]!
-  if (c.dialect === "anthropic" || c.dialect === "gemini") throw new Error(`embedding: the ${c.dialect} dialect has no embeddings here; use an OpenAI-compatible or Ollama connection`)
-  const ollama = c.dialect === "ollama"
   return {
     model: ref,
     async embed(texts, signal) {
       const res = await request(
-        joinUrl(c.base_url, ollama ? "api/embed" : "embeddings"),
+        joinUrl(c.base_url, "embeddings"),
         { method: "POST", headers: authHeaders(c, resolveKey(name, c)), body: JSON.stringify({ model: id, input: texts }), signal, timeoutMs: (c.timeout ?? 120) * 1000, tls: tlsFor(c) },
         `${ref} (embeddings)`,
       )
-      const j = (await res.json()) as { data?: { embedding: number[]; index?: number }[]; embeddings?: number[][] }
-      const rows = ollama ? (j.embeddings ?? []) : [...(j.data ?? [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0)).map((d) => d.embedding)
-      return rows.map(unit)
+      const j = (await res.json()) as { data?: { embedding: number[]; index?: number }[] }
+      return [...(j.data ?? [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0)).map((d) => unit(d.embedding))
     },
   }
 }

@@ -13,17 +13,15 @@ let fake: Fake | undefined
 let other: Fake | undefined
 afterEach(() => (fake?.stop(), other?.stop(), (other = undefined)))
 
-/** Two scripted servers: the parent's model on `f`, the child's on `g` (task's `model: "g/m"`) —
- *  a shared script would hand a reply to whichever engine asked first. */
+/** Two scripts: the parent's model `f/m`, the child's `g/…` (task's `model: "g/m"`), routed by the
+ *  fake server — a shared script would hand a reply to whichever engine asked first. */
 function pair(parent: Parameters<typeof fakeProvider>[0], child: Parameters<typeof fakeProvider>[0], o: { oneAtATime?: boolean; config?: string; asker?: Asker } = {}) {
-  fake = fakeProvider(parent)
-  other = fakeProvider(child)
+  const child$ = (other = fakeProvider(child))
+  fake = fakeProvider(parent, { route: (model) => (model.startsWith("g/") ? child$ : undefined) })
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(
-    join(paths.config, "connections.yaml"),
-    `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n  g:\n    dialect: openai-chat\n    base_url: ${other.url}\n${o.oneAtATime ? "    one_model_at_a_time: true\n" : ""}    models: { m: {}, n: {} }\n`,
-    { mode: 0o600 },
-  )
+  // One server; its g models answered by the child's script, sharing one GPU when asked to.
+  const g = o.oneAtATime ? "{ group: gpu }" : "{}"
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {}, g/m: ${g}, g/n: ${g} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), `model: f/m\n${o.config ?? ""}`)
   const cwd = mkdtempSync(join(tmpdir(), "ph-sub-"))
   writeFileSync(join(cwd, "calc.py"), "def average(v):\n    return sum(v) / (len(v) - 1)\n")
@@ -40,7 +38,7 @@ const settled = async (a: ReturnType<typeof createApp>, n: number) => {
 function app(script: Parameters<typeof fakeProvider>[0]) {
   fake = fakeProvider(script)
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\n")
   const cwd = mkdtempSync(join(tmpdir(), "ph-sub-"))
   writeFileSync(join(cwd, "calc.py"), "def average(v):\n    return sum(v) / (len(v) - 1)\n")
@@ -176,7 +174,7 @@ test("a worktree subagent cannot touch the main checkout, even unrestricted", as
     { chunks: [delta({ content: "tried" })] },
     { chunks: [delta({ content: "ok" })] },
   ])
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
   for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "t@e"], ["config", "user.name", "T"], ["config", "commit.gpgsign", "false"], ["add", "calc.py"], ["commit", "-q", "-m", "init"]]) git(root, args)
   const b = createApp({ cwd: root, mode: "auto", store: false, asker: { ask: async (): Promise<AskReply> => ({ kind: "once" }) } })
   await b.engine.prompt("go")
@@ -300,8 +298,9 @@ describe("background subagents (spec 2.0.0)", () => {
     const results = fake!.requests[1].messages.filter((m: any) => m.role === "tool").map((m: any) => m.content as string)
     expect(results[0]).toStartWith("[#0001]\nStarted subagent explore as job1")
     expect(results[1]).toContain("holds one model at a time, and a subagent is already running on g/m there")
-    expect(other!.requests.map((r: any) => r.model)).toEqual(["m"])
     await settled(a, 3)
+    for (let i = 0; i < 100 && !other!.requests.length; i++) await Bun.sleep(20)
+    expect(other!.requests.map((r: any) => r.model)).toEqual(["g/m"])
   })
 
   test("a broken agent file is said at start, and the agent is still offered with its body", () => {

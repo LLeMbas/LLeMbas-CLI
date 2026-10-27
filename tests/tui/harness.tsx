@@ -16,7 +16,7 @@ export async function tui(script: Scripted[], size = { width: 100, height: 30 },
   mkdirSync(paths.config, { recursive: true })
   writeFileSync(
     join(paths.config, "connections.yaml"),
-    `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models:\n      coder: { context: 32768, efforts: [low, high], effort: low }\n      other: { context: 8192 }\n`,
+    `connections:\n  fake:\n    type: webui\n    url: ${fake.url}\n    models:\n      fake/coder: { context: 32768, efforts: [low, high], effort: low }\n      fake/other: { context: 8192 }\n`,
     { mode: 0o600 },
   )
   writeFileSync(join(paths.config, "config.yaml"), `model: fake/coder\n${extraConfig}`)

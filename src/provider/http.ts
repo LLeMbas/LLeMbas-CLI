@@ -27,20 +27,10 @@ export function tlsFor(c: Pick<Connection, "tls">): { ca?: string; rejectUnautho
   return out
 }
 
-const DEFAULT_AUTH: Record<Connection["dialect"], NonNullable<Connection["auth"]>> = {
-  "openai-chat": "bearer",
-  responses: "bearer",
-  anthropic: "x-api-key",
-  gemini: "x-goog-api-key",
-  ollama: "bearer",
-}
-
-/** Auth plus the connection's and model's own headers. */
-export function authHeaders(c: Connection, key: string | undefined, extra: Record<string, string> = {}): Record<string, string> {
+/** The server's token as a bearer, plus the connection's and model's own headers. */
+export function authHeaders(c: Pick<Connection, "headers">, key: string | undefined, extra: Record<string, string> = {}): Record<string, string> {
   const h: Record<string, string> = { "content-type": "application/json", ...extra }
-  const style = c.auth ?? DEFAULT_AUTH[c.dialect]
-  if (key && style === "bearer") h.authorization = `Bearer ${key}`
-  else if (key && style !== "none") h[style] = key
+  if (key) h.authorization = `Bearer ${key}`
   return { ...h, ...c.headers }
 }
 

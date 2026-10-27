@@ -34,7 +34,7 @@ function repo(): string {
 /** The user's own files: a connection and a config.yaml local mode must not read. */
 function userFiles(extraConfig = "") {
   mkdirSync(globalPaths.config, { recursive: true })
-  writeFileSync(join(globalPaths.config, "connections.yaml"), "connections:\n  mine:\n    dialect: openai-chat\n    base_url: http://127.0.0.1:9/v1\n    models: { m: {} }\n", { mode: 0o600 })
+  writeFileSync(join(globalPaths.config, "connections.yaml"), "connections:\n  mine:\n    type: webui\n    url: http://127.0.0.1:9/v1\n    models: { mine/m: {} }\n", { mode: 0o600 })
   writeFileSync(join(globalPaths.config, "config.yaml"), `model: mine/m\ntheme: forest\n${extraConfig}`)
 }
 
@@ -67,7 +67,7 @@ test("a local directory that came with the repository is refused", () => {
   expect(isLocal()).toBe(false)
 })
 
-test("the user's config.yaml is not read; their connections are, and a local one wins by name", () => {
+test("the user's config.yaml is not read; their login is, and a local one wins by name", () => {
   userFiles()
   const dir = repo()
   enterLocal(dir)
@@ -76,10 +76,10 @@ test("the user's config.yaml is not read; their connections are, and a local one
   expect(loaded.config.theme).toBeUndefined()
   expect(Object.keys(loaded.connections)).toEqual(["mine"])
   writeFileSync(join(paths.config, "config.yaml"), "model: mine/m\n")
-  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  mine:\n    dialect: openai-chat\n    base_url: http://127.0.0.1:8/v1\n    models: { n: {} }\n", { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  mine:\n    type: webui\n    url: http://127.0.0.1:8/v1\n    models: { mine/n: {} }\n", { mode: 0o600 })
   loaded = loadConfig()
   expect(loaded.config.model).toBe("mine/m")
-  expect(Object.keys(loaded.connections.mine!.models)).toEqual(["n"])
+  expect(Object.keys(loaded.connections.mine!.models)).toEqual(["mine/n"])
 })
 
 test("a login made outside local mode is read, never written or signed out", async () => {
@@ -152,7 +152,7 @@ test("the CLI: -l refuses what it turns off, and a run writes nothing outside th
     const home = realpathSync(mkdtempSync(join(tmpdir(), "lembas-local-home-")))
     const tmp = realpathSync(mkdtempSync(join(tmpdir(), "lembas-local-tmp-")))
     mkdirSync(join(home, ".config/lembas"), { recursive: true })
-    writeFileSync(join(home, ".config/lembas/connections.yaml"), `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+    writeFileSync(join(home, ".config/lembas/connections.yaml"), `connections:\n  fake:\n    type: webui\n    url: ${fake.url}\n    models: { fake/m: {} }\n`, { mode: 0o600 })
     writeFileSync(join(home, ".config/lembas/config.yaml"), "model: nowhere/x\n")
     const dir = repo()
     const env = { ...process.env, LEMBAS_HOME: home, HOME: home, TMPDIR: tmp, XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state") }

@@ -29,7 +29,7 @@ export function jsonSchemas(): Record<keyof typeof SCHEMA_FILES, Record<string, 
   })
   return {
     config: make(Config, "LLeMbas CLI config.yaml", "~/.config/lembas/config.yaml, or a project's .agent/config.yaml. Strings may be {env:NAME} or {file:path}."),
-    connections: make(ConnectionsFile, "LLeMbas CLI connections.yaml", "~/.config/lembas/connections.yaml: the LLM endpoints. Global only. Keys as {env:NAME}, {file:path} or key_cmd — never pasted."),
+    connections: make(ConnectionsFile, "LLeMbas CLI connections.yaml", "~/.config/lembas/connections.yaml: the LLeMbas server this machine is logged in to, as lembas login writes it. Global only."),
   }
 }
 

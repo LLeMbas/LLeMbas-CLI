@@ -68,12 +68,12 @@ export async function drive(opts: { cols: number; rows: number; bin?: string; ho
 }
 
 export function fakeHome(script: Parameters<typeof fakeProvider>[0]) {
-  const fake = fakeProvider(script)
+  const fake = fakeProvider(script, { served: [{ id: "fake/coder" }, { id: "fake/other" }] })
   const home = mkdtempSync(join(tmpdir(), "lembas-drive-"))
   mkdirSync(join(home, ".config/lembas"), { recursive: true })
   writeFileSync(
     join(home, ".config/lembas/connections.yaml"),
-    `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models:\n      coder: { context: 32768, efforts: [low, high], effort: low }\n      other: { context: 8192 }\n`,
+    `connections:\n  fake:\n    type: webui\n    url: ${fake.url}\n    api_key: smoke\n    models:\n      fake/coder: { context: 32768, efforts: [low, high], effort: low }\n      fake/other: { context: 8192 }\n`,
     { mode: 0o600 },
   )
   writeFileSync(join(home, ".config/lembas/config.yaml"), "model: fake/coder\nupdate: { auto: off }\n")

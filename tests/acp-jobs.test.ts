@@ -34,14 +34,11 @@ function pair(): [Transport, Transport] {
   return [side(a, b), side(b, a)]
 }
 
-/** The parent's model on `f`; a second connection `g` for a subagent's model, when given. */
-function config(url: string, childUrl?: string) {
+/** The parent's model `f/m`; `g/m` for a subagent, when its own script is given (the fake server
+ *  routes it there). */
+function config(url: string, child?: boolean) {
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(
-    join(paths.config, "connections.yaml"),
-    `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${url}\n    models: { m: {} }\n${childUrl ? `  g:\n    dialect: openai-chat\n    base_url: ${childUrl}\n    models: { m: {} }\n` : ""}`,
-    { mode: 0o600 },
-  )
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${url}\n    models: { f/m: {}${child ? ", g/m: {}" : ""} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\nmode: auto\n")
 }
 
@@ -145,14 +142,14 @@ test("job/stop stops a command and answers once it has; the -32602 cases: a comm
 }, SLOW)
 
 test("a background subagent: its transcript as history turns; send to a finished one starts it again under the same id", async () => {
+  const child = (other = fakeProvider([{ chunks: [delta({ content: "calc.py:2 divides by len(v) - 1." })] }, { chunks: [delta({ content: "The tests cover it." })] }]))
   fake = fakeProvider([
     { chunks: [toolCall(0, "t1", "task", JSON.stringify({ description: "find the bug", prompt: "Find why average is wrong", model: "g/m", background: true }))] },
     { chunks: [delta({ content: "Started it." })] },
     { chunks: [delta({ content: "Got the report." })] },
     { chunks: [delta({ content: "Got the second report." })] },
-  ])
-  other = fakeProvider([{ chunks: [delta({ content: "calc.py:2 divides by len(v) - 1." })] }, { chunks: [delta({ content: "The tests cover it." })] }])
-  config(fake.url, other.url)
+  ], { route: (model) => (model.startsWith("g/") ? child : undefined) })
+  config(fake.url, true)
   const { c, events, sid } = await client()
   await c.request("session/prompt", { sessionId: sid, prompt: [{ type: "text", text: "go" }] })
   expect(await until(() => events.some((e) => e.type === "job" && e.state === "end"))).toBe(true)

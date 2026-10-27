@@ -17,7 +17,6 @@ import { DEFAULT_RULES, toRules } from "./permission/evaluate.ts"
 import { hardlineRules } from "./permission/hardline.ts"
 import { defaultEffort } from "./provider/effort.ts"
 import { clientFor, familyOf, resolveModel } from "./provider/index.ts"
-import { discoverContext, unload } from "./provider/discover.ts"
 import { assembleSystem, instructionFiles, knowledgeScope } from "./prompt/assemble.ts"
 import { describeRepo, repoState } from "./git/repo.ts"
 import { findProject, persistProjectRule, trustOf, type Project } from "./project/root.ts"
@@ -100,7 +99,7 @@ export interface App {
   /** The subagents the task tool offers (built-in, global, and a trusted project's), as of start. */
   agents: import("./project/agents.ts").AgentSpec[]
   store: Store | undefined
-  /** Every configured `connection/model`, in config order. */
+  /** Every model the server serves, by its id there, in its order. */
   modelRefs(): string[]
   /** A ref in any form it may be written in (the old `<login>/<model>` too) as the ref the
    *  model has now; the ref itself when it names nothing. */
@@ -497,7 +496,6 @@ export function createApp(o: AppOptions): App {
         ...(at ? { root: at.root, cwd: at.cwd, projectDir: undefined } : {}),
         jobs: { registry, owner: () => ({ sessionId: childSessionId, job }) },
       },
-      fallback: engine.o.fallback,
       steerMark: MARKS.to_subagent,
       system: (mode, current, plan) =>
         system(
@@ -567,16 +565,6 @@ export function createApp(o: AppOptions): App {
     system: (m, current, plan) => system(m, current, undefined, undefined, plan),
     persistRule: trusted ? (rule) => persistProjectRule(project, rule) : undefined,
     spawn,
-    fallback(current, tried) {
-      for (const ref of current.spec.fallback ?? []) {
-        if (tried.has(ref)) continue
-        try {
-          const m = resolveModel(loaded, ref)
-          return { model: m, client: clientFor(m), effort: startEffort(m) }
-        } catch {}
-      }
-      return undefined
-    },
   })
 
   // MCP tools join the engine's list as servers connect (the engine reads it at each prompt).
@@ -647,18 +635,11 @@ export function createApp(o: AppOptions): App {
   const snapshots = o.snapshots === false ? undefined : new Snapshots(project.root, project.gitRoot)
   engine.busyInput = loaded.config.busy_input ?? "steer"
   const turns = new Turns(engine, snapshots, store)
-  // After a reply, learn the window if nobody configured it (the model is loaded by then).
-  bus.on((e) => {
-    if (e.type === "done" && !engine.model.spec.context) void discoverContext(engine.model, engine.client).then((n) => n && engine.usage && bus.emit({ type: "usage", usage: engine.usage, context: n, used: engine.contextUsed() }))
-  })
   // By provider for an instance's models (`deepseek/deepseek-flash`), src/provider/refs.ts.
   const modelRefs = () => loaded.refs.map((r) => r.ref)
   const switchModel = (ref: string) => {
     const m = resolveModel(loaded, ref)
-    const prev = engine.model
     engine.setModel(m, clientFor(m), startEffort(m))
-    // Moving to another connection frees the old one's memory (llama-swap /unload).
-    if (prev.connectionName !== m.connectionName) void unload(prev)
   }
   const setIn = (key: string, value: unknown) => {
     const path = key.split(".")

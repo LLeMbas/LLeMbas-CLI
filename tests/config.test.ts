@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { paths } from "../src/config/paths.ts"
 import { loadConfig, resolveKey } from "../src/config/load.ts"
-import { resolveModel } from "../src/provider/index.ts"
+import { NOT_LOGGED_IN, resolveModel } from "../src/provider/index.ts"
 
 const write = (file: string, text: string) => {
   mkdirSync(join(file, ".."), { recursive: true })
@@ -17,7 +17,7 @@ beforeEach(() => {
 })
 
 describe("config", () => {
-  test("connections: substitution, a broken one does not break the others, mode warning", () => {
+  test("connections: the login, its key from a file; a custom connection is read past with a warning (2.0)", () => {
     write(join(paths.config, "keyfile"), "sk-from-file\n")
     write(
       join(paths.config, "connections.yaml"),
@@ -27,32 +27,40 @@ describe("config", () => {
     base_url: http://llm.example/v1
     api_key: "{env:PH_TEST_KEY}"
     models:
-      qwen: { context: 131072, max_output: 8192, efforts: [low, high], effort: high }
-  file:
-    dialect: openai-chat
-    base_url: http://x/v1
+      qwen: { context: 131072 }
+  example:
+    type: webui
+    url: https://ai.example.org
     api_key: "{file:${join(paths.config, "keyfile")}}"
-    models: { a: {} }
-  broken:
-    dialect: openai-chat
-    base_url: http://y/v1
-    api_key: "{env:PH_MISSING}"
-    models: { b: {} }
+    models:
+      llama/qwen: { context: 131072, max_output: 8192, efforts: [low, high], effort: high }
 `,
     )
     chmodSync(join(paths.config, "connections.yaml"), 0o644)
     const l = loadConfig()
-    expect(l.connections.swap!.api_key).toBe("sk-test")
-    expect(resolveKey("file", l.connections.file!)).toBe("sk-from-file")
-    expect(l.broken.broken).toContain("PH_MISSING")
+    expect(Object.keys(l.connections)).toEqual(["example"])
+    expect(l.connections.example!.base_url).toBe("https://ai.example.org/v1")
+    expect(resolveKey("example", l.connections.example!)).toBe("sk-from-file")
+    expect(l.warnings.some((w) => w.includes("swap is a custom connection") && w.includes("lembas login"))).toBe(true)
     expect(l.warnings.some((w) => w.includes("chmod 600"))).toBe(true)
-    expect(resolveModel(l, "swap/qwen").spec.context).toBe(131072)
-    expect(() => resolveModel(l, "broken/b")).toThrow("unusable")
-    expect(() => resolveModel(l, "swap/nope")).toThrow('no model "nope"')
+    expect(resolveModel(l, "llama/qwen").spec.context).toBe(131072)
+    // The older form, the login's name in front, names the same model.
+    expect(resolveModel(l, "example/llama/qwen").ref).toBe("llama/qwen")
+    // One the server's list does not have yet is asked for, not refused here: the server decides.
+    expect(resolveModel(l, "llama/new")).toMatchObject({ ref: "llama/new", id: "llama/new", spec: {} })
   })
 
-  test("key_cmd", () => {
-    expect(resolveKey("k", { dialect: "openai-chat", base_url: "http://x", key_cmd: "echo sk-cmd", models: {} })).toBe("sk-cmd")
+  test("no login: no model, and the error says how to log in", () => {
+    write(join(paths.config, "connections.yaml"), "connections: {}\n")
+    expect(() => resolveModel(loadConfig(), undefined)).toThrow(NOT_LOGGED_IN)
+    expect(NOT_LOGGED_IN).toContain("lembas login <address>")
+  })
+
+  test("a login whose key file is gone is unusable, said as such", () => {
+    write(join(paths.config, "connections.yaml"), `connections:\n  example:\n    type: webui\n    url: https://ai.example.org\n    api_key: "{env:PH_MISSING}"\n`)
+    const l = loadConfig()
+    expect(l.broken.example).toContain("PH_MISSING")
+    expect(() => resolveModel(l, undefined)).toThrow("unusable")
   })
 
   test("project config: merged when trusted, ignored when not, global-only keys refused", () => {
@@ -76,34 +84,13 @@ describe("config", () => {
   })
 })
 
-test("effort_map may name only some efforts (zod 4 records keyed by an enum are exhaustive)", async () => {
-  const { ModelSpec } = await import("../src/config/schema.ts")
-  expect(ModelSpec.safeParse({ effort_map: { high: 10000 } }).success).toBe(true)
-  expect(ModelSpec.safeParse({ effort_map: { huge: 1 } }).success).toBe(false)
-})
-
 test("a URL may be {env:}/{file:}: accepted as written, and checked once filled in", () => {
   process.env.PH_URL = "http://llm.example/v1"
   process.env.PH_NOT_URL = "not a url"
-  write(
-    join(paths.config, "connections.yaml"),
-    `connections:
-  ok: { dialect: openai-chat, base_url: "{env:PH_URL}", models: { m: {} } }
-  bad: { dialect: openai-chat, base_url: "{env:PH_NOT_URL}", models: { m: {} } }
-  typo: { dialect: openai-chat, base_url: "{env:PH_URL", models: { m: {} } }
-`,
-  )
+  write(join(paths.config, "connections.yaml"), "connections: {}\n")
   chmodSync(join(paths.config, "connections.yaml"), 0o600)
   write(join(paths.config, "config.yaml"), 'search:\n  searxng: { base_url: "{env:PH_URL}" }\n  firecrawl: { base_url: "{env:PH_NOT_URL}" }\n')
-  expect(() => loadConfig()).toThrow(/typo\.base_url: Invalid URL/)
-  write(join(paths.config, "connections.yaml"), `connections:
-  ok: { dialect: openai-chat, base_url: "{env:PH_URL}", models: { m: {} } }
-  bad: { dialect: openai-chat, base_url: "{env:PH_NOT_URL}", models: { m: {} } }
-`)
-  chmodSync(join(paths.config, "connections.yaml"), 0o600)
   const l = loadConfig()
-  expect(l.connections.ok!.base_url).toBe("http://llm.example/v1")
-  expect(l.broken.bad).toContain("base_url: Invalid URL")
   expect(l.config.search?.searxng?.base_url).toBe("http://llm.example/v1")
   expect(l.config.search?.firecrawl).toBeUndefined()
   expect(l.warnings.some((w) => w.includes("firecrawl is off"))).toBe(true)

@@ -31,7 +31,7 @@ const model = (tls?: { ca?: string; insecure?: boolean }): ResolvedModel => ({
   connectionName: "t",
   id: "m",
   spec: {},
-  connection: { dialect: "openai-chat", base_url: `https://127.0.0.1:${server.port}/v1`, tls, models: {} },
+  connection: { base_url: `https://127.0.0.1:${server.port}/v1`, tls, models: {} },
 })
 
 test("a private CA is refused by default, with advice", async () => {

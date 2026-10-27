@@ -1,8 +1,8 @@
-// Models from a LLeMbas instance named by their provider: `deepseek/deepseek-flash`, not
-// `example/deepseek-flash`. The old forms still resolve, a config naming one is rewritten, a
-// connection of the user's own wins its name, two instances share a provider by login order, and an
-// instance that does not speak protocol 2 (bare ids) keeps `<login>/<id>`. On the link, the model event and the
-// announcement say whether the session's model is this link's instance's.
+// Models of the LLeMbas server named by the id it serves them under: `deepseek/deepseek-flash`, not
+// `example/deepseek-flash`. LLeMbas CLI 2.0 talks to one server, so the id is the ref; the older
+// forms still resolve and a config naming one is rewritten; a custom connection beside the login is
+// read past. On the link, the model event and the announcement say whether the session's model is
+// this link's instance's.
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -35,27 +35,19 @@ function clean() {
   rmSync(join(paths.state, "webui"), { recursive: true, force: true })
 }
 
-const conns = (o: Record<string, { webui?: boolean; models: string[] }>) =>
-  Object.fromEntries(Object.entries(o).map(([n, c]) => [n, { dialect: "openai-chat", base_url: "http://x/v1", models: Object.fromEntries(c.models.map((m) => [m, {}])), ...(c.webui ? { webui: { url: "http://x", v2: true } } : {}) }])) as never
+const conns = (o: Record<string, { models: string[] }>) =>
+  Object.fromEntries(Object.entries(o).map(([n, c]) => [n, { base_url: "http://x/v1", models: Object.fromEntries(c.models.map((m) => [m, {}])), webui: { url: "http://x" } }])) as never
 
-test("refs: by provider; a connection of the user's own wins its name; a bare id keeps the login", () => {
-  const c = conns({ example: { webui: true, models: ["deepseek/deepseek-flash", "llama/bonsai", "old"] }, llama: { models: ["mine"] } })
-  const refs = modelRefs(c, ["example"])
-  expect(refs.map((r) => r.ref)).toEqual(["deepseek/deepseek-flash", "example/llama/bonsai", "example/old", "llama/mine"])
-  // Every old way of writing them.
-  expect(findRef(c, refs, "example/deepseek-flash")?.ref).toBe("deepseek/deepseek-flash")
-  expect(findRef(c, refs, "example/deepseek/deepseek-flash")?.ref).toBe("deepseek/deepseek-flash")
-  expect(findRef(c, refs, "example/bonsai")?.ref).toBe("example/llama/bonsai")
-  expect(findRef(c, refs, "llama/mine")).toMatchObject({ connection: "llama", id: "mine" })
-  expect(findRef(c, refs, "llama/bonsai")).toBeUndefined()
-})
-
-test("refs: two instances with one provider — the first logged in to keeps the short form", () => {
-  const c = conns({ example: { webui: true, models: ["deepseek/a"] }, work: { webui: true, models: ["deepseek/a", "openai/b"] } })
-  expect(modelRefs(c, ["example", "work"]).map((r) => r.ref)).toEqual(["deepseek/a", "work/deepseek/a", "openai/b"])
-  expect(modelRefs(c, ["work", "example"]).map((r) => r.ref)).toEqual(["example/deepseek/a", "deepseek/a", "openai/b"])
-  // A login named after its own provider: the same string either way.
-  expect(modelRefs(conns({ llama: { webui: true, models: ["llama/bonsai"] } }), ["llama"]).map((r) => r.ref)).toEqual(["llama/bonsai"])
+test("refs: the served id; the older forms name the same model", () => {
+  const c = conns({ example: { models: ["deepseek/deepseek-flash", "llama/bonsai", "old"] } })
+  const refs = modelRefs(c)
+  expect(refs.map((r) => r.ref)).toEqual(["deepseek/deepseek-flash", "llama/bonsai", "old"])
+  expect(findRef(c, refs, "example/deepseek-flash")).toMatchObject({ ref: "deepseek/deepseek-flash", old: true })
+  expect(findRef(c, refs, "example/deepseek/deepseek-flash")).toMatchObject({ ref: "deepseek/deepseek-flash", old: true })
+  expect(findRef(c, refs, "example/bonsai")?.ref).toBe("llama/bonsai")
+  expect(findRef(c, refs, "example/old")?.ref).toBe("old")
+  expect(findRef(c, refs, "llama/bonsai")?.old).toBeUndefined()
+  expect(findRef(c, refs, "other/bonsai")).toBeUndefined()
 })
 
 /** Logged in to an instance served by `fake`, whose models are `models` (as /v1/models said them;
@@ -94,23 +86,13 @@ test("logged in: the model is deepseek/deepseek-flash everywhere, requests go to
   await app.close()
 })
 
-test("an instance that does not speak protocol 2 (bare ids): <login>/<id>", () => {
-  fake = fakeProvider([])
-  loggedIn(["deepseek-flash"])
-  writeFileSync(join(paths.config, "config.yaml"), "model: example/deepseek-flash\n")
-  const loaded = loadConfig()
-  expect(loaded.refs.map((r) => r.ref)).toEqual(["example/deepseek-flash"])
-  expect(resolveModel(loaded, undefined).ref).toBe("example/deepseek-flash")
-  expect(readFileSync(join(paths.config, "config.yaml"), "utf8")).toBe("model: example/deepseek-flash\n")
-})
-
-test("a connection of the user's own named like a provider keeps it; the instance's is <login>/<provider>/<model>", () => {
+test("a custom connection beside the login is read past, and said (2.0 has none)", () => {
   fake = fakeProvider([])
   loggedIn(["deepseek/deepseek-flash"], `  deepseek:\n    dialect: openai-chat\n    base_url: ${"http://127.0.0.1:9/v1"}\n    models: { deepseek-flash: {} }\n`)
   const loaded = loadConfig()
-  expect(loaded.refs.map((r) => r.ref)).toEqual(["example/deepseek/deepseek-flash", "deepseek/deepseek-flash"])
-  expect(resolveModel(loaded, "deepseek/deepseek-flash").connectionName).toBe("deepseek")
-  expect(resolveModel(loaded, "example/deepseek/deepseek-flash").connectionName).toBe("example")
+  expect(loaded.refs.map((r) => r.ref)).toEqual(["deepseek/deepseek-flash"])
+  expect(resolveModel(loaded, "deepseek/deepseek-flash").connectionName).toBe("example")
+  expect(loaded.warnings.some((w) => w.includes("deepseek is a custom connection"))).toBe(true)
 })
 
 function pair(): [Transport, Transport] {
@@ -145,13 +127,13 @@ test("on the link: the instance names its model as served, the session reports t
 
 // The audit of 568923c.
 
-test("only the old <login>/<model> is rewritten, once, in place: a pinned long form, anchors and comments stay", () => {
+test("an older form is rewritten, once, in place: anchors and comments stay", () => {
   fake = fakeProvider([])
   loggedIn(["deepseek/deepseek-flash", "llama/nomic-embed"])
-  // Pinned on purpose: means what it says, and is left alone.
+  // The login's name in front: one server, so it is the same model, written the old way.
   writeFileSync(join(paths.config, "config.yaml"), "model: example/deepseek/deepseek-flash\n")
-  expect(loadConfig().config.model).toBe("example/deepseek/deepseek-flash")
-  expect(readFileSync(join(paths.config, "config.yaml"), "utf8")).toBe("model: example/deepseek/deepseek-flash\n")
+  expect(loadConfig().config.model).toBe("deepseek/deepseek-flash")
+  expect(readFileSync(join(paths.config, "config.yaml"), "utf8")).toBe("model: deepseek/deepseek-flash\n")
   // The old form behind an anchor, with a comment: the scalar changes, nothing else.
   writeFileSync(join(paths.config, "config.yaml"), "model: &m example/deepseek-flash # my pick\nsmall_model: *m\nembedding: example/nomic-embed\n")
   const l = loadConfig()
@@ -168,25 +150,12 @@ test("only the old <login>/<model> is rewritten, once, in place: a pinned long f
   expect(existsSync(join(paths.state, "migrations.json"))).toBe(true)
 })
 
-test("the provider: as the instance says it; from a protocol-2 instance, before the /; else the id is just an id", () => {
-  fake = fakeProvider([])
-  // Not protocol 2: an id with a / and no provider is `<login>/<id>`.
-  loggedIn(["org/model-a"], "", { noProvider: true })
-  expect(loadConfig().refs.map((r) => r.ref)).toEqual(["example/org/model-a"])
-  // The instance speaks protocol 2: its ids are `<provider>/<model>`.
-  loggedIn(["org/model-a"], "", { noProvider: true, protocols: [1, 2] })
-  expect(loadConfig().refs.map((r) => r.ref)).toEqual(["org/model-a"])
-  // `provider` said: used, whatever the protocol.
-  loggedIn(["org/model-a"])
-  expect(loadConfig().refs.map((r) => r.ref)).toEqual(["org/model-a"])
-})
-
 test("a models: override keyed by the old bare name lands on the served model; no phantom appears", () => {
   fake = fakeProvider([])
   loggedIn(["deepseek/deepseek-flash"], "    models: { deepseek-flash: { context: 1000 }, upcoming: { context: 5 } }\n")
   writeFileSync(join(paths.config, "config.yaml"), "model: example/deepseek-flash\n")
   const l = loadConfig()
-  expect(l.refs.map((r) => r.ref)).toEqual(["deepseek/deepseek-flash", "example/upcoming"])
+  expect(l.refs.map((r) => r.ref)).toEqual(["deepseek/deepseek-flash", "upcoming"])
   const m = resolveModel(l, l.config.model)
   expect(m).toMatchObject({ id: "deepseek/deepseek-flash", spec: { context: 1000 } })
 })

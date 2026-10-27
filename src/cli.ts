@@ -12,7 +12,7 @@ import { renderJson, renderPlain, settleJobs, terminalAsker } from "./headless.t
 import { enterLocal, localFor, LocalError, localRefusal, localTmp, LOCAL_FLAGS } from "./project/local.ts"
 import { findProject, setTrust, trustOf } from "./project/root.ts"
 import { effortsFor } from "./provider/effort.ts"
-import { clientFor, ModelError, resolveModel } from "./provider/index.ts"
+import { clientFor, ModelError, NOT_LOGGED_IN, resolveModel } from "./provider/index.ts"
 import { Store } from "./session/store.ts"
 import { promptTitle } from "./session/title.ts"
 import { VERSION } from "./version.ts"
@@ -23,7 +23,7 @@ Usage:
   lembas [-l] [-m model] [--mode M] [-c | -s id]
                                   the TUI (-c continues the last session here, -s resumes one)
   lembas run [options] "…"        one prompt, headless
-  lembas models [--discover]      list configured models
+  lembas models                   list the server's models
   lembas sessions                 list recent sessions
   lembas sessions delete <id>…    delete sessions, here and in the web UI
   lembas sessions prune [--dry-run]
@@ -110,7 +110,7 @@ async function loginCommand(cmd: "login" | "logout", args: string[]) {
       if (!name) fail(Object.keys(known).length ? `which one? lembas logout <${Object.keys(known).join("|")}>` : "not logged in to any instance", 2)
       const r = await logout(name)
       console.log(`Signed out of ${name}${r.revoked ? "" : " here (the instance could not be told — revoke it under User → Security → Devices there)"}; its connection is removed.`)
-      if (r.modelLeft) console.log(`config.yaml still starts on ${r.modelLeft}: choose another with lembas config set model <connection/model>.`)
+      if (r.modelLeft) console.log(`config.yaml still starts on ${r.modelLeft}: choose another with lembas config set model <id>.`)
       return
     }
     let address = positionals[0] ?? ""
@@ -305,17 +305,11 @@ async function main() {
 
   if (cmd === "models") {
     const loaded = loadConfig()
-    const discover = argv.includes("--discover")
+    if (!Object.keys(loaded.connections).length && !Object.keys(loaded.broken).length) console.log(NOT_LOGGED_IN)
     for (const [name, c] of Object.entries(loaded.connections)) {
-      console.log(
-        c.webui
-          ? `${name}  (webui, ${c.webui.url}${c.webui.name ? ` — ${c.webui.name}` : ""}; models ${c.webui.fetched_at ? `read ${c.webui.fetched_at.slice(0, 16).replace("T", " ")}` : "not read yet"})`
-          : `${name}  (${c.dialect}, ${c.base_url})`,
-      )
+      console.log(`${name}  (${c.webui?.url ?? c.base_url}${c.webui?.name ? ` — ${c.webui.name}` : ""}; models ${c.webui?.fetched_at ? `read ${c.webui.fetched_at.slice(0, 16).replace("T", " ")}` : "not read yet"})`)
       for (const [id, spec] of Object.entries(c.models)) {
-        // Its ref: an instance's model by provider, anything else connection/model.
-        const ref = loaded.refs.find((r) => r.connection === name && r.id === id)?.ref ?? `${name}/${id}`
-        const m = resolveModel(loaded, ref)
+        const m = resolveModel(loaded, id)
         const bits = [
           spec.context ? `ctx ${spec.context}` : "",
           spec.max_output ? `out ${spec.max_output}` : "",
@@ -323,15 +317,7 @@ async function main() {
           spec.tools === false ? "no-tools" : "",
           spec.effort || spec.efforts ? `effort ${spec.effort ?? "off"} of ${effortsFor(m).join("/")}` : "",
         ].filter(Boolean)
-        console.log(`  ${ref}${bits.length ? "  — " + bits.join(", ") : ""}`)
-      }
-      if (discover) {
-        try {
-          const found = await clientFor(resolveModel(loaded, `${name}/${Object.keys(c.models)[0] ?? "?"}`)).listModels()
-          for (const d of found) if (!c.models[d.id]) console.log(`  ${name}/${d.id}  (discovered${d.context ? `, ctx ${d.context}` : ""})`)
-        } catch (e) {
-          console.log(`  (discovery failed: ${(e as Error).message})`)
-        }
+        console.log(`  ${m.ref}${bits.length ? "  — " + bits.join(", ") : ""}`)
       }
     }
     for (const [name, why] of Object.entries(loaded.broken)) console.log(`${name}  ✗ ${why}`)

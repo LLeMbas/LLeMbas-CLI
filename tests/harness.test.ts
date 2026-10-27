@@ -190,7 +190,7 @@ test("every {{variable}} in a description is declared, and none reaches a model"
     expect(used.sort()).toEqual(Object.keys(s.variables ?? {}).sort())
   }
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    dialect: openai-chat\n    base_url: http://127.0.0.1:9/v1\n    models: { m: {} }\n", { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), "connections:\n  f:\n    type: webui\n    url: http://127.0.0.1:9/v1\n    models: { f/m: {} }\n", { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\nlimits: { bash_timeout: 90 }\n")
   const app = createApp({ cwd: mkdtempSync(join(tmpdir(), "ph-vars-")), store: false, snapshots: false, asker: { ask: async () => ({ kind: "once" }) } })
   for (const t of app.engine.o.tools) {

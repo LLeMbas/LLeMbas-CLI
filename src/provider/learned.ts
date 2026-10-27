@@ -6,14 +6,12 @@ import { paths } from "../config/paths.ts"
 // What endpoints have taught us, kept across runs in ~/.local/state/lembas/learned.json.
 // Only ever narrows behaviour; deleting the file is always safe.
 interface Learned {
-  /** `connection/model` → the efforts it actually accepts. */
+  /** A model ref → the efforts it actually accepts. */
   efforts: Record<string, Effort[]>
   /** base URLs that reject `stream_options`. */
   noStreamOptions: string[]
   /** base URLs that reject `return_progress`. */
   noProgress: string[]
-  /** `connection/model` → context window found by discovery (config always wins). */
-  contexts: Record<string, number>
 }
 
 let cache: Learned | undefined
@@ -25,9 +23,11 @@ function file() {
 export function learned(): Learned {
   if (cache) return cache
   try {
-    cache = { efforts: {}, noStreamOptions: [], noProgress: [], contexts: {}, ...JSON.parse(readFileSync(file(), "utf8")) }
+    // An older file's `contexts` (what discovery found, before 2.0 took the server's word) is dropped.
+    const { contexts: _, ...kept } = JSON.parse(readFileSync(file(), "utf8")) as Record<string, unknown>
+    cache = { efforts: {}, noStreamOptions: [], noProgress: [], ...kept } as Learned
   } catch {
-    cache = { efforts: {}, noStreamOptions: [], noProgress: [], contexts: {} }
+    cache = { efforts: {}, noStreamOptions: [], noProgress: [] }
   }
   return cache!
 }
@@ -43,11 +43,6 @@ function save() {
 
 export function learnEfforts(ref: string, efforts: Effort[]) {
   learned().efforts[ref] = efforts
-  save()
-}
-
-export function learnContext(ref: string, n: number) {
-  learned().contexts[ref] = n
   save()
 }
 

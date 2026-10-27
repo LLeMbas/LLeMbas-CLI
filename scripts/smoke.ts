@@ -26,11 +26,11 @@ const v = run(["--version"])
 check("--version", v.code === 0 && /^\d+\.\d+\.\d+/.test(v.out), v.err)
 
 // 2. a headless run against a fake endpoint, with the session store on (FTS5 inside the binary)
-const fake = fakeProvider([{ chunks: [delta({ content: "smoke ok" }), usage(5, 2)] }])
+const fake = fakeProvider([{ chunks: [delta({ content: "smoke ok" }), usage(5, 2)] }], { served: [{ id: "fake/m" }] })
 mkdirSync(join(home, ".config/lembas"), { recursive: true })
 writeFileSync(
   join(home, ".config/lembas/connections.yaml"),
-  `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${fake.url}\n    models:\n      m: {}\n`,
+  `connections:\n  fake:\n    type: webui\n    url: ${fake.url}\n    api_key: smoke\n    models:\n      fake/m: {}\n`,
   { mode: 0o600 },
 )
 writeFileSync(join(home, ".config/lembas/config.yaml"), "model: fake/m\nupdate: { auto: off }\n")
@@ -46,10 +46,10 @@ check("sessions → recorded (sqlite + FTS5 in the binary)", s.code === 0 && s.o
 // 2b. serve --stdio: the ACP agent inside the binary answers initialize, opens a session and
 // streams a reply — the code the LLeMbas link runs too.
 {
-  const f = fakeProvider([{ chunks: [delta({ content: "acp ok" })] }])
+  const f = fakeProvider([{ chunks: [delta({ content: "acp ok" })] }], { served: [{ id: "fake/m" }] })
   writeFileSync(
     join(home, ".config/lembas/connections.yaml"),
-    `connections:\n  fake:\n    dialect: openai-chat\n    base_url: ${f.url}\n    models:\n      m: {}\n`,
+    `connections:\n  fake:\n    type: webui\n    url: ${f.url}\n    api_key: smoke\n    models:\n      fake/m: {}\n`,
     { mode: 0o600 },
   )
   const p = Bun.spawn([bin, "serve", "--stdio"], { cwd: home, env, stdin: "pipe", stdout: "pipe", stderr: "pipe" })
@@ -181,7 +181,7 @@ for (const [cols, rows] of [
   const d = await drive({ cols: 100, rows: 30, bin, home: h, cwd })
   await d.waitFor("Trust this directory?")
   await d.key("\r")
-  const setup = await d.waitFor("no model to talk to yet")
+  const setup = await d.waitFor("not logged in to a LLeMbas server")
   await Bun.write(join(cfgDir, "connections.yaml"), connections)
   await Bun.write(join(cfgDir, "config.yaml"), "model: fake/coder\nupdate: { auto: off }\n")
   // The screen opens on the sign-in, its address focused: ctrl+r tries again from there.

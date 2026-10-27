@@ -137,7 +137,7 @@ test("logged in, the account's personalization is used instead of the local keys
 test("/settings writes the personalization to the account, not to config.yaml", async () => {
   inst = instance()
   model = fakeProvider([])
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${model.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${model.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\nlibrary: local\n")
   loggedIn(inst)
   await fetchWebui("example", inst.url, "lmb_key", undefined)
@@ -188,7 +188,7 @@ test("the library: the account's by default when the login may read it; an expli
 test("opted out on the web, or a preset the CLI does not know: setting one key here wipes nothing there", async () => {
   inst = instance({ personal: { enabled: false, available: true, personality: "pirate", personality_custom: "Arr.", instructions: "Answer in Slovak." } })
   model = fakeProvider([])
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    dialect: openai-chat\n    base_url: ${model.url}\n    models: { m: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${model.url}\n    models: { f/m: {} }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\nlibrary: local\n")
   loggedIn(inst)
   await fetchWebui("example", inst.url, "lmb_key", undefined)

@@ -221,8 +221,9 @@ if [ "$starter" -eq 1 ] && [ ! -e "$CONFIG/config.yaml" ]; then
 # The full list: https://llembas.eu/docs/. An editor with a YAML language server
 # completes and checks keys as you type (the first line points it at the schema).
 
-# The model to start with, as connection/model from connections.yaml.
-# model: local/qwen3
+# The model to start with, by its id on the LLeMbas server you log in to (lembas models lists
+# them). Unset: the server's default for your account.
+# model: deepseek/deepseek-flash
 
 # manual (asks before changes) | edit (changes files in the project freely) | plan
 mode: manual
@@ -237,27 +238,14 @@ fi
 if [ "$starter" -eq 1 ] && [ ! -e "$CONFIG/connections.yaml" ]; then
   (umask 077 && cat >"$CONFIG/connections.yaml" <<'YAML'
 # yaml-language-server: $schema=schema/connections.schema.json
-# Where the models are. Global only: a project can never point LLeMbas CLI elsewhere.
-# Keys are never written here in plain text: {env:VAR}, {file:~/path}, or key_cmd.
-# Then set `model: <connection>/<model>` in config.yaml, and check with `lembas models`.
+# The LLeMbas server this machine is logged in to. Global only: a project can never point
+# LLeMbas CLI elsewhere. Written by `lembas login <address>`, not by hand; the models come from
+# the server at every start (`lembas models` lists them).
 connections: {}
-#
-# connections:
-#   local:                              # llama.cpp / llama-swap / vLLM / LM Studio — OpenAI-compatible
-#     dialect: openai-chat
-#     base_url: http://127.0.0.1:8080/v1
-#     models:
-#       qwen3: { context: 131072, max_output: 65536 }
-#   anthropic:
-#     dialect: anthropic
-#     base_url: https://api.anthropic.com
-#     api_key: "{env:ANTHROPIC_API_KEY}"
-#     models:
-#       claude-sonnet-5: { context: 200000 }
 YAML
   )
   chmod 600 "$CONFIG/connections.yaml"
-  say "  wrote $CONFIG/connections.yaml (0600) — add a connection there"
+  say "  wrote $CONFIG/connections.yaml (0600) — lembas login <address> fills it in"
 fi
 # The schemas for editors follow the binary, so they are rewritten on every install.
 "$TARGET" config schema >/dev/null && say "  wrote $CONFIG/schema/ (JSON Schemas for editors)"
