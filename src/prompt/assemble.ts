@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { platform, release } from "node:os"
-import { dirname, join, resolve, sep } from "node:path"
+import { dirname, join, relative, resolve, sep } from "node:path"
 import type { Mode } from "../config/schema.ts"
 import { expandHome, paths } from "../config/paths.ts"
 import { render, type Plan } from "../plan/plan.ts"
@@ -135,8 +135,6 @@ export function knowledgeScope(names: string[] | undefined): string {
   return `Knowledge searches here cover only: ${names.join(", ")}. Finding nothing there means nothing is there, not that the library is empty.`
 }
 
-/** Instruction files: the global AGENTS.md, then the nearest project AGENTS.md or CLAUDE.md
- *  walking up to the project root (first match wins, as OpenCode does — ancestors do not stack). */
 /** An `instructions` entry from config.yaml. A project's may only name files inside the project:
  *  a cloned repository must not be able to put ~/.ssh/… into what is sent to the model. */
 export interface ExtraInstruction {
@@ -144,29 +142,58 @@ export interface ExtraInstruction {
   global: boolean
 }
 
-export function instructionFiles(cwd: string, root: string, extra: ExtraInstruction[] = []): { path: string; text: string }[] {
-  const out: { path: string; text: string }[] = []
+/** The names a directory's instruction file may have, in order of preference: one per directory. */
+export const INSTRUCTION_NAMES = ["AGENTS.md", "CLAUDE.md"] as const
+
+/** The stacked instruction chain (harness spec 3.0.0, filesystem.md *Instruction files, stacked*;
+ *  conformance `instructions`): from the boundary down to the start directory, outermost first, each
+ *  directory gives the first of AGENTS.md, CLAUDE.md that `readable` accepts — never both; one that is
+ *  not readable is passed over and the walk goes on below it. A start outside the boundary is read as
+ *  the boundary. Paths only, nothing read: the CLI answers `readable` from the disk, the conformance
+ *  runner from a case's files and grants. */
+export function instructionChain(boundary: string, start: string, readable: (path: string) => boolean): string[] {
+  const top = resolve(boundary)
+  let at = resolve(start)
+  if (at !== top && !at.startsWith(top === sep ? top : top + sep)) at = top
+  const dirs: string[] = []
+  for (let d = at; ; d = dirname(d)) {
+    dirs.unshift(d)
+    if (d === top || dirname(d) === d) break
+  }
+  const out: string[] = []
+  for (const d of dirs) {
+    const hit = INSTRUCTION_NAMES.map((f) => join(d, f)).find(readable)
+    if (hit) out.push(hit)
+  }
+  return out
+}
+
+/** Instruction files: the global AGENTS.md, then the project's chain from its root down to the
+ *  working directory (instructionChain: every directory's AGENTS.md or CLAUDE.md, outermost first —
+ *  before 3.0.0 only the nearest one counted), then the configured `instructions`. `chain` marks the
+ *  chain's files: they are the project's own (agentsBlock), named to the model relative to the root. */
+export function instructionFiles(cwd: string, root: string, extra: ExtraInstruction[] = []): { path: string; text: string; chain?: true }[] {
+  const out: { path: string; text: string; chain?: true }[] = []
   const global = join(paths.config, "AGENTS.md")
   if (existsSync(global)) out.push({ path: global, text: readFileSync(global, "utf8") })
-  let dir = cwd
   let realRoot = root
   try {
     realRoot = realpathSync(root)
   } catch {}
-  for (;;) {
-    const hit = ["AGENTS.md", "CLAUDE.md"].map((f) => join(dir, f)).find((f) => existsSync(f))
-    if (hit) {
-      // Read only when it really is a file in the project: a repository could commit AGENTS.md as
-      // a link to anything readable, and it would go to the model in every trust state.
-      try {
-        const real = realpathSync(hit)
-        if ((real === realRoot || real.startsWith(realRoot + sep)) && statSync(real).isFile()) out.push({ path: hit, text: readFileSync(real, "utf8") })
-      } catch {}
-      break
+  // Read only when it really is a file in the project: a repository could commit AGENTS.md as a
+  // link to anything readable, and it would go to the model in every trust state.
+  const texts = new Map<string, string>()
+  const readable = (path: string) => {
+    try {
+      const real = realpathSync(path)
+      if ((real !== realRoot && !real.startsWith(realRoot + sep)) || !statSync(real).isFile()) return false
+      texts.set(path, readFileSync(real, "utf8"))
+      return true
+    } catch {
+      return false
     }
-    if (dir === root || dirname(dir) === dir) break
-    dir = dirname(dir)
   }
+  for (const path of instructionChain(root, cwd, readable)) out.push({ path, text: texts.get(path)!, chain: true })
   for (const e of extra) {
     const path = resolve(root, expandHome(e.path))
     if (out.some((f) => f.path === path)) continue
@@ -198,7 +225,7 @@ export interface PromptContext {
   /** describeRepo(): branch, changes, recent commits. */
   git?: string
   /** The instruction files (AGENTS.md…) as read at the session's start; read now when absent. */
-  files?: { path: string; text: string }[]
+  files?: { path: string; text: string; chain?: true }[]
   /** Open items on the project's task board. */
   tasks?: string
   /** Set for a subagent: who it is and what it is for; replaces the mode's own instructions.
@@ -283,7 +310,9 @@ export function assembleSystem(ctx: PromptContext): string {
     let text = f.text.trim()
     if (text.length > MAX_INSTRUCTION_CHARS)
       text = text.slice(0, MAX_INSTRUCTION_CHARS) + `\n[…truncated: kept ${MAX_INSTRUCTION_CHARS} of ${f.text.length} characters; read ${f.path} for the rest]`
-    sections.push(`Instructions from ${f.path}:\n<instructions>\n${text}\n</instructions>`)
+    // The chain's files by their path in the project (the spec's "relative to the boundary").
+    const named = f.chain ? relative(ctx.root, f.path) || f.path : f.path
+    sections.push(`Instructions from ${named}:\n<instructions>\n${text}\n</instructions>`)
   }
 
   if (ctx.mcp) sections.push(ctx.mcp)
@@ -334,11 +363,15 @@ const GIT_QUESTION =
 const GIT_QUESTION_NO_REPO = "this folder is not a git repository yet — should it be one, and if so, do you commit on your own once a change is finished and checked, or only when they ask."
 
 /** The project's own AGENTS.md (or CLAUDE.md): make it when missing, settle git when it does not,
- *  and keep it current. The global ~/.config/lembas/AGENTS.md is not the project's. */
-function agentsBlock(ctx: PromptContext, files: { path: string; text: string }[]): string {
-  const own = files.find((f) => f.path !== join(paths.config, "AGENTS.md"))
+ *  and keep it current. The project's are the chain's files (instructionFiles `chain`), stacked from
+ *  its root down: none of them is missing, and git is settled when any of them settles it. The
+ *  global ~/.config/lembas/AGENTS.md and the configured `instructions` are not the project's. */
+function agentsBlock(ctx: PromptContext, files: { path: string; text: string; chain?: true }[]): string {
+  // Files handed in without the mark (an older caller): anything but the global file, as before.
+  const marked = files.some((f) => f.chain)
+  const own = files.filter((f) => (marked ? f.chain : f.path !== join(paths.config, "AGENTS.md")))
   const vars = { root: ctx.root, git_question: ctx.isGit ? GIT_QUESTION : GIT_QUESTION_NO_REPO }
-  if (!own) return fillPrompt(promptText("blocks/agents-missing.md"), vars)
+  if (!own.length) return fillPrompt(promptText("blocks/agents-missing.md"), vars)
   const keep = promptText("blocks/agents-keep.md")
-  return /^#{1,3}\s*git\b/im.test(own.text) ? keep : `${fillPrompt(promptText("blocks/agents-git.md"), vars)}\n\n${keep}`
+  return own.some((f) => /^#{1,3}\s*git\b/im.test(f.text)) ? keep : `${fillPrompt(promptText("blocks/agents-git.md"), vars)}\n\n${keep}`
 }

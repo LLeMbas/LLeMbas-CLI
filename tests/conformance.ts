@@ -18,10 +18,23 @@ import { parseInfo, titleFor } from "../src/prototype/fence.ts"
 import { resolveBase } from "../src/library/store.ts"
 import { NarrowError, narrowParameters, type Narrow } from "../src/harness.ts"
 import { fillPrompt } from "../src/prompt/fill.ts"
+import { instructionChain } from "../src/prompt/assemble.ts"
 import { applyOps, type Op, type Target } from "../src/memory/store.ts"
 import { jobNote, type NoteCase } from "../src/jobs/note.ts"
 
 type Case = Record<string, unknown>
+
+/** Whether a path is at `ro` or above under `grants` (fs_access's rule: the most specific grant on
+ *  the path or above it wins; none where nothing is granted). No grants at all: everything readable. */
+function readableUnder(grants: Record<string, string> | undefined, path: string): boolean {
+  if (!grants) return true
+  let best: string | undefined
+  for (const g of Object.keys(grants)) {
+    const covers = g === "/" || path === g || path.startsWith(g + "/")
+    if (covers && (best === undefined || g.length > best.length)) best = g
+  }
+  return best !== undefined && grants[best] !== "none"
+}
 
 export const AREAS: Record<string, (c: Case) => unknown> = {
   hardline: (c) => hardlineCommand(c.line as string, BUILTIN_HARDLINE)?.id ?? null,
@@ -96,6 +109,12 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
     return { ok: r.ok, entries: r.ok ? r.after : c.entries, message: r.message, usage: r.usage, shown: Boolean(r.entries) }
   },
   jobs: (c) => jobNote(c as unknown as NoteCase),
+  // The instruction chain (filesystem.md): the CLI's own walk, with the case's files and grants as
+  // what it may read.
+  instructions: (c) => {
+    const files = new Set(c.files as string[])
+    return instructionChain(c.boundary as string, c.start as string, (p) => files.has(p) && readableUnder(c.grants as Record<string, string> | undefined, p))
+  },
   library_scope: (c) => resolveBase(c.bases as { id: string; name: string }[], c.base as string | null),
   toolcall_index: (c) => {
     // The deltas as the OpenAI stream carries them: `function.name` and `function.arguments`.
