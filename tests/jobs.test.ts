@@ -164,7 +164,8 @@ describe("in an app", () => {
     const store = new Store(join(dir(), "s.db"))
     const a = app(
       [
-        { chunks: [toolCall(0, "t1", "bash", JSON.stringify({ command: "sleep 0.5; echo late", background: true, description: "later" }))] },
+        // It ends once the session is no longer open (the file below), however slow the turn was.
+        { chunks: [toolCall(0, "t1", "bash", JSON.stringify({ command: "until [ -e go ]; do sleep 0.05; done; echo late", background: true, description: "later" }))] },
         { chunks: [delta({ content: "Running." })] },
         { chunks: [delta({ content: "Back, and it finished." })] },
       ],
@@ -173,6 +174,7 @@ describe("in an app", () => {
     const first = a.engine.sessionId!
     await a.turns.prompt("start it")
     a.newSession()
+    writeFileSync(join(a.project.root, "go"), "")
     const job = await ended(a.registry, first, "job1")
     expect(job.note).toContain("late")
     expect(a.registry.get(first, "job1")!.note).toStartWith(MARKS.command)
