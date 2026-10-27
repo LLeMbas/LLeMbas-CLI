@@ -396,8 +396,12 @@ test("a denial, another service, and another protocol are each said plainly", as
   await expect(login(fake.url, { ...quick, onCode: () => {} })).rejects.toThrow("denied")
   fake.stop()
 
+  // A newer server: the CLI needs updating; a 1.x server (1 and 2): the server does (2.0 speaks 3 alone).
   fake = lembas({ protocol: PROTOCOL + 1 })
-  await expect(login(fake.url, { ...quick, onCode: () => {} })).rejects.toThrow("device protocol")
+  await expect(login(fake.url, { ...quick, onCode: () => {} })).rejects.toThrow("Update LLeMbas CLI")
+  fake.stop()
+  fake = lembas({ protocol: 2 })
+  await expect(login(fake.url, { ...quick, onCode: () => {} })).rejects.toThrow("needs a LLeMbas 2.0 server (protocol 3). Update the server, or use LLeMbas CLI 1.x with it.")
   fake.stop()
 
   const other = Bun.serve({ port: 0, fetch: () => new Response("hello", { status: 404 }) })

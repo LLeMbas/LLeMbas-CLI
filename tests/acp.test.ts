@@ -228,6 +228,37 @@ test("the chat's model and effort: named by the instance, at the start and betwe
   expect(JSON.stringify(fake.requests.at(-1))).not.toContain("reasoning_effort")
 })
 
+test("the chat's model, full stop (spec 3.0.0): `instance` on session/new; a model the device cannot run is -32602, never its own", async () => {
+  fake = fakeProvider([{ chunks: [delta({ content: "one" })] }])
+  mkdirSync(paths.config, { recursive: true })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  example:\n    type: webui\n    url: ${fake.url}\n    models: { bonsai: {}, deepseek-flash: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "config.yaml"), "model: bonsai\n")
+  const root = project()
+  const limits = { roots: [root], maxMode: "auto" as const, approvalTimeoutMs: 50, requireTrust: true }
+  const refusal = async (p: Promise<unknown>) => p.then(() => undefined, (e: any) => ({ code: e.code, message: String(e.message) }))
+  const { c } = await client(limits, undefined, "example")
+  const s: any = await c.request("session/new", { cwd: root, _meta: { lembas_model: "deepseek-flash" } })
+  expect(s._meta.lembas).toMatchObject({ model: "deepseek-flash", instance: true })
+  // Not served to this device: refused, not run on bonsai.
+  const missing = await refusal(c.request("session/new", { cwd: root, _meta: { lembas_model: "gpt-9" } }))
+  expect(missing).toMatchObject({ code: -32602 })
+  expect(missing!.message).toContain("does not serve gpt-9 to this device")
+  // Changing to one it cannot run: refused, and the session keeps its model.
+  expect(await refusal(c.request("_lembas/configure", { sessionId: s.sessionId, model: "gpt-9" }))).toMatchObject({ code: -32602 })
+  expect(await c.request<any>("_lembas/configure", { sessionId: s.sessionId })).toMatchObject({ model: "deepseek-flash" })
+  // A link to an instance this device is not logged in to.
+  const other = await client(limits, undefined, "elsewhere")
+  const notLoggedIn = await refusal(other.c.request("session/new", { cwd: root, _meta: { lembas_model: "bonsai" } }))
+  expect(notLoggedIn).toMatchObject({ code: -32602 })
+  expect(notLoggedIn!.message).toContain("not logged in to elsewhere")
+  // An editor on serve --stdio (no instance): the instance's model cannot be meant.
+  const editor = await client(limits)
+  expect(await refusal(editor.c.request("session/new", { cwd: root, _meta: { lembas_model: "bonsai" } }))).toMatchObject({ code: -32602 })
+  // Without lembas_model, the device's own default — and `instance` says whose it is.
+  const own: any = await editor.c.request("session/new", { cwd: root })
+  expect(own._meta.lembas).toMatchObject({ model: "bonsai", instance: false })
+})
+
 test("the terminal: a real shell through the link, only where remote.terminal says so", async () => {
   fake = fakeProvider([])
   config(fake.url)
@@ -312,9 +343,9 @@ test("the link dials out with the token, says hello, is driven, and stops when r
     port: 0,
     fetch(req, srv) {
       const base = `http://${new URL(req.url).host}`
-      // A discovery saying protocol 1 for older CLIs, protocols [1, 2] for this one.
+      // A LLeMbas 2.0 discovery: protocol 3, alone.
       if (new URL(req.url).pathname === "/.well-known/lembas.json")
-        return Response.json({ service: "lembas", version: "2.2.0", protocol: 1, protocols: [1, 2], harness_spec: "2.1.0", base_url: base, api: { openai: `${base}/v1` }, login: { device: { code: `${base}/c`, token: `${base}/t`, verify: `${base}/d` } } })
+        return Response.json({ service: "lembas", version: "2.0.0", protocol: 3, protocols: [3], harness_spec: "3.0.0", base_url: base, api: { openai: `${base}/v1` }, login: { device: { code: `${base}/c`, token: `${base}/t`, verify: `${base}/d` } } })
       authorization = req.headers.get("authorization") ?? ""
       if (new URL(req.url).pathname === "/api/devices/link" && srv.upgrade(req)) return
       return new Response("no", { status: 404 })
@@ -350,7 +381,7 @@ test("the link dials out with the token, says hello, is driven, and stops when r
   const states: string[] = []
   const end = await runLink({ backoffMs: [10, 20], onStatus: (s) => states.push(s.state) })
   expect(authorization).toBe("Bearer lmb_device")
-  expect(hello.protocol).toBe(2)
+  expect(hello.protocol).toBe(3)
   expect(hello.limits.max_mode).toBe("edit")
   expect(reply).toBe("linked reply")
   expect(end.state).toBe("stopped")
@@ -367,21 +398,21 @@ test("the service unit runs the link as the user, restarted on failure", () => {
   expect(unit).not.toContain("User=")
 })
 
-test("the link says protocol 1 to an instance that lists only 1, and stops on 4400 instead of redialling", async () => {
+test("link protocol 3: a 1.x server is refused before any dial; a 4400 stops the link, saying what to update", async () => {
   const root = project()
   mkdirSync(paths.config, { recursive: true })
   writeFileSync(join(paths.config, "config.yaml"), `remote:\n  enabled: true\n  roots: [${root}]\n`)
   const hellos: number[] = []
   let dials = 0
-  let lists = [1]
-  let everything4400 = false
+  // What discovery says: a 1.x server first, a 2.0 one after.
+  let discovery: Record<string, unknown> = { version: "1.7.3", protocol: 1, protocols: [1, 2] }
   const server = Bun.serve({
     port: 0,
     fetch(req, srv) {
       const u = new URL(req.url)
       const base = `http://${u.host}`
       if (u.pathname === "/.well-known/lembas.json")
-        return Response.json({ service: "lembas", version: "2.1.0", protocol: 1, ...(lists.length > 1 ? { protocols: lists } : {}), harness_spec: "2.0.1", base_url: base, api: { openai: `${base}/v1` }, login: { device: { code: `${base}/c`, token: `${base}/t`, verify: `${base}/d` } } })
+        return Response.json({ service: "lembas", harness_spec: "3.0.0", ...discovery, base_url: base, api: { openai: `${base}/v1` }, login: { device: { code: `${base}/c`, token: `${base}/t`, verify: `${base}/d` } } })
       if (u.pathname === "/api/devices/link" && srv.upgrade(req)) return
       return new Response("no", { status: 404 })
     },
@@ -393,9 +424,7 @@ test("the link says protocol 1 to an instance that lists only 1, and stops on 44
         const m = JSON.parse(String(msg))
         if (m.method !== "_lembas/hello") return
         hellos.push(m.params.protocol)
-        // LLeMbas 2.1.0: a hello saying a protocol it does not speak is closed with 4400.
-        if (m.params.protocol !== 1 || everything4400) ws.close(4400, "protocol")
-        else ws.close(4401, "revoked")
+        ws.close(4400, "protocol")
       },
     },
   })
@@ -403,27 +432,24 @@ test("the link says protocol 1 to an instance that lists only 1, and stops on 44
   writeFileSync(join(paths.config, "lembas.json"), JSON.stringify({ instances: { fake: { base_url: `http://127.0.0.1:${server.port}`, connection: "fake", logged_in_at: "" } } }))
   mkdirSync(join(paths.config, "lembas"), { recursive: true })
   writeFileSync(join(paths.config, "lembas", "fake.key"), "lmb_device\n", { mode: 0o600 })
-  const one = await runLink({ backoffMs: [10, 20] })
-  expect(hellos).toEqual([1])
-  expect(one.detail).toContain("revoked")
-  // The instance updated since: discovery lists 2 now, the next link says 2 (and the index keeps it).
-  lists = [1, 2]
-  const old = (await import("../src/lembas/login.ts")).instances().fake
-  expect(old?.protocols).toEqual([1])
-  // An instance that closes a hello of 2 with 4400 anyway (discovery said more than its link takes):
-  // one dial again at once, saying 1 — here refused for the token, which stops it as usual.
-  const two = await runLink({ backoffMs: [10, 20] })
-  expect(hellos).toEqual([1, 2, 1])
-  expect(two.state).toBe("stopped")
-  expect(two.detail).toContain("revoked")
-  expect(dials).toBe(3)
-  expect((await import("../src/lembas/login.ts")).instances().fake?.protocols).toEqual([1, 2])
-  // A 4400 to protocol 1 as well: stopped, said plainly, not dialled again.
-  everything4400 = true
-  const three = await runLink({ backoffMs: [10, 20] })
-  expect(hellos).toEqual([1, 2, 1, 2, 1])
-  expect(three.detail).toBe("the instance and this CLI speak different link protocols — update one of them")
-  expect(dials).toBe(5)
+  // A 1.x server: stopped at discovery, nothing dialled, the words say to update the server.
+  const old = await runLink({ backoffMs: [10, 20] })
+  expect(dials).toBe(0)
+  expect(old.state).toBe("stopped")
+  expect(old.detail).toContain("runs LLeMbas 1.7.3, which speaks link protocol 1 and 2")
+  expect(old.detail).toContain("needs a LLeMbas 2.0 server (protocol 3). Update the server, or use LLeMbas CLI 1.x with it.")
+  // Discovery lists 3, but the link refuses the hello anyway: one dial, stopped, said plainly.
+  discovery = { version: "2.0.0", protocol: 3, protocols: [3] }
+  const refused = await runLink({ backoffMs: [10, 20] })
+  expect(hellos).toEqual([3])
+  expect(dials).toBe(1)
+  expect(refused.detail).toContain("the instance does not speak link protocol 3")
+  expect(refused.detail).toContain("update the server, or use LLeMbas CLI 1.x with it")
+  // A newer server than this CLI: the CLI is what needs updating.
+  discovery = { version: "3.0.0", protocol: 4, protocols: [4] }
+  const newer = await runLink({ backoffMs: [10, 20] })
+  expect(dials).toBe(1)
+  expect(newer.detail).toContain("Update LLeMbas CLI (lembas update).")
 })
 
 test("a link that cannot dial says why: a CA file gone since the login, and what discovery met", async () => {

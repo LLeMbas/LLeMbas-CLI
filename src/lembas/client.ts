@@ -9,14 +9,26 @@ import { existsSync, readFileSync } from "node:fs"
 import { hostname } from "node:os"
 import { VERSION } from "../version.ts"
 
-/** The device protocol this build speaks (LLeMbas `api/devices.py:PROTOCOL`): 2, the
+/** The device protocol this build speaks (LLeMbas `services/device_link.py:PROTOCOL`): 3, the
  *  same number as the link's `_lembas/*` extension (acp/agent.ts LEMBAS_PROTOCOL). */
-export const PROTOCOL = 2
-/** The ones it can log in to: protocol 2 only adds what both sides name in their capabilities, so an
- *  instance still at 1 works with what it has. */
-export const PROTOCOLS = [1, 2]
+export const PROTOCOL = 3
+/** The ones it can log in to and link with: 3 alone. LLeMbas CLI 2.0 needs a LLeMbas 2.0 server
+ *  (its tree, its memory, its models only); a 1.x server speaks 1 and 2, and is refused with a word
+ *  on what to update (harness/acp.md *Versions*). */
+export const PROTOCOLS = [3]
+
+/** What this CLI says to a server that does not speak its protocol — at login, and at a dial: a
+ *  1.x server (1 and 2) needs updating, a newer one needs a newer CLI. */
+export function protocolMismatch(base: string, d: Pick<Discovery, "protocol" | "protocols" | "version">): string {
+  const theirs = Array.isArray(d.protocols) && d.protocols.length ? d.protocols : [d.protocol]
+  const said = `${base} runs LLeMbas ${d.version ?? "(an unknown version)"}, which speaks link protocol ${theirs.join(" and ")}`
+  if (theirs.every((p) => p > PROTOCOL)) return `${said}; this LLeMbas CLI ${VERSION} speaks ${PROTOCOL}. Update LLeMbas CLI (lembas update).`
+  return `${said}; this LLeMbas CLI ${VERSION} needs a LLeMbas 2.0 server (protocol ${PROTOCOL}). Update the server, or use LLeMbas CLI 1.x with it.`
+}
 
 export class LembasError extends Error {}
+/** The server and this CLI speak no link protocol in common: no login, and no dial gets further. */
+export class ProtocolError extends LembasError {}
 
 export interface Discovery {
   service: "lembas"
@@ -116,10 +128,10 @@ export function spoken(d: Pick<Discovery, "protocol" | "protocols">): number[] {
   return PROTOCOLS.filter((p) => theirs.includes(p))
 }
 
-/** The `_lembas` protocol to say in the link's hello: 2 where the instance lists it, else
- *  1 — an instance that speaks only 1 closes a link that says 2 (4400). Features stay gated by capabilities. */
-export function linkProtocol(protocols: number[] | undefined): number {
-  return protocols?.includes(2) ? 2 : 1
+/** The `_lembas` protocol to say in the link's hello: 3, the only one this build speaks. An
+ *  instance that does not take it closes the link with 4400. Features stay gated by capabilities. */
+export function linkProtocol(_protocols?: number[]): number {
+  return PROTOCOL
 }
 
 export async function discover(address: string, tls?: Tls): Promise<{ discovery: Discovery; tls?: Tls }> {
@@ -144,7 +156,7 @@ export async function discover(address: string, tls?: Tls): Promise<{ discovery:
     throw new LembasError(`${base} answered /.well-known/lembas.json with something that is not JSON`)
   }
   if (body?.service !== "lembas") throw new LembasError(`${base} is not a LLeMbas instance`)
-  if (!spoken(body).length) throw new LembasError(`${base} speaks device protocol ${body.protocol}; this LLeMbas CLI speaks ${PROTOCOLS.join(" and ")}. Update the older of the two.`)
+  if (!spoken(body).length) throw new ProtocolError(protocolMismatch(base, body))
   if (!body.login?.device?.code) throw new LembasError(`${base} offers no device login`)
   return { discovery: body, tls: used }
 }

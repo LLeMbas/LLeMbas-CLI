@@ -164,7 +164,7 @@ test("the service links with remote work off, says no roots and refuses everythi
       const u = new URL(req.url)
       const base = `http://${u.host}`
       if (u.pathname === "/.well-known/lembas.json")
-        return Response.json({ service: "lembas", version: "2.2.0", protocol: 1, protocols: [1, 2], harness_spec: "2.1.0", base_url: base, api: { openai: `${base}/v1` }, login: { device: { code: `${base}/c`, token: `${base}/t`, verify: `${base}/d` } } })
+        return Response.json({ service: "lembas", version: "2.0.0", protocol: 3, protocols: [3], harness_spec: "3.0.0", base_url: base, api: { openai: `${base}/v1` }, login: { device: { code: `${base}/c`, token: `${base}/t`, verify: `${base}/d` } } })
       if (u.pathname === "/api/devices/link" && srv.upgrade(req)) return
       return new Response("no", { status: 404 })
     },

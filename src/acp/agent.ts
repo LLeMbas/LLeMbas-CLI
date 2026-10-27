@@ -44,10 +44,10 @@ import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
 import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs } from "./jobs.ts"
 
 export const ACP_VERSION = 1
-/** The `_lembas/*` extension's version (LLeMbas `api/devices.py:PROTOCOL`). 2: every
- *  feature beyond 1 is also named in `capabilities`, so a protocol 1 peer keeps working with
- *  what it knows (harness/acp.md). */
-export const LEMBAS_PROTOCOL = 2
+/** The link's version (LLeMbas `services/device_link.py:PROTOCOL`, harness/acp.md *Versions*). 3:
+ *  LLeMbas CLI 2.0 and LLeMbas 2.0, which speak it alone — a 1.x peer (1 and 2) and a 2.0 one refuse
+ *  each other, each saying what to update. Within 3, every feature is still named in `capabilities`. */
+export const LEMBAS_PROTOCOL = 3
 
 export interface Limits {
   /** Directories a session may be opened in (and anything under them). Empty: none at all. */
@@ -580,10 +580,25 @@ export class AcpAgent {
     // No model-made title: the client names its own conversations (LLeMbas has its chat's), and a
     // title request would be a second call on the account's credits for nothing.
     // The chat's model and effort: `lembas_model` is the instance's own name for it, the
-    // one its /v1 serves; `model` a ref of this machine's, for an editor that knows them.
-    const model = this.refFor(p?._meta?.lembas_model) ?? (typeof p?._meta?.model === "string" ? p._meta.model : undefined)
+    // one its /v1 serves; `model` a ref of this machine's, for an editor that knows them. A session
+    // the client opens on its model runs on that model and no other (spec 3.0.0): one this device
+    // cannot speak to is refused, never answered on a model of the device's own.
+    const served = p?._meta?.lembas_model
+    const model = served !== undefined ? this.chatModel(served) : typeof p?._meta?.model === "string" ? p._meta.model : undefined
     const effort = effortOf(p?._meta?.effort)
-    session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}) })
+    try {
+      session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}) })
+    } catch (e) {
+      throw new RpcError(INVALID_PARAMS, (e as Error).message)
+    }
+    if (served !== undefined) {
+      const why = this.notServed(session.app, model!)
+      if (why) {
+        session.app.discardIfEmpty()
+        void session.app.close()
+        throw new RpcError(INVALID_PARAMS, why)
+      }
+    }
     // The store's id: the same session the terminals here list and can open.
     const id = session.app.engine.sessionId ?? crypto.randomUUID()
     session.id = id
@@ -600,8 +615,31 @@ export class AcpAgent {
     return {
       sessionId: id,
       modes: { currentModeId: session.app.engine.mode, availableModes: this.modes().map((m) => ({ id: m, name: m })) },
-      _meta: { lembas: { model: session.app.engine.model.ref, mode: session.app.engine.mode, effort: session.app.engine.effort ?? "off" } },
+      // `instance` (spec 3.0.0): the model is one this link's instance serves, as the model event says.
+      _meta: { lembas: { model: session.app.engine.model.ref, mode: session.app.engine.mode, effort: session.app.engine.effort ?? "off", instance: this.isInstance(session.app.engine.model.connectionName) } },
     }
+  }
+
+  /** The ref of the model the instance names (`lembas_model`), or the reason it cannot be run here:
+   *  thrown as -32602 (harness/acp.md, *The chat's model, full stop*). */
+  private chatModel(served: unknown): string {
+    if (typeof served !== "string" || !served.trim()) throw new RpcError(INVALID_PARAMS, "lembas_model must be the instance's name of a model")
+    const ref = this.refFor(served)
+    if (!ref) throw new RpcError(INVALID_PARAMS, `${served.trim()} is the instance's model, and this device is not linked to an instance: it cannot run it`)
+    return ref
+  }
+
+  /** Why the instance's model cannot run in `app`, or undefined when it can: the device is not
+   *  logged in to this link's instance, or that instance does not serve the model to it. */
+  private notServed(app: App, ref: string): string | undefined {
+    const name = this.instanceConnection!
+    const conn = app.loaded.connections[name]
+    const served = ref.slice(name.length + 1)
+    if (!conn) return `this device is not logged in to ${name}, the instance this link is to, so it cannot run its model ${served} (lembas login there)`
+    const m = app.engine.model
+    if (m.connectionName !== name) return `${served} is not a model of ${name} on this device`
+    if (Object.keys(conn.models).length && !conn.models[m.id]) return `${conn.webui?.name ?? name} does not serve ${served} to this device (it serves: ${Object.keys(conn.models).slice(0, 12).join(", ")})`
+    return undefined
   }
 
   /** Whether a model spoken to through `connection` is this link's instance's. */
@@ -624,8 +662,14 @@ export class AcpAgent {
     const t = this.terminalFor(p)
     if (t) return t.client.request("hub/configure", { sessionId: t.sessionId, model: this.refFor(p?.model), effort: p?.effort }, 30_000)
     const s = this.get(p)
-    const ref = this.refFor(p?.model)
-    if (ref && s.app.canonicalRef(ref) !== s.app.engine.model.ref) s.app.switchModel(ref)
+    const ref = p?.model !== undefined ? this.chatModel(p.model) : undefined
+    if (ref && s.app.canonicalRef(ref) !== s.app.engine.model.ref) {
+      const conn = s.app.loaded.connections[this.instanceConnection!]
+      const id = s.app.canonicalRef(ref)
+      if (!conn) throw new RpcError(INVALID_PARAMS, `this device is not logged in to ${this.instanceConnection}, so it cannot run ${p.model}`)
+      if (Object.keys(conn.models).length && !conn.models[id]) throw new RpcError(INVALID_PARAMS, `${conn.webui?.name ?? this.instanceConnection} does not serve ${p.model} to this device`)
+      s.app.switchModel(ref)
+    }
     const effort = effortOf(p?.effort)
     if (effort !== undefined) s.app.engine.effort = effort === "off" ? null : effort
     return { model: s.app.engine.model.ref, effort: s.app.engine.effort ?? "off" }

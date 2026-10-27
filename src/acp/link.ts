@@ -15,7 +15,7 @@ import { refusedLocally } from "../project/local.ts"
 import type { Mode } from "../config/schema.ts"
 import { HARNESS_VERSION } from "../harness.ts"
 import { instances, keyFile, rememberProtocols, type Instance } from "../lembas/login.ts"
-import { discover, linkProtocol, spoken } from "../lembas/client.ts"
+import { discover, linkProtocol, ProtocolError, spoken } from "../lembas/client.ts"
 import { VERSION } from "../version.ts"
 import { AcpAgent, type Limits } from "./agent.ts"
 import type { Hub } from "./hub.ts"
@@ -150,9 +150,6 @@ export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
   const caPath = instance.ca ? resolvePath(expandHome(instance.ca)) : undefined
   const caGone = caPath && !existsSync(caPath) ? caPath : undefined
   const loginCa = caPath && !caGone ? readFileSync(caPath, "utf8") : undefined
-  /** A 4400 to a hello that said 2: the protocols known were stale (or discovery said more than the
-   *  link takes) — the next dial, at once, says 1; only a 4400 to that stops the link. */
-  let downgraded = false
 
   while (!o.signal?.aborted) {
     attempts++
@@ -165,6 +162,7 @@ export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
     // private CA). Why discovery failed is why the dial will, said in the status.
     let ca = loginCa
     let why: string | undefined
+    let older: string | undefined
     try {
       const found = await discover(instance.base_url, loginCa ? { ca: caPath! } : undefined)
       protocols = spoken(found.discovery)
@@ -172,9 +170,15 @@ export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
       if (found.tls?.ca && found.tls.ca !== caPath) ca = readFileSync(found.tls.ca, "utf8")
     } catch (e) {
       why = (e as Error).message
+      // A server that answers and speaks another protocol: no dial would get further.
+      if (e instanceof ProtocolError) older = why
+    }
+    if (older) {
+      clearInterval(freshen)
+      return status("stopped", older)
     }
     const unreachable = [caGone && `the CA file given at login, ${caGone}, is not there`, why ?? "could not reach the instance"].filter(Boolean).join("; ")
-    const protocol = downgraded ? 1 : linkProtocol(protocols)
+    const protocol = linkProtocol(protocols)
     const outcome = await new Promise<{ refused?: string; dropped?: string; final?: boolean; changed?: boolean }>((resolve) => {
       let opened = false
       let changed = false
@@ -216,7 +220,7 @@ export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
         // 4401/4403: the instance's word that this token is done; 1008 policy, likewise.
         if ([4401, 4403, 1008].includes(e.code)) return resolve({ refused: e.reason || "the instance refused this device's token" })
         // 4400: the hello's protocol is not one it speaks. Dialling again would say the same.
-        if (e.code === 4400) return resolve({ refused: "the instance and this CLI speak different link protocols — update one of them", final: true })
+        if (e.code === 4400) return resolve({ refused: `the instance does not speak link protocol ${protocol}, which this LLeMbas CLI ${VERSION} speaks: it needs a LLeMbas 2.0 server — update the server, or use LLeMbas CLI 1.x with it${e.reason ? ` (${e.reason})` : ""}`, final: true })
         resolve({ dropped: opened ? `the link dropped (${e.code}${e.reason ? `: ${e.reason}` : ""})` : unreachable })
       })
       ws.addEventListener("error", () => {})
@@ -225,11 +229,6 @@ export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
     if (outcome.changed) {
       status("waiting", "the remote settings changed; linking again")
       wait = first
-      continue
-    }
-    if (outcome.final && protocol === 2 && !downgraded) {
-      downgraded = true
-      status("waiting", "the instance does not take link protocol 2; trying again with 1")
       continue
     }
     if (outcome.refused) {

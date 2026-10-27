@@ -82,12 +82,12 @@ async function client(limits?: Limits, o: { lembas?: boolean; protocol?: number;
 
 // §0
 
-test("initialize: protocol 2, the new capabilities, images taken, the login's connection named", async () => {
+test("initialize: protocol 3, the capabilities, images taken, the login's connection named", async () => {
   fake = fakeProvider([])
   config(fake.url)
   const root = project()
   const { init } = await client(limitsFor(root, { terminal: true }), { instance: "example" })
-  expect(init._meta.lembas.protocol).toBe(2)
+  expect(init._meta.lembas.protocol).toBe(3)
   for (const cap of ["files", "commands", "attachments", "ask", "plan", "model", "turns", "terminal", "shell"]) expect(init._meta.lembas.capabilities).toContain(cap)
   expect(init.agentCapabilities.promptCapabilities).toEqual({ image: true, audio: false, embeddedContext: true })
   expect(init._meta.lembas.connection).toBe("example")
