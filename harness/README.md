@@ -7,7 +7,7 @@ metadata. This directory writes that design down as data. Each project implement
 language; neither ever runs the other. LLeMbas CLI embeds these files at build time; LLeMbas vendors a pinned, hash-checked copy.
 
 The concept-by-concept map of the two implementations, and where they still differ, is the wiki
-page [Harness-parity](https://git.houmeres.sk/LLeMbas/LLeMbas-CLI/wiki/Harness-parity).
+page *Harness-parity* in LLeMbas CLI's wiki.
 
 ## What is here
 
