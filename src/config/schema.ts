@@ -297,7 +297,7 @@ export const Config = z.strictObject({
   settings_tool: z.enum(["ask", "allow", "off"]).optional().describe("Global config only. The agent's settings tool: ask (default) — each change is approved like any tool call; allow — changes go through without asking (a less strict mode still asks); off — no settings tool."),
   update: Update.optional().describe("Global config only. Updating LLeMbas CLI itself."),
   prototypes: z.boolean().optional().describe("Global config only. Offer the model prototypes: a complete HTML page in a `prototype-chat` or `prototype-page` fence, saved as a file under the state directory (prototypes/<session>/) and listed by /prototype; the LLeMbas web UI renders the same fences live. Default false."),
-  library: z.enum(["local", "lembas"]).optional().describe("Global config only. local (default): memory, notes, skills and knowledge on this machine. lembas: the account's on the LLeMbas instance you are logged in to, through its /mcp — the same tools its chats have (needs a login with the library scope)."),
+  library: z.enum(["local", "lembas"]).optional().describe("Global config only. Where memory lives. lembas (the default when the login may reach it): the account's memory records on the LLeMbas server, through its /mcp — the same records its chats have. local: this machine's memory files. Notes, knowledge bases and skills are this machine's either way."),
   remote: z
     .strictObject({
       enabled: z.boolean().optional().describe("Accept work from a LLeMbas instance this machine is logged in to (lembas service). Default false."),

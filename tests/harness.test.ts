@@ -220,7 +220,7 @@ test("every {{variable}} in a description is declared, and none reaches a model"
       else expect(system).not.toContain("The current plan")
     }
   }
-  app.setContext({ instructions: "Be brief.", prototypes: { offered: true, sources: "" }, library: { bases: [{ id: "k", name: "K" }] } }, "example")
+  app.setContext({ instructions: "Be brief.", prototypes: { offered: true, sources: "" } }, "example")
   const withContext = app.engine.o.system("manual", app.engine.model, plan)
   expect(withContext).not.toContain("{{")
   expect(withContext).toContain("## Instructions from example\n\nBe brief.")

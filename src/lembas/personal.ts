@@ -30,10 +30,11 @@ export function soleInstance(): { instance: Instance; token: string } | undefine
   }
 }
 
-/** §10: the library a config with no `library:` uses — the account's, when the login may read it. */
+/** Where memory lives when config.yaml has no `library:` — the server's, when the login's token
+ *  may reach it (scope `memory`, or the older `library`; harness/acp.md *Memory*). */
 export function defaultLibrary(): "lembas" | undefined {
-  const one = soleInstance()
-  return one?.instance.scope?.split(/\s+/).includes("library") ? "lembas" : undefined
+  const scopes = soleInstance()?.instance.scope?.split(/\s+/) ?? []
+  return scopes.includes("memory") || scopes.includes("library") ? "lembas" : undefined
 }
 
 /** The instance's personalization as last read, when it is the one that counts. */

@@ -332,7 +332,7 @@ test("show (spec 3.0.0): offered only to a client that shows files; the file goe
   expect(fake.requests[2].tools.map((t: any) => t.function.name)).not.toContain("show")
 })
 
-test("the context reaches the prompt: the instance's instructions, its personalization, the library's scope, prototypes", async () => {
+test("the context reaches the prompt: the instance's instructions, its personalization, prototypes; not its knowledge bases", async () => {
   fake = fakeProvider([{ chunks: [delta({ content: "one" })] }, { chunks: [delta({ content: "two" })] }, { chunks: [delta({ content: "three" })] }])
   config(fake.url, "personality: concise\ninstructions: local words\n")
   const root = project()
@@ -356,8 +356,9 @@ test("the context reaches the prompt: the instance's instructions, its personali
   expect(system()).toContain("prototype-chat")
   expect(system()).toContain("The page may load nothing from the network.")
   expect(system()).toContain("It is saved as a file you can open, and the LLeMbas web UI renders it live.")
-  // The library's scope is named only where its tools are offered (none here: no local base, no
-  // instance library) — nothing unfilled reaches the model either way.
+  // The instance's knowledge bases are not the device's (spec 3.0.0): an older client's `library`
+  // names nothing to the model — nothing unfilled reaches it either.
+  expect(system()).not.toContain("Manuals")
   expect(system()).not.toContain("{{")
   // A later prompt replaces the context: personalization back to the device's, nothing from the instance.
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "again" }], _meta: { lembas: { turnId: "T2", system_prompt: "", personalization: null, prototypes: { offered: false, sources: "" } } } })

@@ -70,8 +70,8 @@ export interface ToolContext {
   /** Open a file in the user's viewer (the show tool): set only where a client over the link said
    *  it can show files (harness/acp.md, capability `show`). Absent: no display, and show is not offered. */
   show?: (req: import("./show.ts").ShowRequest, callId?: string) => Promise<import("./show.ts").ShowReply>
-  /** The scope sent on every call to the instance's library (`_meta.lembas.scope`, harness/acp.md):
-   *  the session's id, where the client has said what the session may search. */
+  /** The scope sent on every call to the server's memory (`_meta.lembas.scope`, harness/acp.md
+   *  *Memory*): the id of a session the client opened; none for a session of this device's own. */
   libraryScope?: string
   /** The library: notes, and the knowledge bases this project searches (all, when
    *  `bases` is undefined); `project` is the scope of this project's notes. */

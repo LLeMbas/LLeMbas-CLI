@@ -74,8 +74,9 @@ export interface McpPromptCommand {
 
 const sanitize = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, "_")
 
-/** The LLeMbas library server (`library: lembas`): its tools keep their own names, as in a
- *  LLeMbas chat, and stand in for this machine's memory, notes, skills and knowledge tools. */
+/** The LLeMbas server's /mcp, for its memory (`library: lembas`, harness/acp.md *Memory*): its
+ *  `memory` tool keeps its name and stands in for this machine's; notes, knowledge and skills stay
+ *  this machine's (spec 3.0.0). */
 export const LIBRARY_SERVER = "lembas-library"
 /** mcp__<server>__<tool>, at most 64 characters (the providers' limit); longer ones keep a hash. */
 export function toolName(server: string, tool: string): string {
@@ -361,6 +362,14 @@ export class McpManager {
     return s.client
   }
 
+  /** A resource's text, read from a server directly (not offered to the model): the LLeMbas
+   *  server's `lembas://memory` for the prompt. `scope` rides as on a tool call. */
+  async readResource(server: string, uri: string, scope?: string): Promise<string> {
+    const c = await this.clientOf(server)
+    const r = await c.readResource({ uri, ...(scope ? { _meta: { lembas: { scope } } } : {}) })
+    return r.contents.map((x) => ("text" in x && typeof x.text === "string" ? x.text : "")).join("\n").trim()
+  }
+
   /** Every connected server's tools as LLeMbas CLI tools, and list/read tools for resources. */
   tools(): Tool[] {
     const out: Tool[] = []
@@ -386,13 +395,13 @@ export class McpManager {
           description: library ? (t.description ?? t.name).trim() : `${(t.description ?? `${t.name} from the MCP server ${s.name}`).trim()}\n(MCP server: ${s.name})`,
           schema: LOOSE,
           jsonSchema: objectSchema(t.inputSchema),
-          // The library's writes are the account's memory and notes, not this machine: asked like
-          // the local memory tool (interact), never run unasked as a command would be denied.
+          // The library's writes are the account's memory, not this machine: asked like the local
+          // memory tool (interact), never run unasked as a command would be denied.
           permission: () => ({ permission: name, class: readOnly ? "read" : library ? "interact" : "execute", patterns: ["*"] }),
           run: async (args, ctx) => {
             const c = await this.clientOf(s.name)
             try {
-              // The instance's library answers within the chat's scope (harness/acp.md, Scope).
+              // The server's memory answers within the chat's scope (harness/acp.md, Scope).
               const scope = library ? ctx.libraryScope : undefined
               const r = await c.callTool({ name: t.name, arguments: args as Record<string, unknown>, ...(scope ? { _meta: { lembas: { scope } } } : {}) }, undefined, {
                 signal: ctx.signal,

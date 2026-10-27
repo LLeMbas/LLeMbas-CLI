@@ -83,9 +83,6 @@ export interface SessionContext {
   instructions?: string
   /** The account's personalization, in place of this device's; null: the device's own. */
   personalization?: { personality: string; personality_custom: string; instructions: string } | null
-  /** The knowledge bases this session may search (named to the model, and the scope sent on
-   *  every library call); an empty list: the account's whole library. */
-  library?: { bases: { id: string; name: string }[] }
   /** Whether the model may write a prototype, and what a page may load. */
   prototypes?: { offered: boolean; sources: string }
 }
@@ -151,27 +148,36 @@ export interface App {
   context: SessionContext
   /** Replace it (`{}`: none), naming the instance it came from for the prompt's heading. */
   setContext(ctx: SessionContext, from?: string): void
+  /** The chat a session the client opened belongs to (its id): sent with every call to the server's
+   *  memory, which answers in that chat's data group (harness/acp.md *Memory*); undefined for a
+   *  session of this device's own. The memory for the prompt is read again in it. */
+  setScope(scope: string | undefined): void
 }
 
-/** This machine's library tools, which `library: lembas` replaces with the instance's. */
-const LOCAL_LIBRARY = new Set(["memory", "notes_search", "note_view", "note_manage", "knowledge_search", "knowledge_get", "skills_list", "skill_view", "skill_manage"])
+/** What the LLeMbas server's /mcp stands in for (harness spec 3.0.0, acp.md *Memory*): memory
+ *  alone. Notes, knowledge bases and skills stay this machine's. */
+const SERVER_MEMORY = new Set(["memory"])
+/** The resource holding the server's memory entries as the prompt's memory block shows them. */
+export const MEMORY_RESOURCE = "lembas://memory"
 
 function lembasLibraryServer(warnings: string[]): (McpServer & { source: "global" }) | undefined {
   const all = Object.values(lembasInstances())
-  const keyMissing = all.length === 1 && !existsSync(lembasKeyFile(all[0]!.connection))
-  if (all.length !== 1 || keyMissing) {
-    if (keyMissing) warnings.push("library: lembas, but the login's key file is gone (lembas login again); using this machine's library")
-    else
-      warnings.push(all.length ? "library: lembas needs exactly one instance logged in to; using this machine's library" : "library: lembas, but not logged in to any instance (lembas login); using this machine's library")
+  const one = all.length > 1 ? [...all].sort((a, b) => b.logged_in_at.localeCompare(a.logged_in_at))[0] : all[0]
+  if (!one || !existsSync(lembasKeyFile(one.connection))) {
+    warnings.push(one ? "library: lembas, but the login's key file is gone (lembas login again); memory is this machine's for now" : "library: lembas, but not logged in (lembas login); memory is this machine's for now")
     return undefined
   }
-  const one = all[0]!
   return {
     url: `${one.base_url}/mcp`,
     // The token itself, read now: the config's {file:} substitution has already run by here.
     headers: { authorization: `Bearer ${readFileSync(lembasKeyFile(one.connection), "utf8").trim()}` },
     transport: "http",
     oauth: false,
+    // The memory tool alone; the resource is read for the prompt, not offered to the model.
+    tools: { include: [...SERVER_MEMORY] },
+    prompts: false,
+    resources: false,
+    instructions: false,
     ...(one.ca ? { tls: { ca: one.ca } } : {}),
     source: "global",
   }
@@ -261,12 +267,17 @@ export function createApp(o: AppOptions): App {
   // the same reason as the git block: the prompt must stay byte for byte the same, or the server
   // reads the whole conversation again.
   const freeze = () => ({
-    memory: memoryOn ? [memory.snapshot(), projectMemory?.block("memory") ?? ""].filter(Boolean).join("\n\n") : undefined,
+    // The server's memory, when it is the server's: as last read for this session (readServerMemory).
+    memory: !memoryOn ? undefined : serverMemory !== undefined ? serverMemory.text : [memory.snapshot(), projectMemory?.block("memory") ?? ""].filter(Boolean).join("\n\n"),
     skills: skillLines(skillList()),
     git: gitSummary(),
     tasks: projectDir() && !unsafeProjectFile(join(project.dir, "tasks.md"), project.root) ? boardSummary(project.dir) : undefined,
     files: instructionFiles(o.cwd, project.root, loaded.instructions),
   })
+  // `library: lembas`: the server keeps the memory (acp.md *Memory*); its entries for the prompt are
+  // read from it as a session starts. Until the read answers, none.
+  const memoryOnServer = loaded.config.library === "lembas" && memoryOn
+  let serverMemory: { text: string } | undefined = memoryOnServer ? { text: "" } : undefined
   let frozen = freeze()
 
   // The library: one file for every project; an embedding model only when one is set (and usable).
@@ -284,8 +295,10 @@ export function createApp(o: AppOptions): App {
 
   // library: lembas — the account's library through the instance's /mcp, in place of this
   // machine's. Needs the one instance logged in to, with a token that has the library scope.
-  const lembasLibrary = loaded.config.library === "lembas" ? lembasLibraryServer(loaded.warnings) : undefined
+  const lembasLibrary = memoryOnServer ? lembasLibraryServer(loaded.warnings) : undefined
   if (lembasLibrary) loaded.mcp[LIBRARY_SERVER] = lembasLibrary
+  // Without a way to the server's memory, this machine's is used for now.
+  if (memoryOnServer && !lembasLibrary) serverMemory = undefined, frozen = freeze()
   const mcp = new McpManager(loaded.mcp, {
     root: project.root,
     version: VERSION,
@@ -317,15 +330,11 @@ export function createApp(o: AppOptions): App {
     sessions: store ? { store, current: () => engine.sessionId } : undefined,
     settings: { get: (k: string) => settings.get(k), list: () => settings.list(), set: (k: string, v: unknown, sc?: "session" | "global" | "project") => settings.set(k, v, sc), models: () => modelRefs() },
   })
-  /** Whether knowledge_search is offered (engine.offered's rule): a base with documents in scope,
-   *  or the instance's library standing in for this machine's. */
-  const knowledgeOffered = () => Boolean(lembasLibrary) || library.bases().some((b) => b.documents > 0 && (!libraryCtx.bases || libraryCtx.bases.includes(b.name)))
-  /** The library block's scope: the client's bases over the link, else this machine's `knowledge:`. */
-  const libraryBlock = () => {
-    if (!knowledgeOffered()) return undefined
-    const names = lembasLibrary ? context.library?.bases.map((b) => b.name) : libraryCtx.bases
-    return { scope: knowledgeScope(names) }
-  }
+  /** Whether knowledge_search is offered (engine.offered's rule): a base of this machine's with
+   *  documents in scope. Knowledge bases are this machine's alone (spec 3.0.0). */
+  const knowledgeOffered = () => library.bases().some((b) => b.documents > 0 && (!libraryCtx.bases || libraryCtx.bases.includes(b.name)))
+  /** The library block's scope: this machine's `knowledge:`. */
+  const libraryBlock = () => (knowledgeOffered() ? { scope: knowledgeScope(libraryCtx.bases) } : undefined)
   /** Prototypes: offered by the client for this session, or by `prototypes: true` for a terminal's. */
   const prototypesBlock = () => (context.prototypes?.offered || (!context.prototypes && loaded.config.prototypes === true) ? { sources: context.prototypes?.sources ?? "" } : undefined)
   /** The three personal keys this session uses: the client's for it, else the config's. */
@@ -376,7 +385,7 @@ export function createApp(o: AppOptions): App {
   // own. Only its final reply goes back; its tool lines are shown under the task line.
   const agentList = agents(trusted ? project.dir : undefined, loaded.warnings)
   const offered = BUILTIN_TOOLS.filter(
-    (t) => (memoryOn || t.name !== "memory") && (settingsTool !== "off" || t.name !== "settings") && !(lembasLibrary && LOCAL_LIBRARY.has(t.name)) && !SUBAGENT_ONLY.has(t.name),
+    (t) => (memoryOn || t.name !== "memory") && (settingsTool !== "off" || t.name !== "settings") && !(lembasLibrary && SERVER_MEMORY.has(t.name)) && !SUBAGENT_ONLY.has(t.name),
   )
   // The spec's descriptions carry the facts LLeMbas CLI fills in itself (harness/README.md).
   const inWords = (sec: number) => (sec % 60 === 0 ? `${sec / 60} minute${sec === 60 ? "" : "s"}` : `${sec} seconds`)
@@ -586,6 +595,20 @@ export function createApp(o: AppOptions): App {
     }
   })
   const mcpReady = mcp.start()
+  /** The server's memory entries for the prompt (`lembas://memory`), read as a session starts, in
+   *  the session's scope: put into the prompt while nothing has been sent yet, kept for the next
+   *  session otherwise — the prompt does not change under a session. */
+  const readServerMemory = async () => {
+    if (!lembasLibrary || !serverMemory) return
+    try {
+      const text = await mcp.readResource(LIBRARY_SERVER, MEMORY_RESOURCE, engine.o.toolCtx.libraryScope)
+      serverMemory = { text }
+      if (!engine.messages.length && memoryOn) frozen = { ...frozen, memory: text }
+    } catch (e) {
+      bus.emit({ type: "notice", level: "warn", message: `memory: the server's entries could not be read (${(e as Error).message}); none are in this session's prompt` })
+    }
+  }
+  void mcpReady.then(readServerMemory)
 
   // small_model when it resolves; a broken one is said once and the session's model used instead.
   let smallWarned = false
@@ -754,9 +777,10 @@ export function createApp(o: AppOptions): App {
     setContext(ctx, from) {
       context = ctx
       if (from) contextFrom = from
-      // The instance library answers within the chat's scope: the session's id rides on every
-      // call to it while the client has said what the session may search.
-      engine.o.toolCtx.libraryScope = ctx.library ? engine.sessionId : undefined
+    },
+    setScope(scope) {
+      engine.o.toolCtx.libraryScope = scope
+      void readServerMemory()
     },
     rename(title) {
       const id = engine.sessionId
@@ -766,6 +790,7 @@ export function createApp(o: AppOptions): App {
     },
     newSession() {
       frozen = freeze()
+      void readServerMemory()
       named = "no"
       firstShown = ""
       const s = store?.createSession(project.root, engine.model.ref)
@@ -783,6 +808,7 @@ export function createApp(o: AppOptions): App {
       if (!store) return []
       const before = engine.sessionId
       frozen = freeze()
+      void readServerMemory()
       engine.resume(id, store.context(id))
       // A session from before titles gets its first prompt's line now, and the model's after the next reply.
       firstShown = ""

@@ -209,14 +209,8 @@ export function contextOf(meta: any): SessionContext | undefined {
   if (m.personalization === null) out.personalization = null
   else if (m.personalization && typeof m.personalization === "object")
     out.personalization = { personality: str(m.personalization.personality), personality_custom: str(m.personalization.personality_custom), instructions: str(m.personalization.instructions) }
-  if (m.library && typeof m.library === "object")
-    out.library = {
-      bases: (Array.isArray(m.library.bases) ? (m.library.bases as unknown[]) : [])
-        .filter((b): b is { id: unknown; name: unknown } => !!b && typeof b === "object")
-        .map((b) => ({ id: str(b.id), name: str(b.name) }))
-        .filter((b) => b.id || b.name)
-        .map((b) => ({ id: b.id || b.name, name: b.name || b.id })),
-    }
+  // `library` (an instance's knowledge bases, 1.1.0) is not read: the CLI's knowledge bases are its
+  // own (spec 3.0.0), and a 3.0.0 instance sends none.
   if (m.prototypes && typeof m.prototypes === "object") out.prototypes = { offered: m.prototypes.offered === true, sources: str(m.prototypes.sources) }
   return Object.keys(out).length ? out : undefined
 }
@@ -595,6 +589,8 @@ export class AcpAgent {
     session.id = id
     session.turns = turnLog(id)
     markRemote(session.app.store, id)
+    // The client's chat: its memory calls land in that chat's data group (acp.md *Memory*).
+    session.app.setScope(id)
     this.takeContext(session, p)
     this.sessions.set(id, session)
     this.adopt(session)
@@ -668,6 +664,7 @@ export class AcpAgent {
     session.app = createApp({ cwd: dir, ...(L ? { mode: L.maxMode } : {}), asker: this.asker(session), modelTitles: false, resuming: id })
     session.app.resume(id)
     markRemote(session.app.store, id)
+    session.app.setScope(id)
     if (L) session.app.engine.mode = clampMode(session.app.engine.mode, L.maxMode)
     this.sessions.set(id, session)
     this.adopt(session)

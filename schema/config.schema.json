@@ -996,7 +996,7 @@
       "type": "boolean"
     },
     "library": {
-      "description": "Global config only. local (default): memory, notes, skills and knowledge on this machine. lembas: the account's on the LLeMbas instance you are logged in to, through its /mcp — the same tools its chats have (needs a login with the library scope).",
+      "description": "Global config only. Where memory lives. lembas (the default when the login may reach it): the account's memory records on the LLeMbas server, through its /mcp — the same records its chats have. local: this machine's memory files. Notes, knowledge bases and skills are this machine's either way.",
       "type": "string",
       "enum": [
         "local",
