@@ -52,10 +52,11 @@ change to the protocol is a change here first, then in both projects.
 | `turns` | `_meta.lembas.turnId` on `session/prompt`, deduplicated; `turnId` on `prompt`/`task` events; turn fields in `status` |
 | `shell` | `shell` and `integration` in `_lembas/terminal/open`'s answer (listed only with `terminal`) |
 | `context` | `system_prompt` and `personalization` in `session/new` and `session/prompt` `_meta.lembas` are read |
-| `library` | `library` in `session/new` and `session/prompt` `_meta.lembas` is read; `_meta.lembas.scope` sent on the instance library's `tools/call` |
-| `prototypes` | `prototypes` in `session/new` and `session/prompt` `_meta.lembas` is read |
+| `library` | `library` in `session/new` and `session/prompt` `_meta.lembas` is read; `_meta.lembas.scope` sent on the instance library's `tools/call`. Spec 3.0.0: an instance's chats have no knowledge bases, so a 3.0.0 instance sends no `library`; the scope is still sent on its `memory` calls (*The HTTP API*) |
+| `prototypes` | `prototypes` in `session/new` and `session/prompt` `_meta.lembas` is read. Spec 3.0.0: a 3.0.0 instance sends none (`show` replaces prototypes) |
 | `plan_state` | the structured plan: `_meta.lembas.plan` on the `plan` session update and on `_lembas/plan`; `plan` in `_lembas/session/status` |
 | `rewind` | `_lembas/session/rewind` |
+| `show` | spec 3.0.0: `_lembas/show`; the `show` tool is offered in a session the client opened when the client said `show: true` in `clientCapabilities._meta.lembas` |
 | `jobs` | background work (spec 2.0.0): the `job` and `job_note` events; `_lembas/jobs`, `_lembas/job/output`, `_lembas/job/stop`, `_lembas/job/send`, `_lembas/job/transcript`; `jobs` in `_lembas/session/status`; `job` on `session/request_permission`; `machine` on a `prompt` event |
 
 ## Standard ACP, as used here
@@ -112,7 +113,19 @@ Params: `{ cwd: <absolute>, mcpServers?: [], _meta?: { mode?, lembas_model?, mod
 `lembas_model` is the instance's name of a model (it becomes `<connection>/<name>` here); `model`
 a ref of the device's own; `effort` a level or `"off"`.
 
-Result: `{ sessionId: "ses_…", modes: { currentModeId, availableModes }, _meta: { lembas: { model, mode, effort } } }`.
+Result: `{ sessionId: "ses_…", modes: { currentModeId, availableModes }, _meta: { lembas: { model, mode, effort, instance } } }`.
+`instance` (spec 3.0.0) is a boolean, with the `model` event's meaning: true exactly when the
+session's model is one this link's instance serves.
+
+**The chat's model, full stop** (spec 3.0.0). A session the client opens with `lembas_model` runs on
+**that** model and on no other: the device takes it as given, for every turn of the session, until
+the client changes it (`_lembas/configure`). If the device cannot speak to it — the instance does not
+serve it to this device, or this device is not logged in to the link's instance — `session/new`
+fails with `-32602` and the reason, and a turn that loses the model midway fails with its error; the
+device never answers on a model of its own instead, and never falls back on its own. So `instance`
+is true for every session the client opened, and a client has nothing to say about a device having
+"answered on its own model": that notice is gone. A session a terminal shares (`announce`) keeps the
+terminal's model, and its `instance` says which it is.
 The id is the device's store id and lasts: a session the client names later that is not in memory
 is opened from the store under the same rules (capability `sessions`). With capability `commands`,
 an `available_commands_update` follows the answer.
@@ -375,6 +388,18 @@ in that summary — and answers `{ reverted: <turns> }`. **Files are not
 touched**: what the turns changed on disk stays, and the client says so beside the control. The
 client then sends the new prompt as a new turn.
 
+### `_lembas/show` — agent → client → result (capability `show`)
+
+The `show` tool (spec 3.0.0), in a session the client opened, where the client said `show: true`:
+the device sends the file, since the client cannot reach the device's disk. Params
+`{ sessionId, toolCallId, path, kind: "markdown" | "code" | "text" | "html", language?, line?, text }`
+— `path` relative to the session's working directory, `kind` from the file's name (`.md` markdown;
+`.html`/`.htm` html; a known source extension code, with `language`; anything else that is text,
+text), `text` the content, at most 1 MB (a larger file is refused before sending, and the model is
+told). The client shows it in its viewer beside the chat — the web UI, or Desktop's — and HTML only
+in a sandboxed frame that reaches neither the app nor the instance. Result `{ shown: true }` or
+`{ shown: false, reason }`, which the tool answers the model with.
+
 ### `_lembas/session/compact` — client → agent → result
 
 Params `{ sessionId }`. Result `{ summary }`. `-32602` while it works.
@@ -552,6 +577,14 @@ Besides `/v1/models`, the chat completions, `/api/v1/instance` and `/mcp`:
   chat's scope — its knowledge bases (`conformance/library_scope.json` for how `base` is read
   against them) and its data group — and refuses (`-32602`) a session id that is not one of this
   device's. Without `scope`, the account's default data group, as before.
+
+- **Memory** (spec 3.0.0): memory records are the instance's, for the device as for a chat. Logged
+  in to an instance whose token has the `memory` scope, the CLI's `memory` tool and the memory it
+  puts into the prompt are the instance's records, read and written through `/mcp` (`memory`, and
+  the resource holding the entries for the prompt). A call made for a session the client opened
+  carries `params._meta.lembas.scope: <sessionId>` and lands in that chat's data group; a session of
+  the device's own lands in the data group of the session's model. Local memory files are not
+  synced up; logged out, there is no memory.
 
 ## Notes
 
