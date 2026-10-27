@@ -647,10 +647,8 @@ export class AcpAgent {
     return Boolean(connection && this.instanceConnection && connection === this.instanceConnection)
   }
 
-  /** A model the instance names, as a ref on its connection here; undefined when there is none.
-   *  `<login>/<served>` resolves to the served model under its ref now (`deepseek/x` for the
-   *  served `deepseek/x`; the instance's `<login>/<served>` where a connection of the user's own
-   *  has the provider's name), and to the same model for a bare id from an instance that does not speak protocol 2. */
+  /** A model the instance names, as a ref on its connection here (`<login>/<served>`, which resolves
+   *  to the served id, provider/refs.ts); undefined when this link has no instance. */
   private refFor(served: unknown): string | undefined {
     if (typeof served !== "string" || !served.trim() || !this.instanceConnection) return undefined
     return `${this.instanceConnection}/${served.trim()}`

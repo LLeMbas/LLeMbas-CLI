@@ -281,9 +281,8 @@ function currentModel(): string | undefined {
   return typeof value === "string" && value ? value : undefined
 }
 
-/** Each served model's ref once this login is in place (by provider, `deepseek/x`; an
- *  instance that does not speak protocol 2, or a provider a connection of the user's own is named after, keeps
- *  `<connection>/<id>`). Read from the configuration as it now is. */
+/** Each served model's ref once this login is in place: its served id (`deepseek/x`). Read from
+ *  the configuration as it now is. */
 async function refsOf(connection: string): Promise<Record<string, string>> {
   try {
     const { loadConfig } = await import("../config/load.ts")
