@@ -86,7 +86,20 @@ naming the path and the new content's hash:
 ```
 
 `write` of a new file answers `[#e202 docs/new.md sha 52b6e3a0] Created, 14 lines.` — the model
-wrote the content and has it. The diff is capped like any output.
+wrote the content and has it. A deleted file is `[#e203 old.md deleted]`. An `apply_patch` over
+several files answers the id alone, then each file in its own bracket with its change, in the
+patch's order:
+
+```
+[#e204]
+[src/a.ts sha 7d0a91c3]
+@@ -1,2 +1,2 @@
+[docs/new.md sha 52b6e3a0] Created, 14 lines.
+[old.md deleted]
+```
+
+A note the tool adds (a skill file written outside skill_manage) follows the diff. The diff is
+capped like any output, the first line kept.
 
 ## 6. The same search or listing twice is a stub
 
