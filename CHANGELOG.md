@@ -6,6 +6,47 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+LLeMbas CLI 2.0 works with LLeMbas 2.0 and nothing else: it uses the server it is logged in to,
+keeps tool results short without ever rewriting what the model has already read, and reads every
+instruction file on the way down to where it was started. Harness spec 3.0.0.
+
+### Changed
+
+- **The CLI talks only to the LLeMbas server it is logged in to.** Custom connections are gone:
+  the OpenAI-compatible, Responses, Anthropic, Gemini and Ollama connections in `connections.yaml`,
+  with their `dialect`, `key_cmd`, `auth`, `discover`, `unload_url` and `one_model_at_a_time`,
+  and a model's `fallback`. Log in with `lembas login <address>`; without a login the CLI says so
+  and how. An old `connections.yaml` still starts: an entry that is not the login is named in a
+  warning and ignored. One server at a time: logging in to another signs this machine out of the
+  first.
+- **Models are named as the server serves them** (`deepseek/deepseek-flash`), with no connection
+  in front; a `config.yaml` naming one the old way is rewritten once. The context window,
+  efforts and capacity are the server's word.
+- **Memory is the server's**, shared with your chats there (when the login's token may reach it):
+  the `memory` tool and the memory in the prompt. Notes, knowledge bases and skills stay on this
+  machine.
+- **Instruction files stack.** Every `AGENTS.md` (or `CLAUDE.md`) from the project root down to the
+  working directory goes to the model, outermost first — not only the nearest one.
+- **Tool results are kept short when they come in, and never changed afterwards**, so the server's
+  prompt cache holds. Every result has an id (`[#0001]`); a read says its lines and a hash of the
+  file; reading an unchanged file again, or the same listing or search with the same result,
+  answers with a pointer to the earlier result; output over 400 lines or 40,000 characters keeps its
+  beginning and its end; edits answer with their diff. `compaction.prune`, which cut old outputs
+  and made the server read the whole conversation again, is removed.
+- **The link speaks protocol 3** with a LLeMbas 2.0 server. A 1.x server is refused at login and by
+  the link, saying to update the server (or use LLeMbas CLI 1.x); a newer one says to update the CLI.
+- **A chat started on a model runs on that model.** When the web UI opens a session on this device
+  with a model the device cannot run, it is refused with the reason instead of being answered on
+  the device's own model.
+
+### Added
+
+- **`recall`**: the model can see any earlier tool result again, in full or from a line on — the
+  part of a long output left out, or a result from before the conversation was summarised. After
+  a summary the model also gets a table of the files it had read.
+- **`show`**, in a session the web UI or LLeMbas Desktop opened: the model can open a file it made
+  — a page, a document — in your viewer beside the chat.
+
 ## [1.5.2] — 2026-10-25
 
 Logging in again leaves one device, and a link that cannot connect says why.
