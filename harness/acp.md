@@ -580,11 +580,16 @@ Besides `/v1/models`, the chat completions, `/api/v1/instance` and `/mcp`:
 
 - **Memory** (spec 3.0.0): memory records are the instance's, for the device as for a chat. Logged
   in to an instance whose token has the `memory` scope, the CLI's `memory` tool and the memory it
-  puts into the prompt are the instance's records, read and written through `/mcp` (`memory`, and
-  the resource holding the entries for the prompt). A call made for a session the client opened
-  carries `params._meta.lembas.scope: <sessionId>` and lands in that chat's data group; a session of
-  the device's own lands in the data group of the session's model. Local memory files are not
-  synced up; logged out, there is no memory.
+  puts into the prompt are the instance's records, read and written through `/mcp`: the tool
+  `memory` (the spec's, `tools/memory.json`), and the resource **`lembas://memory`**, whose text is
+  the entries as the memory block of a system prompt shows them (empty: none), which the device
+  reads as a session starts and keeps for that session (the prompt does not change under a
+  session). Only `memory` is taken from `/mcp`: notes, knowledge bases and skills stay the device's
+  own. A call made for a session the client opened carries `params._meta.lembas.scope:
+  <sessionId>` (on the tool call and the resource read alike) and lands in that chat's data group;
+  a session of the device's own lands in the data group of the session's model. A token with the
+  older `library` scope counts as `memory`. Local memory files are not synced up; logged out, there
+  is no memory.
 
 ## Notes
 
