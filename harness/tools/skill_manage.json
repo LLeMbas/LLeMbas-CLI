@@ -1,6 +1,7 @@
 {
   "name": "skill_manage",
   "scope": "shared",
+  "sessions": "both",
   "risk": "write",
   "exclusive": false,
   "block": "tool",
