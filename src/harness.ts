@@ -7,6 +7,8 @@ import LOOP_JSON from "../harness/loop.json"
 import t_apply_patch from "../harness/tools/apply_patch.json"
 import t_ask_user from "../harness/tools/ask_user.json"
 import t_bash from "../harness/tools/bash.json"
+import t_branch from "../harness/tools/branch.json"
+import t_commit from "../harness/tools/commit.json"
 import t_decisions from "../harness/tools/decisions.json"
 import t_edit from "../harness/tools/edit.json"
 import t_glob from "../harness/tools/glob.json"
@@ -19,20 +21,31 @@ import t_knowledge_get from "../harness/tools/knowledge_get.json"
 import t_knowledge_search from "../harness/tools/knowledge_search.json"
 import t_list from "../harness/tools/list.json"
 import t_memory from "../harness/tools/memory.json"
+import t_merge from "../harness/tools/merge.json"
+import t_mkdir from "../harness/tools/mkdir.json"
 import t_multiedit from "../harness/tools/multiedit.json"
+import t_mv from "../harness/tools/mv.json"
 import t_note_manage from "../harness/tools/note_manage.json"
 import t_note_view from "../harness/tools/note_view.json"
 import t_notes_search from "../harness/tools/notes_search.json"
 import t_plan_submit from "../harness/tools/plan_submit.json"
 import t_plan_update from "../harness/tools/plan_update.json"
 import t_plan_write from "../harness/tools/plan_write.json"
+import t_pr from "../harness/tools/pr.json"
+import t_python from "../harness/tools/python.json"
 import t_read from "../harness/tools/read.json"
+import t_recall from "../harness/tools/recall.json"
+import t_release from "../harness/tools/release.json"
 import t_report from "../harness/tools/report.json"
+import t_rm from "../harness/tools/rm.json"
+import t_search from "../harness/tools/search.json"
 import t_session_search from "../harness/tools/session_search.json"
 import t_settings from "../harness/tools/settings.json"
+import t_show from "../harness/tools/show.json"
 import t_skill_manage from "../harness/tools/skill_manage.json"
 import t_skill_view from "../harness/tools/skill_view.json"
 import t_skills_list from "../harness/tools/skills_list.json"
+import t_tag from "../harness/tools/tag.json"
 import t_task from "../harness/tools/task.json"
 import t_tasks from "../harness/tools/tasks.json"
 import t_view_image from "../harness/tools/view_image.json"
@@ -43,9 +56,11 @@ import { fillPrompt } from "./prompt/fill.ts"
 
 export interface ToolSpecDef {
   name: string
-  /** shared: both projects implement it; cli / llembas: only that one does. The execution tools
-   *  (bash, edit, read…) are the CLI's: the web UI runs no agent of its own. */
+  /** shared: both projects implement it; cli / llembas: only that one does. */
   scope: "shared" | "cli" | "llembas"
+  /** Spec 3.0.0: where it is offered — a chat on the server (its file system), an agent session
+   *  on a device (this CLI, on its own disk), or both. */
+  sessions: "chat" | "agent" | "both"
   risk: "read" | "write" | "execute" | "interact"
   exclusive: boolean
   /** How a call is shown in a transcript: a shell command, an edit with its diff, a
@@ -60,6 +75,13 @@ export interface ToolSpecDef {
   /** `subagent`: offered only to a subagent (report), never to a session's own model. */
   offered?: "subagent"
   argument_aliases?: Record<string, string>
+  /** Spec 3.0.0: what must hold for it to be offered — `display` (the session is shown where a file
+   *  can be opened: over the link, to a client that offers `show`), `page`, `forge` (the chat's). */
+  requires?: ("display" | "page" | "forge")[]
+  /** What a call answers, word for word, when a requirement went away after the offer. */
+  unavailable?: string
+  /** `always`: put to the person in every mode, auto included; never remembered. */
+  confirm?: "always"
   /** `{{name}}` in the description: a fact the projects differ in, filled in by each (fillDescription). */
   variables?: Record<string, string>
   /** What a project offers of the parameters, where it offers less than all (narrowParameters). */
@@ -68,6 +90,8 @@ export interface ToolSpecDef {
   parameters: Record<string, unknown>
 }
 
+/** `X.Y.Z`, or a SemVer pre-release while the spec is written ahead of both implementations
+ *  (`3.0.0-draft`). */
 export const HARNESS_VERSION = VERSION.trim()
 
 /** How one prompt runs (harness/loop.json): the step backstop, the budgets' defaults, the wrap-up
@@ -163,8 +187,15 @@ export function narrowParameters(parameters: Record<string, unknown>, narrow: Na
 }
 
 export const TOOL_SPECS: Record<string, ToolSpecDef> = Object.fromEntries(
-  ([t_apply_patch, t_ask_user, t_bash, t_decisions, t_edit, t_glob, t_grep, t_job_list, t_job_output, t_job_send, t_job_stop, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_multiedit, t_note_manage, t_note_view, t_notes_search, t_plan_submit, t_plan_update, t_plan_write, t_read, t_report, t_session_search, t_settings, t_skill_manage, t_skill_view, t_skills_list, t_task, t_tasks, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
+  ([t_apply_patch, t_ask_user, t_bash, t_branch, t_commit, t_decisions, t_edit, t_glob, t_grep, t_job_list, t_job_output, t_job_send, t_job_stop, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_merge, t_mkdir, t_multiedit, t_mv, t_note_manage, t_note_view, t_notes_search, t_plan_submit, t_plan_update, t_plan_write, t_pr, t_python, t_read, t_recall, t_release, t_report, t_rm, t_search, t_session_search, t_settings, t_show, t_skill_manage, t_skill_view, t_skills_list, t_tag, t_task, t_tasks, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
 )
+
+/** Whether the spec gives a tool to this CLI: not the server's alone (`scope: llembas`), and
+ *  offered in an agent session (`sessions` agent or both) — a chat's tools over the server's tree
+ *  (mkdir, mv, rm, search, python, the forge verbs) are not the CLI's. */
+export function forCli(t: ToolSpecDef): boolean {
+  return t.scope !== "llembas" && t.sessions !== "chat"
+}
 
 /** A tool's name, description and `exclusive` flag as the spec has them, for its definition:
  *  `...described("read")`. With `vars`, the description filled and the values kept for its

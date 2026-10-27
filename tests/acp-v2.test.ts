@@ -64,7 +64,7 @@ const limitsFor = (root: string, extra: Partial<Limits> = {}): Limits => ({ root
 
 /** A fake LLeMbas on one side of the agent. `lembas: false`: an editor that is not LLeMbas. */
 /** `protocol`: what the client says it speaks (2 by default; 1 is an older client). */
-async function client(limits?: Limits, o: { lembas?: boolean; protocol?: number; instance?: string; hub?: Hub; handlers?: Record<string, (p: any) => unknown> } = {}) {
+async function client(limits?: Limits, o: { lembas?: boolean; protocol?: number; instance?: string; hub?: Hub; show?: boolean; handlers?: Record<string, (p: any) => unknown> } = {}) {
   const [ta, tb] = pair()
   new AcpAgent(new Peer(ta), limits, o.instance, o.hub)
   const c = new Peer(tb)
@@ -76,7 +76,7 @@ async function client(limits?: Limits, o: { lembas?: boolean; protocol?: number;
   c.on("_lembas/permission/settled", (p) => void notes.push({ method: "settled", params: p }))
   c.handle("session/request_permission", () => ({ outcome: { outcome: "selected", optionId: "once" } }))
   for (const [m, fn] of Object.entries(o.handlers ?? {})) c.handle(m, fn)
-  const init: any = await c.request("initialize", { protocolVersion: 1, clientCapabilities: o.lembas === false ? {} : { _meta: { lembas: o.protocol === 1 ? true : { protocol: o.protocol ?? 2 } } } })
+  const init: any = await c.request("initialize", { protocolVersion: 1, clientCapabilities: o.lembas === false ? {} : { _meta: { lembas: o.protocol === 1 ? true : { protocol: o.protocol ?? 2, ...(o.show ? { show: true } : {}) } } } })
   return { c, updates, events, notes, init }
 }
 
@@ -310,6 +310,26 @@ test("initialize lists the 1.1.0 capabilities", async () => {
   config(fake.url)
   const { init } = await client(limitsFor(project()))
   for (const cap of ["context", "library", "prototypes", "plan_state", "rewind"]) expect(init._meta.lembas.capabilities).toContain(cap)
+})
+
+test("show (spec 3.0.0): offered only to a client that shows files; the file goes over _lembas/show", async () => {
+  const page = "<!doctype html><h1>Hi</h1>"
+  fake = fakeProvider([{ chunks: [toolCall(0, "s1", "show", JSON.stringify({ path: "out/page.html", line: 1 }))] }, { chunks: [delta({ content: "there" })] }, { chunks: [delta({ content: "plain" })] }])
+  config(fake.url)
+  const root = project({ "out/page.html": page })
+  let shown: any
+  const { c, init } = await client(limitsFor(root), { show: true, handlers: { "_lembas/show": (p) => ((shown = p), { shown: true }) } })
+  expect(init._meta.lembas.capabilities).toContain("show")
+  const s: any = await c.request("session/new", { cwd: root })
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "make a page" }] })
+  expect(fake.requests[0].tools.map((t: any) => t.function.name)).toContain("show")
+  expect(shown).toEqual({ sessionId: s.sessionId, toolCallId: "s1", path: "out/page.html", kind: "html", line: 1, text: page })
+  expect(fake.requests[1].messages.find((m: any) => m.role === "tool").content).toContain("Shown to the user: out/page.html")
+  // A client that did not say it shows files: no show tool.
+  const other = await client(limitsFor(root))
+  const s2: any = await other.c.request("session/new", { cwd: root })
+  await other.c.request("session/prompt", { sessionId: s2.sessionId, prompt: [{ type: "text", text: "hi" }] })
+  expect(fake.requests[2].tools.map((t: any) => t.function.name)).not.toContain("show")
 })
 
 test("the context reaches the prompt: the instance's instructions, its personalization, the library's scope, prototypes", async () => {

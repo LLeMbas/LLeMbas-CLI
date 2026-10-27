@@ -17,6 +17,7 @@ import { memoryTool } from "./memory.ts"
 import { sessionSearchTool } from "./session_search.ts"
 import { skillManageTool, skillsListTool, skillViewTool } from "./skills.ts"
 import { settingsTool } from "./settings.ts"
+import { showTool } from "./show.ts"
 import { knowledgeGetTool, knowledgeSearchTool, noteManageTool, notesSearchTool, noteViewTool } from "./library.ts"
 import type { Tool } from "./tool.ts"
 import { writeTool } from "./write.ts"
@@ -56,6 +57,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   skillManageTool,
   settingsTool,
   viewImageTool,
+  showTool,
   // Offered to subagents only (the spec's `offered: subagent`; app.ts SUBAGENT_ONLY).
   reportTool,
 ] as Tool[]

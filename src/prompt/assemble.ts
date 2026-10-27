@@ -16,6 +16,7 @@ import blockAgentsKeep from "../../harness/prompts/blocks/agents-keep.md" with {
 import blockLibrary from "../../harness/prompts/blocks/library.md" with { type: "text" }
 import blockPrototypes from "../../harness/prompts/blocks/prototypes.md" with { type: "text" }
 import blockSubagent from "../../harness/prompts/blocks/subagent.md" with { type: "text" }
+import blockContext from "../../harness/prompts/blocks/context.md" with { type: "text" }
 import agentExplore from "../../harness/prompts/agents/explore.md" with { type: "text" }
 import agentGeneral from "../../harness/prompts/agents/general.md" with { type: "text" }
 import modeManual from "../../harness/prompts/modes/manual.md" with { type: "text" }
@@ -39,8 +40,9 @@ import personalityFunny from "../../harness/prompts/personality/funny.md" with {
 import personalityFormal from "../../harness/prompts/personality/formal.md" with { type: "text" }
 import personalitySocratic from "../../harness/prompts/personality/socratic.md" with { type: "text" }
 
-// Built-in prompt text, by path relative to harness/prompts (the harness spec shared with LLeMbas).
-// Any of these can be replaced by a file at the same path under ~/.config/lembas/prompts/.
+// Built-in prompt text, by path relative to harness/prompts (the harness spec shared with LLeMbas):
+// every text whose scope is shared or cli. The server's own (blocks/workspace.md, a chat's view of
+// its file system) is not here. Any of these can be replaced by a file at the same path under ~/.config/lembas/prompts/.
 const BUILTIN: Record<string, string> = {
   "system/default.md": defaultSystem,
   "system/identity.md": identity,
@@ -53,6 +55,7 @@ const BUILTIN: Record<string, string> = {
   "blocks/library.md": blockLibrary,
   "blocks/prototypes.md": blockPrototypes,
   "blocks/subagent.md": blockSubagent,
+  "blocks/context.md": blockContext,
   "agents/explore.md": agentExplore,
   "agents/general.md": agentGeneral,
   "modes/manual.md": modeManual,

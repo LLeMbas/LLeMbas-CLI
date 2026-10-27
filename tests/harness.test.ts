@@ -5,7 +5,7 @@ import { expect, test } from "bun:test"
 import { readdirSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { z } from "zod"
-import { fillDescription, HARNESS_VERSION, narrowParameters, PURPOSE_DEF, TOOL_SPECS } from "../src/harness.ts"
+import { fillDescription, forCli, HARNESS_VERSION, narrowParameters, PURPOSE_DEF, TOOL_SPECS } from "../src/harness.ts"
 import { createApp, stricterMode } from "../src/app.ts"
 import { paths } from "../src/config/paths.ts"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
@@ -19,7 +19,7 @@ import { purposeKey, toSpec, type Tool, type ToolContext } from "../src/tool/too
 
 const HARNESS = join(import.meta.dir, "..", "harness")
 const ours: Tool[] = [...BUILTIN_TOOLS]
-const forUs = Object.values(TOOL_SPECS).filter((t) => t.scope !== "llembas")
+const forUs = Object.values(TOOL_SPECS).filter(forCli)
 
 /** A JSON Schema with its prose and zod's integer bounds taken out: the shape a call must have. */
 function shape(o: unknown): unknown {
@@ -52,7 +52,8 @@ function sample(schema: Record<string, unknown>): Record<string, unknown> {
 const ctx = { root: "/tmp/ph-spec", cwd: "/tmp/ph-spec", signal: new AbortController().signal, readFiles: new Set(), fileStamps: new Map(), bashTimeoutMs: 1000 } as unknown as ToolContext
 
 test("the spec has a version, and one file per tool, named as the tool", () => {
-  expect(HARNESS_VERSION).toMatch(/^\d+\.\d+\.\d+$/)
+  // X.Y.Z, or a pre-release while the spec runs ahead of both implementations (3.0.0-draft).
+  expect(HARNESS_VERSION).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/)
   const files = readdirSync(join(HARNESS, "tools")).filter((f) => f.endsWith(".json"))
   expect(files.length).toBe(Object.keys(TOOL_SPECS).length)
   for (const f of files) expect(JSON.parse(readFileSync(join(HARNESS, "tools", f), "utf8")).name).toBe(f.replace(/\.json$/, ""))
@@ -68,7 +69,8 @@ test("every tool says how it is shown (block), from the spec's list", () => {
 })
 
 test("every tool the spec gives the CLI is built in, and every built-in tool is in the spec", () => {
-  expect(ours.map((t) => t.name).sort()).toEqual(forUs.map((t) => t.name).sort())
+  // recall comes with context hygiene (harness/context.md), in the commit that implements it.
+  expect(ours.map((t) => t.name).sort()).toEqual(forUs.map((t) => t.name).filter((n) => n !== "recall").sort())
 })
 
 for (const t of ours) {
@@ -112,10 +114,14 @@ test("read and write never share a tool: every tool carries one risk, and a read
   }
 })
 
-test("every prompt text is in harness/prompts, and every file there is one the CLI knows", () => {
+test("every prompt text is in harness/prompts, and every file there that is not the server's alone is one the CLI knows", () => {
   const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".md") ? [join(d, e.name)] : []))
   const files = walk(join(HARNESS, "prompts")).map((f) => relative(join(HARNESS, "prompts"), f))
-  for (const f of files) expect(() => promptText(f)).not.toThrow()
+  const index = JSON.parse(readFileSync(join(HARNESS, "prompts", "index.json"), "utf8")) as { prompts: Record<string, { scope: string }> }
+  for (const f of files) {
+    if (index.prompts[f]?.scope === "llembas") expect(() => promptText(f)).toThrow()
+    else expect(() => promptText(f)).not.toThrow()
+  }
 })
 
 test("prompts/index.json lists every prompt text, each with a scope", () => {
@@ -126,18 +132,29 @@ test("prompts/index.json lists every prompt text, each with a scope", () => {
   for (const p of Object.values(index.prompts)) expect(["shared", "cli", "llembas"]).toContain(p.scope)
 })
 
-test("the execution tools are the CLI's alone; the web UI runs no agent", () => {
-  // LLeMbas removed its SSH workplace, so nothing that runs a command or touches a file is shared.
-  const exec = ["apply_patch", "bash", "edit", "glob", "grep", "list", "multiedit", "read", "write"]
-  for (const n of exec) expect(TOOL_SPECS[n]!.scope).toBe("cli")
+test("spec 3.0.0: every tool says where it is offered; the CLI's are the agent's, never a chat's", () => {
+  for (const t of Object.values(TOOL_SPECS)) expect(["chat", "agent", "both"]).toContain(t.sessions)
+  // The file tools are shared and offered in both worlds: here on the device's disk, in a chat over
+  // the server's tree. multiedit, apply_patch and bash stay the agent's.
+  for (const n of ["read", "write", "edit", "glob", "grep", "list"]) expect([TOOL_SPECS[n]!.scope, TOOL_SPECS[n]!.sessions]).toEqual(["shared", "both"])
+  for (const n of ["apply_patch", "bash", "multiedit"]) expect([TOOL_SPECS[n]!.scope, TOOL_SPECS[n]!.sessions]).toEqual(["cli", "agent"])
+  // A chat's own tools over the server's tree are not the CLI's, and none is built in here.
+  const chats = ["branch", "commit", "merge", "mkdir", "mv", "pr", "python", "release", "rm", "search", "tag"]
+  for (const n of chats) {
+    expect(TOOL_SPECS[n]!.sessions).toBe("chat")
+    expect(forCli(TOOL_SPECS[n]!)).toBe(false)
+    expect(ours.some((t) => t.name === n)).toBe(false)
+  }
+  // The local library stays the CLI's alone; a chat's notes and knowledge are files now.
+  for (const n of ["knowledge_get", "knowledge_search", "note_manage", "note_view", "notes_search"]) expect([TOOL_SPECS[n]!.scope, TOOL_SPECS[n]!.sessions]).toEqual(["cli", "agent"])
+  // show needs a display: offered only where a client over the link shows files.
+  expect(TOOL_SPECS.show!.requires).toEqual(["display"])
+  expect(ours.find((t) => t.name === "show")!.requires).toBe("display")
   // The plan is one structure both keep (spec 1.1.0): its three tools are shared, and todo is
   // plan_write's former name rather than a tool.
   expect(TOOL_SPECS.todo).toBeUndefined()
   expect(TOOL_SPECS.plan_write!.aliases.cli).toEqual(["todo"])
-  // Spec 2.0.0: the job tools cover both kinds of background work and are shared (the CLI's former
-  // bash_* names are their aliases); report is a subagent's.
-  const shared = ["ask_user", "job_list", "job_output", "job_send", "job_stop", "knowledge_get", "knowledge_search", "memory", "note_manage", "note_view", "notes_search", "plan_submit", "plan_update", "plan_write", "report", "skill_manage", "skill_view", "skills_list", "task", "web_fetch", "web_search"]
-  for (const n of shared) expect(TOOL_SPECS[n]!.scope).toBe("shared")
+  const shared = ["ask_user", "edit", "glob", "grep", "job_list", "job_output", "job_send", "job_stop", "list", "memory", "plan_submit", "plan_update", "plan_write", "read", "recall", "report", "session_search", "show", "skill_manage", "skill_view", "skills_list", "task", "web_fetch", "web_search", "write"]
   expect(Object.values(TOOL_SPECS).filter((t) => t.scope === "shared").map((t) => t.name).sort()).toEqual(shared.sort())
 })
 

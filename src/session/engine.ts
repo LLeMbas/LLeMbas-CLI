@@ -353,6 +353,7 @@ export class Engine {
     if (!t?.requires) return true
     if (t.requires === "vision") return this.model.spec.vision === true
     if (t.requires === "project") return this.o.toolCtx.projectDir !== undefined
+    if (t.requires === "display") return this.o.toolCtx.show !== undefined
     if (t.requires === "knowledge") {
       const L = this.o.toolCtx.library
       const have = L?.lib.bases().filter((b) => b.documents > 0).map((b) => b.name) ?? []

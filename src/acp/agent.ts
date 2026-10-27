@@ -274,6 +274,9 @@ export const CAPABILITIES = [
   // `_lembas/jobs` and `_lembas/job/*` methods, `jobs` in `status`, `job` on an approval, and a
   // note's turn marked `machine`.
   "jobs",
+  // Harness spec 3.0.0: the show tool, offered in a session the client opened when the client
+  // said it can show files; the device sends the file with `_lembas/show`.
+  "show",
 ] as const
 export const STOP: Record<string, string> = { stop: "end_turn", steps: "max_turn_requests", budget: "max_tokens", cancelled: "cancelled", error: "end_turn" }
 
@@ -427,6 +430,9 @@ export class AcpAgent {
   private get cards() {
     return this.lembas && this.clientProtocol >= 2
   }
+  /** The client shows files (`show: true` in `clientCapabilities._meta.lembas`, spec 3.0.0): the
+   *  show tool is offered in the sessions it opens, and nowhere else. */
+  private shows = false
   /** initialize has been answered: notifications about sessions may go out from now on. */
   private ready = false
 
@@ -486,6 +492,8 @@ export class AcpAgent {
     const said = p?.clientCapabilities?._meta?.lembas
     this.lembas = Boolean(said)
     this.clientProtocol = typeof said?.protocol === "number" ? said.protocol : 1
+    this.shows = said?.show === true
+    for (const s of this.sessions.values()) if (s.agent === this) this.equipShow(s)
     // The sessions this link took over (the hub's) get their command set once the client
     // knows the agent — after this answer, not before it.
     setTimeout(() => {
@@ -686,12 +694,25 @@ export class AcpAgent {
   private adopt(s: Session) {
     s.off?.()
     s.agent = this
+    this.equipShow(s)
     s.off = s.app.bus.on((e) => {
       if (s.agent !== this) return
       this.forward(s, e)
       // A turn can change the set (skill_manage made a skill, a command file was written).
       if (e.type === "task" && e.state === "end") this.sendCommands(s)
     })
+  }
+
+  /** The show tool's display, for a session this link holds: the client's viewer, reached with
+   *  `_lembas/show`, where the client said it shows files; otherwise none, and show is not offered. */
+  private equipShow(s: Session) {
+    const ctx = s.app.engine.o.toolCtx
+    if (!this.shows) return void delete ctx.show
+    ctx.show = async (req, callId) => {
+      if (s.agent !== this || this.peer.isClosed) return { shown: false, reason: "the client is not connected" }
+      const r = (await this.peer.request("_lembas/show", { sessionId: s.id, toolCallId: callId ?? "", ...req }, 30_000)) as { shown?: unknown; reason?: unknown } | undefined
+      return r?.shown === true ? { shown: true } : { shown: false, reason: typeof r?.reason === "string" && r.reason ? r.reason : "the client did not show it" }
+    }
   }
 
   /** `available_commands_update`: the session's command set, when it changed (or always). */

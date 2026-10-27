@@ -67,6 +67,9 @@ export interface ToolContext {
     set(key: string, value: unknown, scope?: import("../config/settings.ts").Scope): import("../settings.ts").SetResult
     models(): string[]
   }
+  /** Open a file in the user's viewer (the show tool): set only where a client over the link said
+   *  it can show files (harness/acp.md, capability `show`). Absent: no display, and show is not offered. */
+  show?: (req: import("./show.ts").ShowRequest, callId?: string) => Promise<import("./show.ts").ShowReply>
   /** The scope sent on every call to the instance's library (`_meta.lembas.scope`, harness/acp.md):
    *  the session's id, where the client has said what the session may search. */
   libraryScope?: string
@@ -112,8 +115,10 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
   access: string
   /** Runs alone, never alongside other calls of the same step (it waits on the user). */
   exclusive?: boolean
-  /** Offered only when this holds: a model with vision, plan mode, or a project directory. */
-  requires?: "vision" | "plan" | "project" | "knowledge"
+  /** Offered only when this holds: a model with vision, plan mode, a project directory, knowledge
+   *  bases with documents, or a display (a client over the link that shows files: the spec's
+   *  `requires: display`). */
+  requires?: "vision" | "plan" | "project" | "knowledge" | "display"
   description: string
   schema: S
   /** The JSON Schema sent to the model, when it does not come from `schema` (MCP tools). */
