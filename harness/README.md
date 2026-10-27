@@ -108,7 +108,10 @@ this design.
   answer with their diff; the same listing or search with the same result is a stub; compaction
   adds a table of reads and empties the dedupe table; earlier reasoning is left to the chat
   template. `loop.json` `context` holds the texts and numbers, `blocks/context.md` tells the model.
-- **`acp.md`**: `session/new`'s result carries `instance`; a session the client opened runs on the
+- **`acp.md`**: **link protocol 3** — LLeMbas 2.0 and LLeMbas CLI 2.0 speak it alone, and a 1.x peer
+  and a 2.0 one refuse each other, each saying what to update (discovery's `protocol` is raised to 3
+  on purpose); the served id is the device's ref for a model (one server, no connection prefix);
+  `session/new`'s result carries `instance`; a session the client opened runs on the
   chat's model and no other — refused rather than answered on the device's own, so the "answered on
   its own model" notice is gone; capability `show` with `_lembas/show`; memory through the
   instance; a 3.0.0 instance sends neither `library` nor `prototypes`.

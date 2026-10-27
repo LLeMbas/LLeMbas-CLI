@@ -13,24 +13,31 @@ change to the protocol is a change here first, then in both projects.
 ## Versions and discovery
 
 - **`protocol`** (`_meta.lembas.protocol` in `initialize`, `protocol` in `_lembas/hello`):
-  **2**. CLI `src/acp/agent.ts:LEMBAS_PROTOCOL`, LLeMbas
+  **3**. CLI `src/acp/agent.ts:LEMBAS_PROTOCOL`, LLeMbas
   `services/device_link.py:PROTOCOL`.
-- **Discovery** (`/.well-known/lembas.json`) says `protocol: 1` **and** `protocols: [1, 2]` —
-  `protocol` stays 1 on purpose, because a client that compares it for equality at login must
-  still get in. The CLI reads `protocols` (falling back to `protocol` where it is absent) at
-  login and again **every time the link dials**, keeps it with the login, and says protocol 2 in
-  `hello` and `initialize` only to an instance that lists 2; to any other it says 1 (an instance that
-  speaks only 1 closes a link whose hello says 2 with **4400**). A link closed with 4400 stops — it is not
-  redialled — saying *the instance and this CLI speak different link protocols — update one of them*.
-- **A protocol 1 peer keeps working.** Every feature beyond protocol 1 is named by a **capability
-  string** in `initialize`'s `_meta.lembas.capabilities`, and **LLeMbas never calls a method, nor
-  relies on a field, the device did not list**. The CLI logs in to an instance whose discovery says
-  protocol 1 or 2.
+- **3 is LLeMbas 2.0 and LLeMbas CLI 2.0, and they speak it alone** (spec 3.0.0). A 2.0 server keeps
+  the server's file system, memory and models, and a 2.0 CLI talks to nothing else, so a 1.x peer
+  and a 2.0 one **refuse each other**, each saying what to update:
+  - **Discovery** (`/.well-known/lembas.json`) of a 2.0 server says `protocol: 3` **and**
+    `protocols: [3]`. `protocol` was frozen at 1 for 1.x so that a client comparing it for equality
+    could still log in; 3 raises it on purpose, so a 1.x CLI's login is refused there (it says the
+    server speaks protocol 3 and to update the older of the two).
+  - A **2.0 CLI** logs in only where discovery lists 3 (`protocols`, falling back to `protocol`).
+    To a server that does not, at login and again at every dial of the link, it says *&lt;server&gt;
+    runs LLeMbas X, which speaks link protocol 1 and 2; this LLeMbas CLI needs a LLeMbas 2.0 server
+    (protocol 3) — update the server, or use LLeMbas CLI 1.x with it*, and the link stops.
+  - A **2.0 server** closes a link whose hello says 1 or 2 with **4400** and the reason *update
+    LLeMbas CLI to 2.0*; a 1.x CLI stops on 4400 without redialling. A 2.0 CLI's hello says 3, and
+    a 1.x server closes it with 4400 likewise; the CLI stops and says the server needs updating.
+- **Within protocol 3** every feature is still named by a **capability string** in `initialize`'s
+  `_meta.lembas.capabilities`, and **LLeMbas never calls a method, nor relies on a field, the
+  device did not list**.
 - A client says it is LLeMbas with `clientCapabilities._meta.lembas` in `initialize`, and which
   protocol it speaks with `_meta.lembas.protocol` (absent: 1 — a protocol 1 client sends `lembas: true`).
   Only such a client gets `_lembas/event`; only one that says protocol **2 or later** gets
-  `_lembas/question` and `_lembas/plan`, and one that then answers them with method-not-found is
-  treated as protocol 1 for the rest of the link.
+  `_lembas/question` and `_lembas/plan` (a 2.0 server says 3), and one that then answers them with
+  method-not-found is treated as protocol 1 for the rest of the link — what an editor on
+  `serve --stdio` is.
 
 | Capability | What it promises |
 |---|---|
@@ -63,7 +70,7 @@ change to the protocol is a change here first, then in both projects.
 
 ### `initialize` — client → agent
 
-Params: `{ protocolVersion: 1, clientCapabilities: { _meta?: { lembas?: { protocol: 2 } | true } } }`.
+Params: `{ protocolVersion: 1, clientCapabilities: { _meta?: { lembas?: { protocol: 3, show?: true } | true } } }`.
 
 Result:
 
@@ -76,10 +83,10 @@ Result:
     "mcpCapabilities": { "http": false, "sse": false }
   },
   "authMethods": [],
-  "agentInfo": { "name": "LLeMbas CLI", "version": "1.3.0" },
+  "agentInfo": { "name": "LLeMbas CLI", "version": "2.0.0" },
   "_meta": { "lembas": {
-    "protocol": 2,
-    "harness_spec": "1.1.0",
+    "protocol": 3,
+    "harness_spec": "3.0.0",
     "limits": { "roots": ["~/work"], "max_mode": "edit" },
     "connection": "example",
     "capabilities": ["directories", "configure", "…"]
@@ -88,30 +95,24 @@ Result:
 ```
 
 `limits` is `null` on `serve --stdio`. `connection` is the device's name for the instance — the
-login's connection — or `null`; an instance that does not speak protocol 2 recognises its own
-models by it, as `<connection>/<name>`, while the `model` event and `announce` say it directly
-(`instance`).
+login's connection — or `null`; the `model` event and `announce` say directly whether a model is
+the instance's (`instance`).
 
-**How the device names an instance's models.** An instance that speaks protocol 2 serves every model
-as `<provider>/<model>` (`deepseek/deepseek-flash`), and that served id **is the device's ref** for
-it — each provider is, as the person sees it, a connection of its own, backed by the instance
-(requests still go to its `/v1`, with the served id). Exceptions: a connection of the device's own
-with the provider's name keeps the short form, and the instance's model is then
-`<login>/<provider>/<model>`; with two instances serving one provider, the one logged in to first
-keeps the short form and the other's are `<login>/<provider>/<model>`; an instance that does not
-speak protocol 2 serves bare ids, which stay `<login>/<id>`. The provider is the model's `provider` field where the
-instance gives one, else — only from an instance whose discovery lists protocol 2 — the part of the
-id before its first `/`; an id with a `/` from any other instance is just an id (`<login>/<id>`). The old forms (`<login>/<model>`,
-`<login>/<provider>/<model>`) still name the same model. `lembas_model` in `session/new` and
-`model` in `_lembas/configure` are the instance's served name, as it serves it.
+**How the device names an instance's models.** The served id **is the device's ref** for a model
+(`deepseek/deepseek-flash`; spec 3.0.0: a 2.0 device talks to one server, the one it is logged in
+to, so there is nothing to tell apart — no connection prefix, no second login, no connection of
+the device's own). The older forms (`<login>/<id>`, and from before providers `<login>/<model>` for
+the one served `<provider>/<model>` of that name) still name the same model. `lembas_model` in
+`session/new` and `model` in `_lembas/configure` are the instance's served name, as it serves it.
+`model` in a `model` event and in a result is the device's ref, which is the served id.
 
 ### `session/new` — client → agent
 
 Params: `{ cwd: <absolute>, mcpServers?: [], _meta?: { mode?, lembas_model?, model?, effort?, lembas?: Context } }`.
 `cwd` must be a directory inside `remote.roots`, in a trusted project when `remote.require_trust`
 (the default) — otherwise `-32602` with the reason. `mode` is lowered to `remote.max_mode`.
-`lembas_model` is the instance's name of a model (it becomes `<connection>/<name>` here); `model`
-a ref of the device's own; `effort` a level or `"off"`.
+`lembas_model` is the instance's name of a model; `model` a ref the device knows (an editor's
+choice); `effort` a level or `"off"`.
 
 Result: `{ sessionId: "ses_…", modes: { currentModeId, availableModes }, _meta: { lembas: { model, mode, effort, instance } } }`.
 `instance` (spec 3.0.0) is a boolean, with the `model` event's meaning: true exactly when the
@@ -121,7 +122,8 @@ session's model is one this link's instance serves.
 **that** model and on no other: the device takes it as given, for every turn of the session, until
 the client changes it (`_lembas/configure`). If the device cannot speak to it — the instance does not
 serve it to this device, or this device is not logged in to the link's instance — `session/new`
-fails with `-32602` and the reason, and a turn that loses the model midway fails with its error; the
+fails with `-32602` and the reason (so does a `_lembas/configure` naming such a model, and the
+session keeps the model it had), and a turn that loses the model midway fails with its error; the
 device never answers on a model of its own instead, and never falls back on its own. So `instance`
 is true for every session the client opened, and a client has nothing to say about a device having
 "answered on its own model": that notice is gone. A session a terminal shares (`announce`) keeps the
@@ -597,4 +599,4 @@ Besides `/v1/models`, the chat completions, `/api/v1/instance` and `/mcp`:
   resolve against (for a session opened at the project root, the project root). `/plan` without a
   task is an action, with a task a prompt run in plan mode. Questions and plans also stop waiting
   after the device's `remote.approval_timeout`, like approvals.
-- The CLI's login accepts an instance whose discovery says protocol 1 or 2.
+- The CLI's login accepts an instance whose discovery lists protocol 3 (*Versions*).
