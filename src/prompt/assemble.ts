@@ -254,6 +254,8 @@ export interface PromptContext {
   /** The library block (blocks/library.md): set when knowledge tools are offered or the instance
    *  library is in use; `scope` the sentence naming the bases in scope, or "" for all of them. */
   library?: { scope: string }
+  /** recall is offered: the tool results carry ids and may be stubs (blocks/context.md, spec 3.0.0). */
+  context?: boolean
   /** Prototypes are offered (blocks/prototypes.md); `sources` the sentence saying what a page
    *  may load, or "" where nothing says. */
   prototypes?: { sources: string }
@@ -337,6 +339,8 @@ export function assembleSystem(ctx: PromptContext): string {
   else if (ctx.manageSkills && !ctx.subagent) sections.push(promptText("blocks/skills-empty.md"))
   // The library and prototypes (shared blocks): the library whenever its tools are offered, named
   // to the bases in scope; prototypes only where they are offered, with where the page is seen.
+  // How tool results are kept short (ids, stubs, recall): wherever recall is offered.
+  if (ctx.context) sections.push(promptText("blocks/context.md"))
   if (ctx.library && !ctx.subagent) sections.push(fillPrompt(promptText("blocks/library.md"), { knowledge_scope: ctx.library.scope }))
   if (ctx.prototypes && !ctx.subagent) sections.push(fillPrompt(promptText("blocks/prototypes.md"), { prototype_sources: ctx.prototypes.sources, prototype_surface: PROTOTYPE_SURFACE }))
 

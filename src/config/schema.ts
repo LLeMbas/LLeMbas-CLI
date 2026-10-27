@@ -276,7 +276,7 @@ export const Config = z.strictObject({
     })
     .optional(),
   question: z.strictObject({ unattended: z.enum(["recommended", "first", "fail"]).optional().describe("With nobody to answer (headless): take the recommended option, the first, or fail.") }).optional(),
-  compaction: z.strictObject({ auto_at: z.number().min(0.1).max(1).optional(), prune: z.boolean().optional() }).optional().describe("Automatic context management: past auto_at of the window, old tool outputs are pruned, then the conversation is compacted. auto_at: 1 turns it off."),
+  compaction: z.strictObject({ auto_at: z.number().min(0.1).max(1).optional() }).optional().describe("Automatic context management: past auto_at of the window, the conversation is compacted. auto_at: 1 turns it off. (Old tool outputs are never cut afterwards: that would make the server read the whole conversation again.)"),
   instructions: z.string().max(4000).optional().describe("Custom instructions: how you want to be helped, in your own words (at most 4000 characters). Appended near the end of the system prompt, under \"## How the person you are talking to wants to be helped\" — as in the LLeMbas web UI. (A list of files here, from an older config, is read as instruction_files.)"),
   instruction_files: z.array(z.string()).optional().describe("More instruction files for the system prompt, besides AGENTS.md / CLAUDE.md."),
   search: z

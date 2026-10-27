@@ -191,7 +191,7 @@ describe("through the engine", () => {
     expect(asked.join()).toContain("mcp__fix__echo")
     expect(fake.requests[0].tools.map((t: any) => t.function.name)).toContain("mcp__fix__echo")
     expect(fake.requests[0].messages[0].content).toContain("<mcp_instructions>")
-    expect(fake.requests[1].messages.at(-1)).toMatchObject({ role: "tool", content: "echo: via engine" })
+    expect(fake.requests[1].messages.at(-1)).toMatchObject({ role: "tool", content: "[#0001]\necho: via engine" })
     await app.close()
     writeFileSync(join(paths.config, "config.yaml"), "")
   })

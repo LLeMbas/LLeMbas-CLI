@@ -53,7 +53,6 @@ export const SETTINGS: SettingDef[] = [
   { key: "icons", kind: "enum", values: ["emoji", "plain"], agent: true, scopes: USER, fallback: "emoji" },
   { key: "mouse", kind: "boolean", agent: true, scopes: ["global"], reload: true, fallback: "true" },
   { key: "compaction.auto_at", kind: "number", agent: true, scopes: ALL, fallback: "0.85" },
-  { key: "compaction.prune", kind: "boolean", agent: true, scopes: ALL, fallback: "true" },
   { key: "search.order", kind: "list", values: ["searxng", "firecrawl", "ddg"], agent: true, scopes: ALL, fallback: "those configured, then ddg" },
   { key: "search.max_results", kind: "number", agent: true, scopes: ALL, fallback: "8" },
   { key: "memory.enabled", kind: "boolean", agent: true, scopes: ALL, reload: true, fallback: "true" },

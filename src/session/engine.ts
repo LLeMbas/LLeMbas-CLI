@@ -18,6 +18,7 @@ import { contextWindow } from "../provider/discover.ts"
 import { summaryTurns, type Store } from "./store.ts"
 import { estimateTokens, estimateValue } from "../provider/tokens.ts"
 import { duration } from "../duration.ts"
+import { memoryResults, presentIds, ResultContext } from "./results.ts"
 
 export interface EngineOptions {
   bus: Bus
@@ -39,7 +40,7 @@ export interface EngineOptions {
   budget?: { wall_seconds?: number; output_bytes?: number; completion_tokens?: number }
   /** Rules added by "always allow (project)" are handed here to persist. */
   persistRule?: (rule: Rule) => void
-  compaction?: { autoAt?: number; prune?: boolean }
+  compaction?: { autoAt?: number }
   /** Starts a subagent for the task tool; absent in a subagent. */
   spawn?: ToolContext["spawn"]
   /** The model to switch to when this one's server cannot be reached (its `fallback` list), or
@@ -59,7 +60,6 @@ export interface PromptMeta {
 }
 
 const MAX_PARALLEL = LOOP.parallel.max
-const PRUNED = "[This output was removed to save context. Run the tool again if you need it.]"
 /** What a message sent mid-turn starts with. Said, not hidden: Hermes found that a model refuses an
  *  unmarked one as an injection. A resumed session shows the message without it. */
 /** What /continue (ctrl+g) sends: carry on after being stopped, or after an answer that ended
@@ -139,6 +139,10 @@ export class Engine {
   /** The step's "background now" signal (ToolContext.backgroundNow), while its tools run. */
   private bgNow: AbortController | undefined
 
+  /** The session's tool results: their ids, what each insertion says, what recall shows
+   *  (session/results.ts, harness context.md). */
+  results: ResultContext
+
   constructor(readonly o: EngineOptions) {
     this.mode = o.mode
     this._effort = o.effort
@@ -146,6 +150,13 @@ export class Engine {
     this.client = o.client
     this.sessionId = o.sessionId
     this.plan = this.storedPlan()
+    this.results = this.resultsFor(o.sessionId)
+  }
+
+  /** A session's results: kept with it in the store, or in memory without one. A stub may point
+   *  only at a result still in this conversation. */
+  private resultsFor(sessionId: string | undefined): ResultContext {
+    return new ResultContext(this.o.store && sessionId ? this.o.store.results(sessionId) : memoryResults(), () => presentIds(this.messages))
   }
 
   /** The plan the store holds for this session, if any. */
@@ -191,6 +202,7 @@ export class Engine {
     this.sessionRules = []
     this.recentCalls = []
     this.withdrawn.clear()
+    this.results = this.resultsFor(sessionId)
     // A new session's plan is whatever the store holds for it: none for a fresh one, the old one
     // on a resume.
     this.plan = this.storedPlan()
@@ -230,6 +242,10 @@ export class Engine {
     for await (const ev of this.client.stream({ system: "", messages: [{ role: "user", parts: [{ type: "text", text: prompt }] }], tools: [], effort: null, signal }))
       if (ev.type === "finish") summary = ev.message.parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("").trim()
     if (!summary) throw new Error("the model returned an empty summary")
+    // The harness's own table of the reads still in the conversation (context.md §7), after the
+    // summary; the conversation is then the summary alone, so no stub can point at a result before it.
+    const table = this.results.compactionTable()
+    if (table) summary = `${summary}\n\n${table}`
     if (this.o.store && this.sessionId) this.o.store.compaction(this.sessionId, summary)
     this.messages = summaryTurns(summary)
     this.usage = undefined
@@ -255,42 +271,16 @@ export class Engine {
     return Math.min(this.usage.output, this.usage.reasoning ?? estimate)
   }
 
-  /** Replace the content of old tool results, keeping the most recent `protect` tokens whole.
-   *  Returns the tokens saved. (OpenCode prunes the same way before it summarises.) */
-  prune(protect: number): number {
-    let recent = 0
-    let saved = 0
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      const m = this.messages[i]!
-      const size = estimateValue(m)
-      if (recent < protect) {
-        recent += size
-        continue
-      }
-      if (m.role === "tool" && m.content.length > 400 && !m.content.startsWith(PRUNED)) {
-        saved += estimateTokens(m.content) - estimateTokens(PRUNED)
-        this.messages[i] = { ...m, content: PRUNED }
-      }
-    }
-    return saved
-  }
-
-  /** Before a step: past compaction.auto_at of the window, prune; if that is not enough, compact. */
+  /** Before a step: past compaction.auto_at of the window, compact. Old tool results are never
+   *  pruned in place (harness context.md: nothing already sent is rewritten — it would throw the
+   *  prompt cache away from that point); compaction is the one deliberate break. */
   private async manageContext(signal: AbortSignal) {
     const window = contextWindow(this.model)
     const autoAt = this.o.compaction?.autoAt ?? 0.85
     if (!window || autoAt >= 1) return
     const limit = window * autoAt
-    let used = this.contextUsed()
+    const used = this.contextUsed()
     if (used === undefined || used < limit) return
-    if (this.o.compaction?.prune !== false) {
-      const saved = this.prune(Math.min(40_000, Math.floor(window * 0.3)))
-      if (saved > 0) {
-        used -= saved
-        this.o.bus.emit({ type: "notice", message: `context at ${Math.round(((used + saved) / window) * 100)}%: pruned old tool outputs, ~${saved} tokens freed` })
-      }
-      if (used < limit) return
-    }
     // Compacting again and again within one turn loses more each time: the window is simply too
     // small for the task. Say so once and stop, rather than summarising in circles.
     if (this.autoCompactions >= 2) {
@@ -612,6 +602,8 @@ export class Engine {
 
       // Decide every call first — asking is sequential — then run what was allowed.
       const results = new Map<string, ToolResult>()
+      /** Each call's arguments as its tool got them: a repeated listing or search is compared by them. */
+      const argsOf = new Map<string, unknown>()
       const runnable: { call: ToolCallPart; tool: Tool; args: unknown; paths: string[]; writes: boolean; edited?: string }[] = []
       for (const call of calls) {
         if (signal.aborted) break
@@ -619,7 +611,10 @@ export class Engine {
         if ("result" in decided) {
           results.set(call.id, decided.result)
           if (decided.denied) bus.emit({ type: "tool_denied", id: call.id, name: call.name, reason: decided.result.output })
-        } else runnable.push({ call, ...decided })
+        } else {
+          runnable.push({ call, ...decided })
+          argsOf.set(call.id, decided.args)
+        }
       }
       const bgNow = new AbortController()
       this.bgNow = bgNow
@@ -673,7 +668,7 @@ export class Engine {
       for (const call of calls) {
         const r = results.get(call.id) ?? { output: "Not run: the reply was cancelled.", isError: true }
         this.turnOutputBytes += Buffer.byteLength(r.output)
-        this.push({ role: "tool", callId: call.id, name: call.name, content: r.output, isError: r.isError })
+        this.push({ role: "tool", callId: call.id, name: call.name, content: this.inserted(call.name, argsOf.get(call.id), r), isError: r.isError })
         if (r.images) images.push(...r.images)
       }
       // No dialect takes an image inside a tool result the same way; a user turn right after the
@@ -684,6 +679,16 @@ export class Engine {
         return "cancelled"
       }
     }
+  }
+
+  /** What a result becomes in the conversation (harness context.md): its id first, a read's lines
+   *  and hash, a stub for an unchanged re-read or a repeated listing, an edit's diff, a long output's
+   *  head and tail. Decided now, once: nothing already sent is rewritten. */
+  private inserted(tool: string, args: unknown, r: ToolResult): string {
+    const c = r.context
+    if (c?.kind === "read" && !r.isError) return this.results.insert({ ...c, body: r.output })
+    if (c && c.kind !== "read" && c.kind !== "output" && !r.isError) return this.results.insert(c)
+    return this.results.insert({ kind: "output", tool, args: args ?? {}, text: r.output, ...(r.isError ? { error: true } : {}) })
   }
 
   private async decide(

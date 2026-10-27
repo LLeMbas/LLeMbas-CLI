@@ -25,7 +25,7 @@ const result = () => fake!.requests[1].messages.at(-1).content as string
 test("the edited command runs, and the result says so first", async () => {
   const a = app("echo two")
   await a.engine.prompt("go")
-  expect(result()).toStartWith("The user changed the command before allowing it. What ran: echo two")
+  expect(result()).toStartWith("[#0001]\nThe user changed the command before allowing it. What ran: echo two")
   expect(result()).toContain("two")
   expect(result()).not.toContain("one\n")
 })

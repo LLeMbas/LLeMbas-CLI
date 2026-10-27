@@ -12,6 +12,7 @@ import { straySkillNote } from "../skill/index.ts"
 import { absPath, defineTool, readText, showPath, ToolError, type ToolContext } from "./tool.ts"
 import { diffStat } from "./write.ts"
 import { described } from "../harness.ts"
+import { hunks, lineCount, sha256, type EditedFile } from "../session/results.ts"
 
 function hunksOf(text: string): Hunk[] {
   try {
@@ -35,7 +36,7 @@ function namedFiles(a: { patch: string; path?: string }): string[] {
   return hunksOf(a.patch).flatMap((h) => (h.type === "update" && h.movePath ? [h.path, h.movePath] : [h.path]))
 }
 
-type Op = { kind: "write"; path: string; content: string; before: string } | { kind: "delete"; path: string; before: string }
+type Op = { kind: "write"; path: string; content: string; before: string; created?: boolean } | { kind: "delete"; path: string; before: string }
 
 function opsOf(original: Map<string, string | null>, current: Map<string, string | null>): Op[] {
   const ops: Op[] = []
@@ -43,7 +44,7 @@ function opsOf(original: Map<string, string | null>, current: Map<string, string
     const before = original.get(path) ?? null
     if (now === before) continue
     if (now === null) ops.push({ kind: "delete", path, before: before! })
-    else ops.push({ kind: "write", path, content: now, before: before ?? "" })
+    else ops.push({ kind: "write", path, content: now, before: before ?? "", ...(before === null ? { created: true } : {}) })
   }
   return ops
 }
@@ -170,6 +171,12 @@ export const applyPatchTool = defineTool({
     const all = patches.join("\n")
     const { added, removed } = diffStat(all)
     const names = ops.map((o) => showPath(o.path, ctx)).join(", ")
-    return { output: `Applied to ${names} (+${added} −${removed}).${straySkillNote(ops.filter((o) => o.kind === "write").map((o) => o.path), ctx)}`, title: `${names} +${added} −${removed}`, meta: { diff: all } }
+    const note = straySkillNote(ops.filter((o) => o.kind === "write").map((o) => o.path), ctx)
+    const files: EditedFile[] = ops.map((op) => {
+      const path = showPath(op.path, ctx)
+      if (op.kind === "delete") return { path, deleted: true }
+      return op.created ? { path, sha: sha256(op.content), created: lineCount(op.content) } : { path, sha: sha256(op.content), hunks: hunks(op.before, op.content) }
+    })
+    return { output: `Applied to ${names} (+${added} −${removed}).${note}`, title: `${names} +${added} −${removed}`, meta: { diff: all }, context: { kind: "edit", files, ...(note ? { note } : {}) } }
   },
 })

@@ -5,6 +5,7 @@ import { replace } from "./replace-text.ts"
 import { absPath, defineTool, readText, showPath, ToolError, type ToolContext } from "./tool.ts"
 import { diffStat, guardExisting } from "./write.ts"
 import { described } from "../harness.ts"
+import { hunks, sha256 } from "../session/results.ts"
 
 async function planEdits(a: { path: string; edits: { old: string; new: string; all?: boolean }[] }, ctx: ToolContext) {
   const abs = absPath(a.path, ctx)
@@ -45,6 +46,7 @@ export const multieditTool = defineTool({
     ctx.fileStamps.set(abs, (await stat(abs)).mtimeMs)
     const patch = createTwoFilesPatch(display, display, before, after, "", "", { context: 3 })
     const { added, removed } = diffStat(patch)
-    return { output: `Edited ${display}: ${a.edits.length} changes (+${added} −${removed}).`, title: `${display} +${added} −${removed}`, meta: { diff: patch } }
+    const written = crlf ? after.replaceAll("\n", "\r\n") : after
+    return { output: `Edited ${display}: ${a.edits.length} changes (+${added} −${removed}).`, title: `${display} +${added} −${removed}`, meta: { diff: patch }, context: { kind: "edit", files: [{ path: a.path, sha: sha256(written), hunks: hunks(before, after) }] } }
   },
 })

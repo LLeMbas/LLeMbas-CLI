@@ -111,6 +111,27 @@ export const LOOP: {
     running_max: { default: number }
     subagent_steps: { default: number }
   }
+  /** Context hygiene (spec 3.0.0, harness/context.md): the result ids, the texts of a read's
+   *  header, a stub, the elided line, recall; the output cap; what is deduplicated; the table
+   *  compaction adds. */
+  context: {
+    ids: { digits: number }
+    read_header: string
+    read_header_empty: string
+    edit_header: string
+    header: string
+    unchanged: string
+    same_result: string
+    elided: string
+    created: string
+    no_result: string
+    recall_header: string
+    sha_digits: number
+    cap: { max_lines: number; max_chars: number; head_lines: number; head_chars: number; tail_lines: number; tail_chars: number }
+    dedupe: { by_hash: string[]; by_result: string[] }
+    compaction: { heading: string; line: string; rows: number }
+    reasoning: string
+  }
 } = LOOP_JSON
 
 /** The `purpose` argument (harness/purpose.json). */

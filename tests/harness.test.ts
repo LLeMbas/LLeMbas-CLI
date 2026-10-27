@@ -69,8 +69,7 @@ test("every tool says how it is shown (block), from the spec's list", () => {
 })
 
 test("every tool the spec gives the CLI is built in, and every built-in tool is in the spec", () => {
-  // recall comes with context hygiene (harness/context.md), in the commit that implements it.
-  expect(ours.map((t) => t.name).sort()).toEqual(forUs.map((t) => t.name).filter((n) => n !== "recall").sort())
+  expect(ours.map((t) => t.name).sort()).toEqual(forUs.map((t) => t.name).sort())
 })
 
 for (const t of ours) {

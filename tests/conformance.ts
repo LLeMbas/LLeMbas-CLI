@@ -19,6 +19,8 @@ import { resolveBase } from "../src/library/store.ts"
 import { NarrowError, narrowParameters, type Narrow } from "../src/harness.ts"
 import { fillPrompt } from "../src/prompt/fill.ts"
 import { instructionChain } from "../src/prompt/assemble.ts"
+import { CONTEXT, hunks, lineCount, memoryResults, presentIds, ResultContext, sha256 } from "../src/session/results.ts"
+import { readBody } from "../src/tool/read.ts"
 import { applyOps, type Op, type Target } from "../src/memory/store.ts"
 import { jobNote, type NoteCase } from "../src/jobs/note.ts"
 
@@ -114,6 +116,30 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
   instructions: (c) => {
     const files = new Set(c.files as string[])
     return instructionChain(c.boundary as string, c.start as string, (p) => files.has(p) && readableUnder(c.grants as Record<string, string> | undefined, p))
+  },
+  // Context hygiene: one session's insertions, step by step. The conversation is the results
+  // inserted since the last compaction, which is what a stub may point at.
+  context: (c) => {
+    const messages: { role: string; content: string }[] = []
+    const rc = new ResultContext(memoryResults(), () => presentIds(messages), { ...CONTEXT.cap, ...((c.limits ?? {}) as object) })
+    return (c.steps as Record<string, any>[]).map((st) => {
+      if (st.op === "compact") {
+        const table = rc.compactionTable()
+        messages.length = 0
+        return table
+      }
+      let text: string
+      if (st.op === "read") {
+        const { body, from, to, of } = readBody(st.content, st.offset, st.limit)
+        text = rc.insert({ kind: "read", path: st.path, key: st.path, sha: sha256(st.content), from, to, of, body }, st.id)
+      } else if (st.op === "edit" || st.op === "write") {
+        const sha = sha256(st.after)
+        text = rc.insert({ kind: "edit", files: [st.before === undefined ? { path: st.path, sha, created: lineCount(st.after) } : { path: st.path, sha, hunks: hunks(st.before, st.after) }] }, st.id)
+      } else if (st.op === "recall") text = rc.insert({ kind: "recall", target: st.target, offset: st.offset, limit: st.limit }, st.id)
+      else text = rc.insert({ kind: "output", tool: st.tool, args: st.args, text: st.text }, st.id)
+      messages.push({ role: "tool", content: text })
+      return text
+    })
   },
   library_scope: (c) => resolveBase(c.bases as { id: string; name: string }[], c.base as string | null),
   toolcall_index: (c) => {

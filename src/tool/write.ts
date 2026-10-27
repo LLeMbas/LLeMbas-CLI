@@ -5,6 +5,7 @@ import { z } from "zod"
 import { straySkillNote } from "../skill/index.ts"
 import { absPath, defineTool, showPath, ToolError, type ToolContext } from "./tool.ts"
 import { described } from "../harness.ts"
+import { hunks, lineCount, sha256 } from "../session/results.ts"
 
 /** Refuse to overwrite a file the model has not read, or one changed on disk since it was read. */
 export async function guardExisting(abs: string, display: string, ctx: ToolContext): Promise<boolean> {
@@ -57,10 +58,14 @@ export const writeTool = defineTool({
     ctx.fileStamps.set(abs, st.mtimeMs)
     const patch = createTwoFilesPatch(display, display, before, a.content, "", "", { context: 3 })
     const { added, removed } = diffStat(patch)
+    const note = straySkillNote([abs], ctx)
+    const sha = sha256(a.content)
     return {
-      output: (existed ? `Replaced ${display} (+${added} −${removed}).` : `Created ${display} (${a.content.split("\n").length} lines).`) + straySkillNote([abs], ctx),
+      output: (existed ? `Replaced ${display} (+${added} −${removed}).` : `Created ${display} (${a.content.split("\n").length} lines).`) + note,
       title: `${display} +${added} −${removed}`,
       meta: { diff: patch },
+      // Over an existing file the diff; a new one is said in a line — the model wrote it and has it.
+      context: { kind: "edit", files: [existed ? { path: a.path, sha, hunks: hunks(before, a.content) } : { path: a.path, sha, created: lineCount(a.content) }], ...(note ? { note } : {}) },
     }
   },
 })

@@ -121,6 +121,14 @@ function legacyKeys(all: Record<string, unknown>, file: string, notes: string[])
     if (!(typeof p === "string" && ["none", "default", "neutral"].includes(p.toLowerCase())))
       notes.push(`${file}: personality "${String(p)}" is not a preset any more (${PERSONALITIES.join(", ")}); none is used`)
   }
+  // compaction.prune cut old tool outputs in place, which threw the prompt cache away; harness spec
+  // 3.0.0 never rewrites what was sent (context.md), so the key is gone.
+  const comp = all.compaction
+  if (comp && typeof comp === "object" && !Array.isArray(comp) && "prune" in comp) {
+    const { prune: _, ...rest } = comp as Record<string, unknown>
+    all.compaction = rest
+    notes.push(`${file}: compaction.prune was removed — old tool outputs are no longer cut afterwards; delete it`)
+  }
   // One file written as a plain string, not a list: read as the list of that one, not dropped
   // without a word by the schema.
   if (typeof all.instruction_files === "string") {

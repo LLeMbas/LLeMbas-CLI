@@ -204,7 +204,7 @@ describe("in an app", () => {
     a.newSession()
     expect(a.jobs()).toEqual([])
     await a.turns.prompt("list")
-    expect(fake!.requests[3].messages.at(-1).content).toBe("No background jobs.")
+    expect(fake!.requests[3].messages.at(-1).content).toBe("[#0001]\nNo background jobs.")
     expect(a.registry.running(first)).toHaveLength(1)
     // Deleting a session stops its jobs.
     expect(a.registry.stopAll(first)).toBe(1)

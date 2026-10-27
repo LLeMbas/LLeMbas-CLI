@@ -241,16 +241,13 @@
       "additionalProperties": false
     },
     "compaction": {
-      "description": "Automatic context management: past auto_at of the window, old tool outputs are pruned, then the conversation is compacted. auto_at: 1 turns it off.",
+      "description": "Automatic context management: past auto_at of the window, the conversation is compacted. auto_at: 1 turns it off. (Old tool outputs are never cut afterwards: that would make the server read the whole conversation again.)",
       "type": "object",
       "properties": {
         "auto_at": {
           "type": "number",
           "minimum": 0.1,
           "maximum": 1
-        },
-        "prune": {
-          "type": "boolean"
         }
       },
       "additionalProperties": false

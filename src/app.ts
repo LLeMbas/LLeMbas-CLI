@@ -331,7 +331,7 @@ export function createApp(o: AppOptions): App {
   const prototypesBlock = () => (context.prototypes?.offered || (!context.prototypes && loaded.config.prototypes === true) ? { sources: context.prototypes?.sources ?? "" } : undefined)
   /** The three personal keys this session uses: the client's for it, else the config's. */
   const personal = () => (context.personalization ? personalConfig({ enabled: true, available: true, ...context.personalization }) : loaded.config)
-  const system = (m: Mode, current: ResolvedModel, subagent?: { name: string; instructions: string; report: boolean; skills: boolean }, at?: { cwd: string; root: string }, plan?: Plan) =>
+  const system = (m: Mode, current: ResolvedModel, subagent?: { name: string; instructions: string; report: boolean; skills: boolean; recall: boolean }, at?: { cwd: string; root: string }, plan?: Plan) =>
     assembleSystem({
       modelRef: current.ref,
       family: familyOf(current),
@@ -360,6 +360,7 @@ export function createApp(o: AppOptions): App {
       ...(context.instructions ? { instance: { name: contextFrom, instructions: context.instructions } } : {}),
       library: libraryBlock(),
       prototypes: prototypesBlock(),
+      context: subagent ? subagent.recall : true,
     })
   // The other configured models, for the task tool's `model`, or a switch.
   const roster = (current: string) =>
@@ -369,7 +370,7 @@ export function createApp(o: AppOptions): App {
       .slice(0, 15)
       .map((m) => `- ${m.ref}${m.spec.name ? ` (${m.spec.name})` : ""}${m.spec.notes ? ` — ${m.spec.notes}` : ""}`)
       .join("\n")
-  const compaction = { autoAt: loaded.config.compaction?.auto_at, prune: loaded.config.compaction?.prune }
+  const compaction = { autoAt: loaded.config.compaction?.auto_at }
 
   // Subagents (the task tool): a child engine with its own bus and read-tracker, the agent's
   // tools and mode, the same asker (permission prompts still reach the user), no task tool of its
@@ -509,6 +510,7 @@ export function createApp(o: AppOptions): App {
               : spec.instructions,
             report: childTools.some((t) => t.name === "report"),
             skills: childTools.some((t) => t.name === "skill_view"),
+            recall: childTools.some((t) => t.name === "recall"),
           },
           at,
           plan,
@@ -699,7 +701,6 @@ export function createApp(o: AppOptions): App {
       else if (key === "limits.bash_timeout") engine.o.toolCtx.bashTimeoutMs = Number(v) * 1000
       else if (key === "limits.wall_seconds" || key === "limits.output_bytes" || key === "limits.completion_tokens") engine.o.budget = { ...engine.o.budget, [key.slice("limits.".length)]: Number(v) }
       else if (key === "compaction.auto_at") compaction.autoAt = Number(v)
-      else if (key === "compaction.prune") compaction.prune = Boolean(v)
       else if (key === "knowledge") libraryCtx.bases = (v as string[]).length ? (v as string[]) : undefined
       if (key !== "model" && key !== "effort" && key !== "mode") setIn(key, v)
       bus.emit({ type: "setting", key, value: v })

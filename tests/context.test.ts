@@ -45,12 +45,14 @@ describe("context", () => {
     expect(fake!.calls.some((c) => c.path.endsWith("/unload"))).toBe(true)
   })
 
-  test("past auto_at: the older of two large outputs is pruned, the recent one kept, no compaction", async () => {
-    // window 16000, auto_at 0.6 → limit 9600; the most recent 30% (4800 tokens) is protected.
+  test("past auto_at: nothing already sent is cut; the conversation is compacted, with a table of the reads", async () => {
+    // window 16000, auto_at 0.6 → limit 9600. Harness spec 3.0.0 (context.md): old tool outputs are
+    // never pruned in place — that would make the server read everything after them again.
     const a = app(`connections:\n  f:\n    dialect: openai-chat\n    base_url: URL\n    models: { m: { context: 16000 } }\n`, [
       { chunks: [toolCall(0, "c1", "read", '{"path":"big.txt"}'), usage(1000, 10)] },
       { chunks: [toolCall(0, "c2", "read", '{"path":"big2.txt"}'), usage(6600, 10)] },
-      { chunks: [delta({ content: "done" }), usage(7000, 5)] },
+      { chunks: [delta({ content: "## Summary\nRead two files." })] },
+      { chunks: [delta({ content: "done" }), usage(2000, 5)] },
     ], "compaction: { auto_at: 0.6 }\n")
     const lines = Array.from({ length: 1000 }, (_, i) => `line ${i} of a long file`).join("\n")
     writeFileSync(join(a.project.root, "big.txt"), lines)
@@ -58,14 +60,21 @@ describe("context", () => {
     const notices: string[] = []
     a.bus.on((e: Event) => e.type === "notice" && notices.push(e.message))
     await a.engine.prompt("go")
-    expect(notices.some((n) => n.includes("pruned old tool outputs"))).toBe(true)
-    expect(notices.some((n) => n.includes("compacting"))).toBe(false)
-    const results = fake!.requests.at(-1).messages.filter((m: any) => m.role === "tool").map((m: any) => m.content as string)
-    expect(results[0]).toContain("removed to save context")
-    expect(results[1]).toContain("line 999 of a long file")
+    expect(notices.some((n) => n.includes("pruned"))).toBe(false)
+    expect(notices.some((n) => n.includes("compacting"))).toBe(true)
+    // The first read went out whole, and stayed whole until the summary replaced the conversation.
+    const sent = fake!.requests[1].messages.filter((m: any) => m.role === "tool").map((m: any) => m.content as string)
+    expect(sent[0]).toStartWith("[#0001 big.txt lines 1-1000 of 1000 sha ")
+    expect(sent[0]).toContain("line 999 of a long file")
+    // After it: the summary, the harness's table of what was read, and the request word for word.
+    const after = JSON.stringify(fake!.requests[3].messages)
+    expect(after).toContain("Read two files.")
+    expect(after).toContain("## Files read before this summary")
+    expect(after).toMatch(/\| big\.txt \| 1-1000 of 1000 \| [0-9a-f]{8} \| #0001 \|/)
+    expect(after).toMatch(/\| big2\.txt \| 1-1000 of 1000 \| [0-9a-f]{8} \| #0002 \|/)
   })
 
-  test("still too full after pruning: compacted mid-task, then told to carry on", async () => {
+  test("too full: compacted mid-task, then told to carry on", async () => {
     const a = app(`connections:\n  f:\n    dialect: openai-chat\n    base_url: URL\n    models: { m: { context: 4000 } }\n`, [
       { chunks: [delta({ content: "y".repeat(8000) }), toolCall(0, "c1", "list", "{}"), usage(3900, 2000)] },
       { chunks: [delta({ content: "## What we are doing\nA long task." })] },
@@ -91,7 +100,7 @@ describe("context", () => {
     expect(text).toContain("window 32.8k")
     expect(text).toContain("system prompt")
     expect(text).toMatch(/tool definitions \(\d+\)/)
-    expect(text).toMatch(/tool results\s+503/) // one 6000-character line, cut at 2000 by read
+    expect(text).toMatch(/tool results\s+514/) // one 6000-character line, cut at 2000 by read, under its header
     expect(text).toMatch(/in use\s+3\.1k/)
   })
 })

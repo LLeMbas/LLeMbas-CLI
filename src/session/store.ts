@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS jobs (
   PRIMARY KEY (session_id, id)
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text, content='', contentless_delete=1);
+CREATE TABLE IF NOT EXISTS results (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, seq INTEGER NOT NULL, id TEXT NOT NULL,
+  json TEXT NOT NULL, text TEXT NOT NULL,
+  PRIMARY KEY (session_id, id)
+);
 CREATE TABLE IF NOT EXISTS session_meta (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, key TEXT NOT NULL, value TEXT NOT NULL,
   PRIMARY KEY (session_id, key)
@@ -193,6 +198,31 @@ export class Store {
       .all(sessionId, after) as { json: string }[]
     const msgs = rows.map((r) => JSON.parse(r.json) as Message)
     return last ? [...summaryTurns(JSON.parse(last.json).summary as string), ...msgs] : msgs
+  }
+
+  /** A session's tool results, each in full (harness spec 3.0.0, context.md): what `recall` shows
+   *  and what a stub is decided against. Kept as long as the session is. */
+  results(sessionId: string): import("./results.ts").ResultStore {
+    const q = {
+      count: this.db.query("SELECT COUNT(*) AS n FROM results WHERE session_id = ?"),
+      save: this.db.query("INSERT OR REPLACE INTO results (session_id, seq, id, json, text) VALUES (?, ?, ?, ?, ?)"),
+      get: this.db.query("SELECT json, text FROM results WHERE session_id = ? AND id = ?"),
+      all: this.db.query("SELECT json FROM results WHERE session_id = ? ORDER BY seq"),
+    }
+    type R = import("./results.ts").StoredResult
+    return {
+      count: () => (q.count.get(sessionId) as { n: number }).n,
+      save: (r) => {
+        const { text, ...rest } = r
+        q.save.run(sessionId, (q.count.get(sessionId) as { n: number }).n + 1, r.id, JSON.stringify(rest), text)
+      },
+      get: (id) => {
+        const row = q.get.get(sessionId, id) as { json: string; text: string } | null
+        return row ? ({ ...JSON.parse(row.json), text: row.text } as R) : undefined
+      },
+      // Without their text: the table is decided by hashes and ranges.
+      all: () => (q.all.all(sessionId) as { json: string }[]).map((r) => ({ ...JSON.parse(r.json), text: "" }) as R),
+    }
   }
 
   /** Something a session keeps besides its messages, as JSON. */

@@ -76,7 +76,7 @@ describe("subagents", () => {
     expect(child.messages[0].content).not.toContain("## Skills")
     // the parent gets the report, not the reading
     const result = fake!.requests[3].messages.at(-1).content as string
-    expect(result).toStartWith("calc.py:2 divides by len(v) - 1")
+    expect(result).toStartWith("[#0001]\ncalc.py:2 divides by len(v) - 1")
     expect(result).toContain("[explore subagent · 2 steps · 1 tool call]")
     expect(fake!.requests[3].messages.some((m: any) => m.role === "tool" && m.content.includes("return sum(v)"))).toBe(false)
     expect(events.find((e) => e.type === "sub_tool")).toMatchObject({ type: "sub_tool", callId: "t1", name: "read" })
@@ -198,7 +198,7 @@ describe("background subagents (spec 2.0.0)", () => {
     )
     await a.turns.prompt("look into it in the background")
     const started = fake!.requests[1].messages.at(-1).content as string
-    expect(started).toStartWith("Started subagent explore as job1 (find the bug).")
+    expect(started).toStartWith("[#0001]\nStarted subagent explore as job1 (find the bug).")
     await settled(a, 3)
     const note = fake!.requests[2].messages.at(-1).content as string
     expect(note).toStartWith(MARKS.subagent)
@@ -298,7 +298,7 @@ describe("background subagents (spec 2.0.0)", () => {
     )
     await a.turns.prompt("go")
     const results = fake!.requests[1].messages.filter((m: any) => m.role === "tool").map((m: any) => m.content as string)
-    expect(results[0]).toStartWith("Started subagent explore as job1")
+    expect(results[0]).toStartWith("[#0001]\nStarted subagent explore as job1")
     expect(results[1]).toContain("holds one model at a time, and a subagent is already running on g/m there")
     expect(other!.requests.map((r: any) => r.model)).toEqual(["m"])
     await settled(a, 3)

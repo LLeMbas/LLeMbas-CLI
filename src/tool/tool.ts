@@ -107,6 +107,9 @@ export interface ToolResult {
   meta?: Record<string, unknown>
   /** Images for the model (view_image): sent in a user turn after the tool results. */
   images?: import("../provider/types.ts").ImagePart[]
+  /** What the result is, for its insertion into the conversation (session/results.ts, harness
+   *  context.md): a read's lines and hash, an edit's diff. Absent: an ordinary output. */
+  context?: import("../session/results.ts").ToolInsert
 }
 
 export interface Tool<S extends z.ZodType = z.ZodType> {

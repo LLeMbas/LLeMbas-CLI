@@ -44,7 +44,7 @@ describe("plan mode", () => {
     expect(readFileSync(join(a.project.root, seen[0]!.path), "utf8")).toBe(RENDERED + "\n")
     expect(a.engine.plan?.steps).toEqual(["calc.py: divide by len(values)"])
     // The model read the plan back with its ids from plan_write.
-    expect(fake!.requests[1].messages.at(-1).content).toBe(RENDERED)
+    expect(fake!.requests[1].messages.at(-1).content).toBe(`[#0001]\n${RENDERED}`)
     expect(names(fake!.requests[0])).toContain("plan_submit")
     expect(names(fake!.requests[0])).toContain("plan_write")
     expect(fake!.requests[0].messages[0].content).toContain("Permission mode: plan")
