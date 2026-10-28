@@ -45,7 +45,7 @@ test("an unchanged re-read is a stub; after an edit the file is read in full; a 
   expect(r[0]).toMatch(/^\[#0001 a\.txt lines 1-3 of 3 sha ([0-9a-f]{8})\]\n1: one\n2: two\n3: three$/)
   const sha = /sha ([0-9a-f]{8})/.exec(r[0]!)![1]
   expect(r[1]).toBe(`[#0002 a.txt lines 2-2 of 3 sha ${sha}] Unchanged since #0001, which already shows lines 1-3.`)
-  expect(r[2]).toBe("[#0003]\na.txt")
+  expect(r[2]).toBe(`[#0003]\n${join(dir, "a.txt")}`)
   expect(r[3]).toBe("[#0004] Same result as #0003.")
   expect(r[4]).toMatch(/^\[#0005 a\.txt sha [0-9a-f]{8}\]\n@@ -1,3 \+1,3 @@\n one\n-two\n\+2\n three$/)
   expect(r[5]).toMatch(/^\[#0006 a\.txt lines 1-3 of 3 sha [0-9a-f]{8}\]\n1: one\n2: 2\n3: three$/)

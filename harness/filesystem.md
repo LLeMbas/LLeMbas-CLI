@@ -24,7 +24,12 @@ one access level for the whole working directory, decided by the CLI's permissio
   links: a path is what it says. On a device, a link is followed, and where the CLI's rules look at
   a path they look at where it really is (an `AGENTS.md` committed as a link to a file outside the
   project is not read).
-- Every answer names a path in its **absolute, resolved** form, whatever the call gave.
+- Every answer names a path in its **absolute, resolved** form, whatever the call gave — an
+  error, a refusal, a search's results, a tool's own message. **The one exception is a result's
+  bracket** (`context.md`): a read's header, an edit's bracket and the compaction table name the
+  path as the call gave it, so the model recognises what it wrote. What identifies a file, there
+  too, is its absolute path. A listing names entries by their names under the directory listed
+  (*A listing*).
 - Names are case-sensitive, `/`-separated, and never empty, `.` or `..`.
 
 ## Node kinds
@@ -120,6 +125,22 @@ resolved absolute path:
 | `mv`'s target, or a file `mkdir` was asked to make | `Already exists: {path}` |
 | a tool whose `requires` is not met at the time of the call | the tool's `unavailable` text |
 
+A missing file is `No such file or directory` for **every** tool that needs it to exist — `read`,
+`edit`, `show`, `list`, `glob`, `grep`, `python`'s `files` — with no hint after it: in a chat a
+hidden file must read exactly as a missing one, and a hint ("use write to create it") would say
+which. The tool's description says what it needs.
+
+`write` and `edit` refuse to change an existing file the session has not seen, or one that changed
+since it last saw it (by reading it, or by its own change). The texts, exactly:
+
+| Case | Text |
+|---|---|
+| the file exists and this session has not read it | `{path} exists and has not been read in this session. Read it first.` |
+| it changed since this session last read or changed it | `{path} changed since you last read it. Read it again before changing it.` |
+
+How a change is noticed is each side's: the content hash on the server, the modification time on a
+device.
+
 A device's own errors (a file too large, a binary file, a protected path) are the CLI's and stay as
 they are; the ones above it says the same way.
 
@@ -127,7 +148,26 @@ they are; the ones above it says the same way.
 
 `list` and a directory given to `read`: one entry per line, directories (and mounts) with a trailing
 `/`, then — in a chat — a mount marked ` [mount]` and an entry the session can read but not change,
-in a directory it can, marked ` [read-only]`. Directories first, then by name.
+in a directory it can, marked ` [read-only]`. Directories first, then by name in code-point order
+(`B` before `a`). An empty directory is `(empty directory)` from `read`, `(empty)` from `list`.
+
+`list` with a `depth` (default 2, at most 6) is a tree: the entries of the directory listed, and
+under each directory the entries of that directory, each level indented by two more spaces, down to
+`depth` levels in all (depth 1 is the directory's own entries). The order and the marks are a single
+listing's, at every level; a directory's entries come right after it. At most 400 lines, then
+`(more entries — list a directory further down)` on its own line. A device leaves out ignored and
+build directories (`.git`, `node_modules`, …, and what `.gitignore` says) and shows only
+directories that hold a file it would list.
+
+```
+docs/
+  guide/
+  index.md
+repo/ [mount]
+  src/
+  README.md [read-only]
+notes.md
+```
 
 ## A search
 
@@ -194,9 +234,26 @@ section's, then a repository's. (Before 3.0.0 the CLI took only the nearest one.
 A skill is a directory with a `SKILL.md` (frontmatter `name`, `description`), and `skills_list`,
 `skill_view` and `skill_manage` are its meaning over files on both sides: the index in the prompt
 (`prompts/blocks/skills.md`), `skill_view` to load one, `skill_manage` to make or change one, which
-checks the frontmatter, the name and the size; `edit` works on the file too. In a chat, skills live
-in the tree (`/skills/<name>/SKILL.md`, and a skills repository mounted there); on a device they are
-local files, as before. Neither side syncs skills on its own.
+checks the frontmatter, the name and the size; `edit` works on the file too. Neither side syncs
+skills on its own.
+
+**Where they are found**, in order of precedence — a name found in an earlier place wins, and the
+later one is not offered:
+
+| Side | Places, the most specific first |
+|---|---|
+| chat | the `skills/` directory of every directory from the start directory up to the boundary, the nearest first, **the root's excluded**; then the person's own `/home/<user>/skills/`; then the organisation's `/skills/` (a skills repository mounted there, or a plain directory) |
+| device | the project's `.agent/skills/` (a trusted project); then the user's own skills directory; then the directories the configuration adds, in its order |
+
+So on both sides the session's own place comes first, the person's next, what is shared last. Only
+what the session can read is a skill there; `skill_manage` makes a new one in the person's own
+place.
+
+**A skill's name**, which `skill_manage` checks when it makes or renames one: lowercase letters,
+digits and `-`, starting with a letter or a digit, at most 64 characters —
+`^[a-z0-9][a-z0-9-]{0,63}$`, the Agent Skills format's rule. A `SKILL.md` made elsewhere whose name
+does not fit is still offered when its name is one line of at most 64 characters; a name is looked
+up ignoring case, with `_` and spaces read as `-`.
 
 ## Memory
 

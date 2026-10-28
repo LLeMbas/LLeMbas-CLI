@@ -5,6 +5,7 @@ import { dirname, join } from "node:path"
 import { z } from "zod"
 import { absPath, defineTool, showPath, ToolError } from "./tool.ts"
 import { described } from "../harness.ts"
+import { byListing } from "./search.ts"
 import { sha256 } from "../session/results.ts"
 
 const MAX_LINES = 2000
@@ -25,12 +26,12 @@ export const readTool = defineTool({
   async run(a, ctx) {
     const abs = absPath(a.path, ctx)
     const st = await stat(abs).catch(() => undefined)
-    if (!st) throw new ToolError(`${a.path} does not exist`)
+    if (!st) throw new ToolError(`No such file or directory: ${abs}`)
     if (st.isDirectory()) {
       const entries = await readdir(abs, { withFileTypes: true })
       const lines = entries
         .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
-        .sort((x, y) => Number(y.endsWith("/")) - Number(x.endsWith("/")) || x.localeCompare(y))
+        .sort(byListing)
       return { output: lines.join("\n") || "(empty directory)", title: `${showPath(abs, ctx)}/ · ${lines.length} entries` }
     }
     const file = Bun.file(abs)

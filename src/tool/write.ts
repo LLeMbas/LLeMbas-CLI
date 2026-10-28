@@ -7,15 +7,16 @@ import { absPath, defineTool, showPath, ToolError, type ToolContext } from "./to
 import { described } from "../harness.ts"
 import { hunks, lineCount, sha256 } from "../session/results.ts"
 
-/** Refuse to overwrite a file the model has not read, or one changed on disk since it was read. */
-export async function guardExisting(abs: string, display: string, ctx: ToolContext): Promise<boolean> {
+/** Refuse to overwrite a file the model has not read, or one changed on disk since it was read. The
+ *  texts are the spec's (filesystem.md, *Errors*), with the absolute path. */
+export async function guardExisting(abs: string, ctx: ToolContext): Promise<boolean> {
   const st = await stat(abs).catch(() => undefined)
   if (!st) return false
-  if (!st.isFile()) throw new ToolError(`${display} is not a regular file`)
-  if (!ctx.readFiles.has(abs)) throw new ToolError(`${display} exists and has not been read in this session. Read it first.`)
+  if (st.isDirectory()) throw new ToolError(`Is a directory: ${abs}`)
+  if (!st.isFile()) throw new ToolError(`${abs} is not a regular file`)
+  if (!ctx.readFiles.has(abs)) throw new ToolError(`${abs} exists and has not been read in this session. Read it first.`)
   const seen = ctx.fileStamps.get(abs)
-  if (seen !== undefined && st.mtimeMs > seen + 1)
-    throw new ToolError(`${display} changed on disk since you last read it. Read it again before changing it.`)
+  if (seen !== undefined && st.mtimeMs > seen + 1) throw new ToolError(`${abs} changed since you last read it. Read it again before changing it.`)
   return true
 }
 
@@ -43,13 +44,13 @@ export const writeTool = defineTool({
   async preview(a, ctx) {
     const abs = absPath(a.path, ctx)
     const display = showPath(abs, ctx)
-    const before = (await guardExisting(abs, display, ctx)) ? await Bun.file(abs).text() : ""
+    const before = (await guardExisting(abs, ctx)) ? await Bun.file(abs).text() : ""
     return createTwoFilesPatch(display, display, before, a.content, "", "", { context: 3 })
   },
   async run(a, ctx) {
     const abs = absPath(a.path, ctx)
     const display = showPath(abs, ctx)
-    const existed = await guardExisting(abs, display, ctx)
+    const existed = await guardExisting(abs, ctx)
     const before = existed ? await Bun.file(abs).text() : ""
     await mkdir(dirname(abs), { recursive: true })
     await Bun.write(abs, a.content)

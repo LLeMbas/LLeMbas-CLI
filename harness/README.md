@@ -95,18 +95,23 @@ this design.
 - **`filesystem.md`** — the file system as a contract: paths, the kinds `dir`, `file`, `mount`, the
   levels `none`, `ro`, `stage`, `commit`, grants and floors, the exact error texts, and the rule
   that a granted path under one that is not is reached only by its full path, its ancestor denied
-  for reading and writing and never listed. Search results and **indexing by tokens** (at most 480
+  for reading and writing and never listed. Paths absolute in every answer but a result's bracket;
+  one `No such file or directory` for every tool, the `write`/`edit` refusals' texts, the `list`
+  tree; where skills are found and in what order, and the name rule
+  (`^[a-z0-9][a-z0-9-]{0,63}$`). Search results and **indexing by tokens** (at most 480
   tokens a piece, 64 repeated; a piece the embedder refuses is split, never dropped).
   **Instruction files stack** from the boundary down to the start directory, outermost first, one
   per directory (`AGENTS.md`, else `CLAUDE.md`), none from a directory the session cannot read —
   the CLI took only the nearest one before. `blocks/workspace.md` (LLeMbas) tells a chat's model its
   view.
 - **`context.md`** — context hygiene, insert-time only, nothing sent ever rewritten: every result
-  has an id (`#a3f2`); a read carries its lines and content hash; an unchanged re-read, or a range
-  inside an earlier unchanged read, is a stub; output over 400 lines or 40,000 characters keeps its
+  has an id (`#0001`: its number in the session, in hex, at least 4 digits); a read carries its
+  lines and content hash, under the path as the call gave it; an unchanged re-read, or a range
+  inside an earlier unchanged read, is a stub — naming only a result in the request being built; output over 400 lines or 40,000 characters keeps its
   head and tail with `[N lines elided, full output #id]`; `recall` shows any stored result; edits
   answer with their diff; the same listing or search with the same result is a stub; compaction
-  adds a table of reads and empties the dedupe table; earlier reasoning is left to the chat
+  adds a table of the reads it covers (those since the previous compaction, in turns still in the
+  history) and empties the dedupe table; earlier reasoning is left to the chat
   template. `loop.json` `context` holds the texts and numbers, `blocks/context.md` tells the model.
 - **`acp.md`**: **link protocol 3** — LLeMbas 2.0 and LLeMbas CLI 2.0 speak it alone, and a 1.x peer
   and a 2.0 one refuse each other, each saying what to update (discovery's `protocol` is raised to 3

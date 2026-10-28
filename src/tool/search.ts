@@ -18,8 +18,8 @@ async function listFiles(dir: string, glob: string | undefined, ctx: ToolContext
   // Spawning in a directory that does not exist fails as "posix_spawn 'rg' ENOENT", which reads
   // as ripgrep missing.
   const st = await stat(dir).catch(() => undefined)
-  if (!st) throw new ToolError(`${showPath(dir, ctx)} does not exist.`)
-  if (!st.isDirectory()) throw new ToolError(`${showPath(dir, ctx)} is a file, not a directory.`)
+  if (!st) throw new ToolError(`No such file or directory: ${dir}`)
+  if (!st.isDirectory()) throw new ToolError(`Not a directory: ${dir}`)
   if (hasRg) {
     const args = ["rg", "--files", "--hidden", "--glob", "!.git"]
     if (glob) args.push("--glob", glob)
@@ -51,7 +51,8 @@ export const globTool = defineTool({
     const files = await listFiles(dir, a.pattern, ctx)
     const withTime = await Promise.all(files.map(async (f) => ({ f, t: (await stat(join(dir, f)).catch(() => undefined))?.mtimeMs ?? 0 })))
     withTime.sort((x, y) => y.t - x.t)
-    const shown = withTime.slice(0, 200).map((x) => showPath(join(dir, x.f), ctx))
+    // Absolute, as every answer names a path (filesystem.md, *Paths*).
+    const shown = withTime.slice(0, 200).map((x) => join(dir, x.f))
     const more = files.length > 200 ? `\n(${files.length - 200} more — narrow the pattern)` : ""
     return { output: (shown.join("\n") || "No files found.") + more, title: `${a.pattern} · ${files.length} files`, meta: { hits: files.length } }
   },
@@ -74,6 +75,7 @@ export const grepTool = defineTool({
   async run(a, ctx) {
     const target = absPath(a.path ?? ".", ctx)
     const lines: string[] = []
+    if (!(await stat(target).catch(() => undefined))) throw new ToolError(`No such file or directory: ${target}`)
     if (hasRg) {
       const args = ["rg", "--line-number", "--no-heading", "--color", "never", "--hidden", "--glob", "!.git", "--max-columns", "400", "--max-columns-preview"]
       if (a.ignore_case) args.push("-i")
@@ -82,7 +84,7 @@ export const grepTool = defineTool({
       args.push("-e", a.pattern, target)
       const r = await run(args, ctx.cwd, ctx.signal)
       if (r.code > 1) throw new ToolError(r.err.trim() || `rg exited ${r.code}`)
-      for (const l of r.out.split("\n")) if (l) lines.push(l.startsWith(target) ? showPath(target, ctx) + l.slice(target.length) : l)
+      for (const l of r.out.split("\n")) if (l) lines.push(l)
     } else {
       let re: RegExp
       try {
@@ -90,14 +92,13 @@ export const grepTool = defineTool({
       } catch (e) {
         throw new ToolError(`invalid regex: ${(e as Error).message}`)
       }
-      const st = await stat(target).catch(() => undefined)
-      if (!st) throw new ToolError(`${a.path} does not exist`)
+      const st = await stat(target)
       const files = st.isDirectory() ? (await listFiles(target, a.include, ctx)).map((f) => join(target, f)) : [target]
       for (const f of files) {
         const text = await Bun.file(f).text().catch(() => "")
         if (text.includes("\0")) continue
         text.split("\n").forEach((l, i) => {
-          if (re.test(l)) lines.push(`${showPath(f, ctx)}:${i + 1}:${l.slice(0, 400)}`)
+          if (re.test(l)) lines.push(`${f}:${i + 1}:${l.slice(0, 400)}`)
         })
         if (lines.length > 1000) break
       }
@@ -108,6 +109,17 @@ export const grepTool = defineTool({
     return { output: truncate(lines.slice(0, 200).join("\n") || "No matches." + hint) + more, title: `/${a.pattern}/ · ${lines.length} matches`, meta: { hits: lines.length } }
   },
 })
+
+/** A listing's order (filesystem.md, *A listing*): directories first, then by name in code-point
+ *  order. */
+export function byListing(x: string, y: string): number {
+  const dirs = Number(y.endsWith("/")) - Number(x.endsWith("/"))
+  if (dirs) return dirs
+  const a = [...x].map((c) => c.codePointAt(0)!)
+  const b = [...y].map((c) => c.codePointAt(0)!)
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i]! - b[i]!
+  return a.length - b.length
+}
 
 export const listTool = defineTool({
   ...described("list"),
@@ -136,7 +148,7 @@ export const listTool = defineTool({
     }
     const out: string[] = []
     const walk = (parent: string, indent: string) => {
-      const kids = [...(tree.get(parent) ?? [])].sort((x, y) => Number(y.endsWith("/")) - Number(x.endsWith("/")) || x.localeCompare(y))
+      const kids = [...(tree.get(parent) ?? [])].sort(byListing)
       for (const k of kids) {
         if (out.length >= 400) return
         out.push(indent + k)
@@ -144,6 +156,8 @@ export const listTool = defineTool({
       }
     }
     walk("", "")
-    return { output: out.join("\n") || "(empty)", title: `${relative(ctx.root, dir) || "."}/ · ${files.length} files`, meta: { hits: files.length } }
+    // Cut at 400 lines, saying so (filesystem.md, *A listing*).
+    const more = out.length >= 400 ? "\n(more entries — list a directory further down)" : ""
+    return { output: (out.join("\n") || "(empty)") + more, title: `${relative(ctx.root, dir) || "."}/ · ${files.length} files`, meta: { hits: files.length } }
   },
 })

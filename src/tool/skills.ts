@@ -5,7 +5,7 @@ import { basename, dirname, join, relative } from "node:path"
 import { paths } from "../config/paths.ts"
 import { z } from "zod"
 import { threatMessage } from "../memory/threats.ts"
-import { within, findSkill, globalSkillsDir, INDEX_DESCRIPTION, linkedFiles, loadSkills, MAX_DESCRIPTION, MAX_FILE, MAX_NAME, NAME, type Skill, skillFile, splitFrontmatter, SUPPORT_DIRS } from "../skill/index.ts"
+import { CATEGORY, within, findSkill, globalSkillsDir, INDEX_DESCRIPTION, linkedFiles, loadSkills, MAX_DESCRIPTION, MAX_FILE, MAX_NAME, NAME, type Skill, skillFile, splitFrontmatter, SUPPORT_DIRS } from "../skill/index.ts"
 import { replace } from "./replace-text.ts"
 import { defineTool, ToolError, type ToolContext } from "./tool.ts"
 import { described } from "../harness.ts"
@@ -144,7 +144,7 @@ export const skillManageTool = defineTool({
     const ops = a.operations as Op[]
     if (ops.some((o) => o.action === "delete" || o.action === "revert") && ops.length > 1) throw new ToolError(`${ops.find((o) => o.action === "delete" || o.action === "revert")!.action} must be the only operation in its call.`)
     // Every name is checked before anything else: it becomes a directory name below.
-    for (const o of ops) if (!NAME.test(o.name) || o.name.length > MAX_NAME) throw new ToolError(`"${o.name}" is not a valid skill name: lowercase letters, digits, - _ . — starting with a letter or digit, up to ${MAX_NAME}.`)
+    for (const o of ops) if (!NAME.test(o.name) || o.name.length > MAX_NAME) throw new ToolError(`"${o.name}" is not a valid skill name: lowercase letters, digits and -, starting with a letter or digit, up to ${MAX_NAME}.`)
     const skills = skillsOf(ctx)
     if (ops[0]!.action === "revert") {
       const name = ops[0]!.name
@@ -197,11 +197,11 @@ export const skillManageTool = defineTool({
         const fail = (m: string): never => {
           throw new ToolError(at + m)
         }
-        if (!NAME.test(o.name) || o.name.length > MAX_NAME) fail(`"${o.name}" is not a valid skill name: lowercase letters, digits, - _ . — starting with a letter or digit, up to ${MAX_NAME}.`)
+        if (!NAME.test(o.name) || o.name.length > MAX_NAME) fail(`"${o.name}" is not a valid skill name: lowercase letters, digits and -, starting with a letter or digit, up to ${MAX_NAME}.`)
         const existing = created.get(o.name) ?? findSkill(skills, o.name)
         if (o.action === "create") {
           if (existing) fail(`a skill "${o.name}" already exists (${existing.dir}). Use patch.`)
-          if (o.category && (!NAME.test(o.category) || o.category.includes("/"))) fail(`"${o.category}" is not a valid category.`)
+          if (o.category && (!CATEGORY.test(o.category) || o.category.includes("/"))) fail(`"${o.category}" is not a valid category.`)
           const text = o.content ?? (o.description?.trim() && o.instructions?.trim() ? composeSkill(o.name, o.description, o.instructions) : fail("create needs description and instructions (or content: the whole SKILL.md)."))
           const bad = validateSkill(text, o.name) ?? threatMessage(text, "The skill")
           if (bad) fail(bad)

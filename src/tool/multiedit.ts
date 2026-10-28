@@ -10,7 +10,7 @@ import { hunks, sha256 } from "../session/results.ts"
 async function planEdits(a: { path: string; edits: { old: string; new: string; all?: boolean }[] }, ctx: ToolContext) {
   const abs = absPath(a.path, ctx)
   const display = showPath(abs, ctx)
-  if (!(await guardExisting(abs, display, ctx))) throw new ToolError(`${display} does not exist. Use write to create it.`)
+  if (!(await guardExisting(abs, ctx))) throw new ToolError(`No such file or directory: ${abs}`)
   const raw = await readText(abs)
   const crlf = raw.includes("\r\n")
   const before = crlf ? raw.replaceAll("\r\n", "\n") : raw

@@ -59,11 +59,11 @@ export const showTool = defineTool({
     let size: number
     try {
       const st = statSync(abs)
-      if (!st.isFile()) throw new ToolError(`${showPath(abs, ctx)} is not a file.`)
+      if (!st.isFile()) throw new ToolError(st.isDirectory() ? `Is a directory: ${abs}` : `${showPath(abs, ctx)} is not a file.`)
       size = st.size
     } catch (e) {
       if (e instanceof ToolError) throw e
-      throw new ToolError(`${showPath(abs, ctx)} does not exist. Write it first.`)
+      throw new ToolError(`No such file or directory: ${abs}`)
     }
     if (size > SHOW_MAX_BYTES) throw new ToolError(`${showPath(abs, ctx)} is ${Math.round(size / 1024)} KB; at most 1 MB can be shown. Give the user the path instead.`)
     const text = await readText(abs)

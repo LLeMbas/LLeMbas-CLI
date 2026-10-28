@@ -25,7 +25,11 @@ export interface Skill {
 
 export const SUPPORT_DIRS = ["references", "templates", "scripts", "assets"] as const
 const SKIP = new Set([".git", ".github", ".archive", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ...SUPPORT_DIRS])
-export const NAME = /^[a-z0-9][a-z0-9._-]*$/
+/** A name skill_manage makes (filesystem.md, *Skills*; the Agent Skills format's rule): lowercase
+ *  letters, digits and -, starting with a letter or a digit, at most MAX_NAME. */
+export const NAME = /^[a-z0-9][a-z0-9-]*$/
+/** A category directory's name. */
+export const CATEGORY = /^[a-z0-9][a-z0-9._-]*$/
 export const MAX_NAME = 64
 export const MAX_DESCRIPTION = 1024
 export const INDEX_DESCRIPTION = 60

@@ -45,6 +45,10 @@ describe("skills", () => {
     rmSync(join(paths.config, "skills"), { recursive: true, force: true })
     const c = ctx()
     await expect(skillManageTool.run({ operations: [{ action: "create", name: "Bad Name", content: "x" }] }, c)).rejects.toThrow("not a valid skill name")
+    // The spec's rule (filesystem.md, *Skills*): letters, digits and - only, up to 64.
+    await expect(skillManageTool.run({ operations: [{ action: "create", name: "snake_case", content: "x" }] }, c)).rejects.toThrow("not a valid skill name")
+    await expect(skillManageTool.run({ operations: [{ action: "create", name: "v1.2", content: "x" }] }, c)).rejects.toThrow("not a valid skill name")
+    await expect(skillManageTool.run({ operations: [{ action: "create", name: "a".repeat(65), content: "x" }] }, c)).rejects.toThrow("not a valid skill name")
     await expect(skillManageTool.run({ operations: [{ action: "create", name: "a", content: skill("b", "wrong name") }] }, c)).rejects.toThrow('must be "a"')
     const long = "Use when the build breaks on the CI runner and nobody knows why it happens."
     const r = await skillManageTool.run({ operations: [{ action: "create", name: "ci", category: "devops", content: skill("ci", long) }, { action: "write_file", name: "ci", file_path: "references/runner.md", file_content: "runner notes" }] }, c)

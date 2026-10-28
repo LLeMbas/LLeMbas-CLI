@@ -38,6 +38,14 @@ instruction file on the way down to where it was started. Harness spec 3.0.0.
 - **A chat started on a model runs on that model.** When the web UI opens a session on this device
   with a model the device cannot run, it is refused with the reason instead of being answered on
   the device's own model.
+- **File tools speak the server's words.** A missing file is `No such file or directory: <path>`
+  from `read`, `edit`, `multiedit`, `show`, `list`, `glob` and `grep` alike; a file `write` or
+  `edit` may not change yet says it has not been read, or changed since it was last read, with its
+  full path. `glob` and `grep` give full paths. `list` sorts names exactly (capitals first) and says
+  when it stopped at 400 lines.
+- **A new skill's name** is lowercase letters, digits and `-`, up to 64 characters, as the Agent
+  Skills format has it; `_` and `.` are no longer accepted when `skill_manage` makes one. Skills
+  that already have such a name still load.
 
 ### Added
 
