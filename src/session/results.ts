@@ -7,8 +7,8 @@
 //
 // The one rule: every measure acts when a result is inserted, and nothing already sent is ever
 // rewritten — changing earlier context throws the prompt cache away from that point. A stub only
-// ever points at a result that is still in the conversation (`present`): after a compaction, an
-// /undo or a rewind, the result it would point at is gone, so the read is answered in full.
+// ever points at a result in the request being built (`present`): after a compaction, an /undo or
+// a rewind, the result it would point at is gone, so the read is answered in full.
 import { createHash } from "node:crypto"
 import { structuredPatch } from "diff"
 import { LOOP } from "../harness.ts"
@@ -224,18 +224,22 @@ export class ResultContext {
     return `${fill(CONTEXT.recall_header, { id, target, from, to, of: lines.length })}\n${shown}`
   }
 
-  /** The dedupe table: full results still in the conversation, oldest first. */
+  /** The dedupe table: the full results in the request being built, oldest first. A stub names
+   *  only one of them (context.md §2). */
   private table(): StoredResult[] {
     const here = this.present()
     return this.store.all().filter((r) => r.full && here.has(r.id))
   }
 
-  /** The table compaction adds after its summary: the newest full read of each path still in the
-   *  conversation, newest last, at most compaction.rows; "" with none. After it the conversation is
-   *  the summary alone, so nothing is present and the dedupe table is empty by construction. */
-  compactionTable(): string {
+  /** The table compaction adds after its summary (context.md §7): of the full reads the summary
+   *  covers — made since the previous compaction, in turns still in the history — the newest of
+   *  each file, newest last, at most compaction.rows; "" with none. `reads` defaults to the dedupe
+   *  table: the CLI resends every result, so the results in the conversation are exactly those
+   *  (an /undo or a rewind took its reads with it). After it the conversation is the summary alone,
+   *  so nothing is present and the dedupe table is empty by construction. */
+  compactionTable(reads: StoredResult[] = this.table()): string {
     const newest = new Map<string, StoredResult>()
-    for (const r of this.table()) if (r.kind === "read" && r.of! > 0) newest.delete(r.key!), newest.set(r.key!, r)
+    for (const r of reads) if (r.kind === "read" && r.full && r.of! > 0) newest.delete(r.key!), newest.set(r.key!, r)
     const rows = [...newest.values()].slice(-CONTEXT.compaction.rows)
     if (!rows.length) return ""
     return [

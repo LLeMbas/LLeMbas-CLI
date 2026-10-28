@@ -117,15 +117,23 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
     const files = new Set(c.files as string[])
     return instructionChain(c.boundary as string, c.start as string, (p) => files.has(p) && readableUnder(c.grants as Record<string, string> | undefined, p))
   },
-  // Context hygiene: one session's insertions, step by step. The conversation is the results
-  // inserted since the last compaction, which is what a stub may point at.
+  // Context hygiene: one session's insertions, step by step. `messages` is the request being built
+  // (what a stub may point at); `history` the results since the last compaction, which its table
+  // is drawn from. `reply` starts a request that carries none of them, as a chat's next reply does.
   context: (c) => {
     const messages: { role: string; content: string }[] = []
-    const rc = new ResultContext(memoryResults(), () => presentIds(messages), { ...CONTEXT.cap, ...((c.limits ?? {}) as object) })
+    const history = new Set<string>()
+    const store = memoryResults()
+    const rc = new ResultContext(store, () => presentIds(messages), { ...CONTEXT.cap, ...((c.limits ?? {}) as object) })
     return (c.steps as Record<string, any>[]).map((st) => {
-      if (st.op === "compact") {
-        const table = rc.compactionTable()
+      if (st.op === "reply") {
         messages.length = 0
+        return ""
+      }
+      if (st.op === "compact") {
+        const table = rc.compactionTable(store.all().filter((r) => history.has(r.id)))
+        messages.length = 0
+        history.clear()
         return table
       }
       let text: string
@@ -138,6 +146,7 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
       } else if (st.op === "recall") text = rc.insert({ kind: "recall", target: st.target, offset: st.offset, limit: st.limit }, st.id)
       else text = rc.insert({ kind: "output", tool: st.tool, args: st.args, text: st.text }, st.id)
       messages.push({ role: "tool", content: text })
+      history.add(st.id)
       return text
     })
   },
