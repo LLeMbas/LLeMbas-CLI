@@ -25,6 +25,12 @@ instruction file on the way down to where it was started. Harness spec 3.0.0.
 - **Memory is the server's**, shared with your chats there (when the login's token may reach it):
   the `memory` tool and the memory in the prompt. Notes, knowledge bases and skills stay on this
   machine.
+- **Logging in asks for the `memory` scope** in place of `library`; a login made before keeps
+  working with the one it has.
+- **Usage is money, not credits.** The status bar shows what the month has cost so far, and
+  `/usage` the month's tokens and cost and this device's tokens — each currency's amount on its
+  own (`€2.00 · $0.75`), never added together. Plans, balances, rolling windows and the
+  `unlimited` of an administrator are gone with the server's credits.
 - **Instruction files stack.** Every `AGENTS.md` (or `CLAUDE.md`) from the project root down to the
   working directory goes to the model, outermost first — not only the nearest one.
 - **Tool results are kept short when they come in, and never changed afterwards**, so the server's

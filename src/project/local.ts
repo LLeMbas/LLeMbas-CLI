@@ -6,7 +6,7 @@
 // What it reads from outside: only the login — the user's connections.yaml, lembas.json and the key
 // files they name — read-only, so the connections and sign-ins work without being copied. The
 // user's config.yaml is not read; the local one is this mode's global config. A LLeMbas instance
-// is used for models, chat, speech in and out, and the balance, and for nothing that is kept there
+// is used for models, chat, speech in and out, and the usage, and for nothing that is kept there
 // or shown there: no link, no shared sessions, no deletes sent, no server library, no search or
 // fetch through it, no embeddings through it, no account personalization.
 import { chmodSync, existsSync, mkdirSync } from "node:fs"

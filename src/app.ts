@@ -294,7 +294,8 @@ export function createApp(o: AppOptions): App {
   let contextFrom = "the instance"
 
   // library: lembas — the account's library through the instance's /mcp, in place of this
-  // machine's. Needs the one instance logged in to, with a token that has the library scope.
+  // machine's. Needs the one instance logged in to, with a token that has the memory scope (or
+  // the older library).
   const lembasLibrary = memoryOnServer ? lembasLibraryServer(loaded.warnings) : undefined
   if (lembasLibrary) loaded.mcp[LIBRARY_SERVER] = lembasLibrary
   // Without a way to the server's memory, this machine's is used for now.

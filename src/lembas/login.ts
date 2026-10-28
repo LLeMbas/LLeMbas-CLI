@@ -24,8 +24,9 @@ export interface Instance {
   /** The instance's own name (Example). */
   instance_name?: string
   ca?: string
-  /** What the token may do, as the instance granted it: `library` in it makes the account's
-   *  library the default. An older login has none recorded until it is made again. */
+  /** What the token may do, as the instance granted it: `memory` in it (or the older `library`)
+   *  makes the account's memory the default. An older login has none recorded until it is made
+   *  again. */
   scope?: string
   /** The link protocols the instance listed when last asked: at login, and again at every
    *  dial of the link, so an instance updated later is picked up. */

@@ -403,7 +403,7 @@ export function loadConfig(opts: { projectConfigDir?: string; trusted?: boolean 
     config = { ...config, search: sr }
   }
 
-  // Local mode: an instance serves models, chat, speech and the balance, and nothing that is kept
+  // Local mode: an instance serves models, chat, speech and the usage, and nothing that is kept
   // or shown there — no search or fetch through it, no embeddings, no library, no personalization
   // (the local keys apply) — and the whole hardline stays.
   if (isLocal()) config = localOnly(config, connections, warnings)

@@ -71,7 +71,7 @@ Local mode:
                                   it. Your logins and connections.yaml are read, never written; your
                                   config.yaml is not read (the local one is used; lembas -l config set
                                   … writes it). A LLeMbas instance is used only for its models, chat,
-                                  speech in and out (/v1/audio) and the balance: no link, /remote or
+                                  speech in and out (/v1/audio) and the usage: no link, /remote or
                                   service, no sessions or deletes sent to it, no server library,
                                   search, fetch or embeddings, no account personalization, and no
                                   self-update. The instance still records the usage of each request,

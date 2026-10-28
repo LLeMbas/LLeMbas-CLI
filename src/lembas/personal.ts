@@ -7,8 +7,9 @@
 //   personality, personality_custom, instructions — from GET /v1/me/personalization when the
 //     instance has it `available` (its administrator allows it); /settings writes them back there
 //     with PUT. Read with the models at every start (webui.ts) and kept in the same cache.
-//   library — with no `library:` written anywhere, a login whose token has the `library` scope
-//     means the account's library (`lembas`); `library: local` written keeps this machine's.
+//   library — with no `library:` written anywhere, a login whose token has the `memory` scope
+//     (or the older `library`) means the account's memory (`lembas`); `library: local` written
+//     keeps this machine's.
 import { existsSync, readFileSync } from "node:fs"
 import { isLocal } from "../config/paths.ts"
 import type { Config } from "../config/schema.ts"
@@ -88,13 +89,7 @@ export async function accountUsage(timeoutMs?: number): Promise<{ connection: st
 
 const n = (x: number) => Math.round(x).toLocaleString("en")
 
-/** Credits as a person reads them: two decimals where the number is small enough for them
- *  to matter (a balance of 3.47 is not "3"), whole above a thousand, as before. */
-export function credits(x: number): string {
-  return x.toLocaleString("en", { maximumFractionDigits: Math.abs(x) < 1000 ? 2 : 0 })
-}
-
-/** An amount in the instance's currency: `€1.23`, `$1.23`, `£1.23` — or "" without one. */
+/** An amount in a currency: `€1.23`, `$1.23`, `£1.23` — or "" without one. */
 export function money(x: number | null | undefined, currency: string | undefined): string {
   if (x === null || x === undefined || !Number.isFinite(x) || !currency) return ""
   try {
@@ -105,41 +100,35 @@ export function money(x: number | null | undefined, currency: string | undefined
   }
 }
 
-/** A credit amount's money, as the instance gave it, else from what a credit is worth. */
-function moneyOf(u: Usage, given: number | null | undefined, amount: number | null | undefined): string {
-  if (given !== null && given !== undefined) return money(given, u.currency)
-  if (amount === null || amount === undefined || typeof u.credit_value !== "number") return ""
-  return money(amount * u.credit_value, u.currency)
+/** The month's cost, one amount per currency (`€2.00 · $0.75`) — never two currencies added
+ *  together — or "" when nothing was priced. */
+export function monthCost(u: Usage | undefined): string {
+  const by = u?.month?.cost_by_currency
+  if (by && typeof by === "object" && !Array.isArray(by)) {
+    const parts = Object.entries(by)
+      .filter(([, v]) => typeof v === "number" && v > 0)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([code, v]) => money(v, code))
+      .filter(Boolean)
+    return parts.join(" · ")
+  }
+  const one = u?.month?.cost_money
+  return typeof one === "number" && one > 0 ? money(one, u?.currency) : ""
 }
 
-const withMoney = (text: string, m: string) => (m ? `${text} (${m})` : text)
-
-/** The status bar's word: the balance, when the account has a plan, with its money when the
- *  instance says it; `unlimited` for an administrator; "" otherwise. */
-export function balanceLabel(u: Usage | undefined): string {
-  if (u?.admin === true) return "unlimited"
-  if (!u?.plan || u.balance === null || u.balance === undefined) return ""
-  return withMoney(`${credits(u.balance)} ${u.unit || "credits"}`, moneyOf(u, u.balance_money, u.balance))
+/** The status bar's word: what the month has cost so far, per currency; "" when nothing was
+ *  priced or the instance cannot say. */
+export function spendLabel(u: Usage | undefined): string {
+  const cost = monthCost(u)
+  return cost ? `${cost} this month` : ""
 }
 
 /** /usage: the detail, in lines. */
 export function usageLines(connection: string, u: Usage): string[] {
-  const unit = u.unit || "credits"
-  const amount = (c: number | null | undefined, m: number | null | undefined) => (c !== null && c !== undefined ? ` — ${withMoney(`${credits(c)} ${unit}`, moneyOf(u, m, c))}` : m !== null && m !== undefined ? ` — ${money(m, u.currency)}` : "")
-  const head = u.admin === true
-    ? `${connection}: unlimited (administrator)`
-    : `${connection}: ${u.plan ? `plan ${u.plan.name}, ${n(u.plan.credits_per_month)} ${unit} a month` : "no plan"}${u.balance !== null && u.balance !== undefined ? ` · balance ${withMoney(`${credits(u.balance)} ${unit}`, moneyOf(u, u.balance_money, u.balance))}` : ""}`
-  const out = [head]
+  const out = [u.admin === true ? `${connection} (administrator)` : connection]
   const since = u.month?.from ? u.month.from.slice(0, 10) : "the start of the month"
-  if (u.month) out.push(`this month (since ${since}): ${n(u.month.tokens_in)} tokens in, ${n(u.month.tokens_out)} out${amount(u.month.cost, u.month.cost_money)}`)
-  if (u.device) out.push(`this device: ${n(u.device.tokens_in)} in, ${n(u.device.tokens_out)} out${amount(u.device.cost, u.device.cost_money)}`)
-  // The rolling windows: an administrator has none that bind, so none are listed.
-  if (u.admin !== true)
-    for (const w of Array.isArray(u.windows) ? u.windows : []) {
-      if (!w || typeof w.spent !== "number") continue
-      const frees = typeof w.frees_at === "string" && w.frees_at ? `, frees from ${w.frees_at.slice(0, 16).replace("T", " ")}` : ""
-      const of = typeof w.limit === "number" ? ` of ${credits(w.limit)}` : ""
-      out.push(`window ${w.window}: ${credits(w.spent)}${of} ${unit} spent${frees}`)
-    }
+  const cost = monthCost(u)
+  if (u.month) out.push(`this month (since ${since}): ${n(u.month.tokens_in)} tokens in, ${n(u.month.tokens_out)} out${cost ? ` — ${cost}` : ""}`)
+  if (u.device) out.push(`this device: ${n(u.device.tokens_in)} in, ${n(u.device.tokens_out)} out`)
   return out
 }

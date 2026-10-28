@@ -88,7 +88,7 @@ function lembas(o: Partial<Pick<Fake, "approveAfter" | "deny" | "protocol" | "mo
       if (u.pathname === "/api/device/code") {
         const body = (await req.json()) as Record<string, string>
         expect(body.client_id).toStartWith("lembas-cli ")
-        expect(body.scope).toBe("models library link")
+        expect(body.scope).toBe("models memory link")
         return Response.json({ device_code: "dev-123", user_code: "CDFG-HJKM", verification_uri: `${base}/device`, verification_uri_complete: `${base}/device?code=CDFG-HJKM`, expires_in: 600, interval: 1 })
       }
       if (u.pathname === "/api/device/token") {

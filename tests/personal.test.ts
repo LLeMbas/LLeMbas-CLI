@@ -9,7 +9,7 @@ import { createApp } from "../src/app.ts"
 import { loadConfig } from "../src/config/load.ts"
 import { paths } from "../src/config/paths.ts"
 import { personalization, savePersonalization, usage, type Personalization, type Usage } from "../src/lembas/client.ts"
-import { accountUsage, balanceLabel, defaultLibrary, usageLines } from "../src/lembas/personal.ts"
+import { accountUsage, defaultLibrary, spendLabel, usageLines } from "../src/lembas/personal.ts"
 import { fetchWebui } from "../src/lembas/webui.ts"
 import { fakeProvider, type Fake } from "./fake-provider.ts"
 
@@ -28,7 +28,8 @@ let model: Fake | undefined
 function instance(o: Partial<Pick<Instance, "usage" | "personal" | "forbid">> = {}): Instance {
   const state: Instance = {
     url: "",
-    usage: o.usage === undefined ? { plan: { name: "Hobbit", credits_per_month: 5000 }, balance: 1234.4, month: { from: "2026-10-01T00:00:00Z", tokens_in: 120000, tokens_out: 30000, cost: 3765.6 }, device: { tokens_in: 1000, tokens_out: 500, cost: 20 }, unit: "credits" } : o.usage,
+    // The server's 2.0 answer: the credit fields null, `windows` empty, money per currency.
+    usage: o.usage === undefined ? ({ plan: null, balance: null, balance_money: null, month: { from: "2026-10-01T00:00:00Z", tokens_in: 120000, tokens_out: 30000, cost: null, cost_money: 3.7656, cost_by_currency: { USD: 3.7656 } }, device: { tokens_in: 1000, tokens_out: 500, cost: null, cost_money: null }, windows: [], currency: "USD", admin: false, unit: "money" } as Usage) : o.usage,
     personal: o.personal === undefined ? { enabled: true, available: true, personality: "funny", personality_custom: "", instructions: "Answer in Slovak." } : o.personal,
     puts: [],
     forbid: o.forbid ?? false,
@@ -82,27 +83,26 @@ afterEach(() => {
   rmSync(join(paths.state, "webui"), { recursive: true, force: true })
 })
 
-test("/v1/usage: read, as a balance for the status bar and lines for /usage", async () => {
+test("/v1/usage: read, as the month's cost for the status bar and lines for /usage", async () => {
   inst = instance()
   const u = await usage(inst.url, "lmb_key", undefined)
-  expect(u?.plan?.name).toBe("Hobbit")
-  expect(balanceLabel(u)).toBe("1,234 credits")
+  expect(spendLabel(u)).toBe("$3.77 this month")
   expect(usageLines("example", u!)).toEqual([
-    "example: plan Hobbit, 5,000 credits a month · balance 1,234 credits",
-    "this month (since 2026-10-01): 120,000 tokens in, 30,000 out — 3,766 credits",
-    "this device: 1,000 in, 500 out — 20 credits",
+    "example",
+    "this month (since 2026-10-01): 120,000 tokens in, 30,000 out — $3.77",
+    "this device: 1,000 in, 500 out",
   ])
-  // Costs null (an instance without credits): the tokens alone.
-  expect(usageLines("example", { ...u!, plan: null, balance: null, month: { ...u!.month, cost: null }, device: { ...u!.device, cost: null } })).toEqual([
-    "example: no plan",
+  // Nothing priced: the tokens alone, and nothing in the status bar.
+  const free: Usage = { ...u!, month: { ...u!.month, cost_money: 0, cost_by_currency: {} } }
+  expect(usageLines("example", free)).toEqual([
+    "example",
     "this month (since 2026-10-01): 120,000 tokens in, 30,000 out",
     "this device: 1,000 in, 500 out",
   ])
-  // No plan, or an instance without credits: nothing in the status bar.
-  expect(balanceLabel({ ...u!, plan: null })).toBe("")
-  expect(balanceLabel({ ...u!, balance: null })).toBe("")
+  expect(spendLabel(free)).toBe("")
+  expect(spendLabel(undefined)).toBe("")
   loggedIn(inst)
-  expect((await accountUsage())?.usage.balance).toBe(1234.4)
+  expect((await accountUsage())?.usage.month.tokens_in).toBe(120000)
 })
 
 test("an instance without the endpoints: no usage, no personalization, no error", async () => {
@@ -206,31 +206,19 @@ test("opted out on the web, or a preset the CLI does not know: setting one key h
   await app.close()
 })
 
-test("money beside the credits, two decimals where they matter, and an administrator unlimited", () => {
-  const base: Usage = { plan: { name: "Hobbit", credits_per_month: 5000 }, balance: 3.456, month: { from: "2026-10-01T00:00:00Z", tokens_in: 1000, tokens_out: 200, cost: 12.5 }, device: { tokens_in: 10, tokens_out: 5, cost: 0.25 }, unit: "credits" }
-  // An older instance: credits alone, now with their decimals.
-  expect(balanceLabel(base)).toBe("3.46 credits")
-  const eur: Usage = { ...base, currency: "EUR", credit_value: 0.01, balance_money: 0.03, month: { ...base.month, cost_money: 0.13 }, device: { ...base.device, cost_money: null } }
-  expect(balanceLabel(eur)).toBe("3.46 credits (€0.03)")
-  expect(usageLines("example", eur)).toEqual([
-    "example: plan Hobbit, 5,000 credits a month · balance 3.46 credits (€0.03)",
-    "this month (since 2026-10-01): 1,000 tokens in, 200 out — 12.5 credits (€0.13)",
-    // No money sent for it: worked out from what a credit is worth.
-    "this device: 10 in, 5 out — 0.25 credits (€0.00)",
+test("money per currency, never added together, and no credit wording", () => {
+  const base: Usage = { month: { from: "2026-10-01T00:00:00Z", tokens_in: 1000, tokens_out: 200, cost_money: null, cost_by_currency: { USD: 0.75, EUR: 2 } }, device: { tokens_in: 10, tokens_out: 5 }, currency: "USD", unit: "money" }
+  // Two currencies: each its own amount, `cost_money` null.
+  expect(spendLabel(base)).toBe("€2.00 · $0.75 this month")
+  expect(usageLines("example", base)).toEqual([
+    "example",
+    "this month (since 2026-10-01): 1,000 tokens in, 200 out — €2.00 · $0.75",
+    "this device: 10 in, 5 out",
   ])
-  expect(balanceLabel({ ...base, currency: "USD", balance_money: 1.5 })).toBe("3.46 credits ($1.50)")
-  expect(balanceLabel({ ...base, currency: "GBP", balance_money: 1234.5, balance: 123456 })).toBe("123,456 credits (£1,234.50)")
-  // An administrator: unlimited, plan or not, and the month's spend still listed.
-  const admin: Usage = { ...eur, plan: null, balance: null, admin: true, windows: [{ window: "5h", limit: 100, spent: 50, frees_at: null }] }
-  expect(balanceLabel(admin)).toBe("unlimited")
-  expect(usageLines("example", admin)).toEqual([
-    "example: unlimited (administrator)",
-    "this month (since 2026-10-01): 1,000 tokens in, 200 out — 12.5 credits (€0.13)",
-    "this device: 10 in, 5 out — 0.25 credits (€0.00)",
-  ])
-  // Windows: spent, of what, and when it frees.
-  expect(usageLines("example", { ...base, windows: [{ window: "5h", limit: 200, spent: 150.25, frees_at: "2026-10-09T14:05:00Z" }, { window: "week", limit: null, spent: 900 }] }).slice(3)).toEqual([
-    "window 5h: 150.25 of 200 credits spent, frees from 2026-10-09 14:05",
-    "window week: 900 credits spent",
-  ])
+  // One currency, as `cost_money` alone (no breakdown sent): in `currency`.
+  expect(spendLabel({ ...base, currency: "GBP", month: { ...base.month, cost_money: 1234.5, cost_by_currency: undefined } })).toBe("£1,234.50 this month")
+  // An administrator is said so; the spend is the same.
+  const admin: Usage = { ...base, admin: true }
+  expect(usageLines("example", admin)[0]).toBe("example (administrator)")
+  for (const line of [...usageLines("example", admin), spendLabel(admin)]) expect(line).not.toMatch(/credit|balance|plan|unlimited|window/)
 })

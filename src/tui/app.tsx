@@ -323,20 +323,20 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
 
   // The web UI as a second keyboard on this session: shared through the service by itself,
   // or by name with /remote. What it sends runs here as if typed, and is shown as such.
-  // The account's balance in the status bar, when it has a plan: read at the start and
-  // after a reply, at most once a minute; an instance that cannot say leaves nothing there.
-  const [credits, setCredits] = createSignal("")
-  let creditsAt = 0
-  const readCredits = (force = false) => {
-    if (!force && Date.now() - creditsAt < 60_000) return
-    creditsAt = Date.now()
-    void import("../lembas/personal.ts").then((m) => m.accountUsage(5000).then((r) => setCredits(m.balanceLabel(r?.usage)))).catch(() => {})
+  // What the account's month has cost, in the status bar: read at the start and after a reply,
+  // at most once a minute; an instance that cannot say, or nothing priced, leaves nothing there.
+  const [spend, setSpend] = createSignal("")
+  let spendAt = 0
+  const readSpend = (force = false) => {
+    if (!force && Date.now() - spendAt < 60_000) return
+    spendAt = Date.now()
+    void import("../lembas/personal.ts").then((m) => m.accountUsage(5000).then((r) => setSpend(m.spendLabel(r?.usage)))).catch(() => {})
   }
-  readCredits(true)
-  app.bus.on((e) => e.type === "task" && e.state === "end" && readCredits())
-  cmd.setCredits = (text: string) => {
-    creditsAt = Date.now()
-    setCredits(text)
+  readSpend(true)
+  app.bus.on((e) => e.type === "task" && e.state === "end" && readSpend())
+  cmd.setSpend = (text: string) => {
+    spendAt = Date.now()
+    setSpend(text)
   }
 
   const share = new Share(app, {
@@ -641,7 +641,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
           </Show>
           <Queued />
           <Prompt focused={() => !dialog() && !jobPanel() && !view.state.pending && !view.state.question && !view.state.plan} busy={busy} commands={palette} files={files} onSubmit={submit} ref={(r) => (input = r)} queue={queueAccess} onWheel={(dir, lines) => scroll?.scrollBy(dir * lines)} onBackground={backgroundNow} />
-          <StatusBar mode={mode} model={model} effort={effort} branch={branch()} voice={voiceStatus} flash={flashText} remote={() => (rev(), share.label())} credits={credits} />
+          <StatusBar mode={mode} model={model} effort={effort} branch={branch()} voice={voiceStatus} flash={flashText} remote={() => (rev(), share.label())} spend={spend} />
         </box>
         <Show when={dialog()}>
           <Dialog spec={dialog()!} close={() => setDialog(undefined)} />

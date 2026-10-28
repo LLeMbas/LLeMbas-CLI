@@ -56,8 +56,8 @@ export interface CommandCtx extends Ctx {
   quit(): void
   /** Start again: the binary on disk now, the config read afresh, this session. */
   reload(): void
-  /** The status bar's balance, as /usage just read it. */
-  setCredits?(text: string): void
+  /** The status bar's month's cost, as /usage just read it. */
+  setSpend?(text: string): void
   /** Open a command job's live output (components/jobview.tsx). */
   openJob(id: string): void
   /** Enter a subagent job: its transcript in place of the session's, the prompt box sends to it. */
@@ -865,14 +865,14 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "usage",
-    description: "your account's credits on the LLeMbas instance: plan, balance, this month, this device",
+    description: "your account's usage on the LLeMbas instance: this month's tokens and cost, this device's tokens",
     async run(c) {
       // /v1/usage of the account this machine is logged in to.
-      const { accountUsage, balanceLabel, usageLines } = await import("../lembas/personal.ts")
+      const { accountUsage, spendLabel, usageLines } = await import("../lembas/personal.ts")
       try {
         const r = await accountUsage()
         if (!r) return c.view.info("no usage to show — not logged in to one LLeMbas instance (/login), or it does not keep any")
-        c.setCredits?.(balanceLabel(r.usage))
+        c.setSpend?.(spendLabel(r.usage))
         c.view.info(usageLines(r.connection, r.usage).join("\n"))
       } catch (e) {
         c.view.info(`/usage: ${(e as Error).message}`, "warn")

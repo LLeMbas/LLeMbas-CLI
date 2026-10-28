@@ -578,7 +578,7 @@ export class AcpAgent {
     const mode = L ? clampMode(wanted ?? L.maxMode, L.maxMode) : wanted
     const session: Session = { id: "", cwd, prompting: false, app: undefined as unknown as App, turns: new TurnLog() }
     // No model-made title: the client names its own conversations (LLeMbas has its chat's), and a
-    // title request would be a second call on the account's credits for nothing.
+    // title request would be a second call the account pays for, for nothing.
     // The chat's model and effort: `lembas_model` is the instance's own name for it, the
     // one its /v1 serves; `model` a ref of this machine's, for an editor that knows them. A session
     // the client opens on its model runs on that model and no other (spec 3.0.0): one this device

@@ -170,7 +170,7 @@ export interface DeviceStart {
   interval: number
 }
 
-export async function startDevice(d: Discovery, tls: Tls | undefined, scopes = ["models", "library", "link"]): Promise<DeviceStart> {
+export async function startDevice(d: Discovery, tls: Tls | undefined, scopes = ["models", "memory", "link"]): Promise<DeviceStart> {
   const res = await call(
     d.login.device.code,
     {
@@ -282,27 +282,25 @@ export async function signOut(baseUrl: string, token: string, tls: Tls | undefin
   }
 }
 
-/** GET /v1/usage: the account's credits this month, and this device's share. Every
- *  number is null on an instance that keeps no credits or plans. */
+/** GET /v1/usage, as the server's 2.0 answers it: counting and money, no credits. `plan`,
+ *  `balance`, `balance_money`, the credit `cost` fields and `device.cost_money` are null and
+ *  `windows` empty there; they are not read. */
 export interface Usage {
-  plan: { name: string; credits_per_month: number } | null
-  balance: number | null
-  /** `cost` null where the instance keeps no credits. */
-  month: { from: string; tokens_in: number; tokens_out: number; cost: number | null; cost_money?: number | null }
-  device: { tokens_in: number; tokens_out: number; cost: number | null; cost_money?: number | null }
-  unit: string
-  // Every one optional: an instance may have none of them.
-  /** The money credits are counted in: "EUR", "USD" or "GBP". */
+  month: {
+    from: string
+    tokens_in: number
+    tokens_out: number
+    /** What the month cost in `currency` — null when it is in more than one currency. */
+    cost_money?: number | null
+    /** The month's cost per currency, `{ USD: 1.25, EUR: 0.4 }`: never added together. */
+    cost_by_currency?: Record<string, number>
+  }
+  device: { tokens_in: number; tokens_out: number }
+  /** The currency `month.cost_money` is in. */
   currency?: string
-  /** What one credit is worth, in `currency`. */
-  credit_value?: number | null
-  /** An administrator: no limit, never refused — the spend is still counted. */
+  /** An administrator of the instance. */
   admin?: boolean
-  /** The balance in `currency`. `month.cost_money`, `device.cost_money` likewise. */
-  balance_money?: number | null
-  /** Rolling spending windows (e.g. five hours, a week): how much of each is used, and when the
-   *  oldest of it frees again. */
-  windows?: { window: string | number; limit: number | null; spent: number; frees_at?: string | null }[]
+  unit?: string
 }
 
 /** The usage, or undefined from an instance that does not have the endpoint. */

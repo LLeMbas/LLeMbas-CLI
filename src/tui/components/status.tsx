@@ -22,7 +22,7 @@ export function jobsWord(jobs: { state: string; unread: number; unseen?: boolean
  *  for a moment, a flash (a copy) in their place. The jobs word sits on the right, which is never
  *  truncated: at 80 columns a long project name cuts the left short, and a running job is the one
  *  thing that must stay visible. */
-export function StatusBar(p: { mode: () => string; model: () => string; effort: () => string; branch?: string; voice?: () => string; flash?: () => string | undefined; remote?: () => string; credits?: () => string }) {
+export function StatusBar(p: { mode: () => string; model: () => string; effort: () => string; branch?: string; voice?: () => string; flash?: () => string | undefined; remote?: () => string; spend?: () => string }) {
   const { theme, view, app } = useTui()
   const c = () => theme().colors
   const modeColor = () => ({ manual: c().statusText, edit: c().statusGood, auto: c().statusCritical, plan: c().info })[p.mode() as keyof typeof MODE_LABEL] ?? c().statusText
@@ -52,7 +52,7 @@ export function StatusBar(p: { mode: () => string; model: () => string; effort: 
           <text wrapMode="none">
             <span style={{ fg: jobsWord(view.state.jobs).endsWith("!") ? c().statusWarn : c().statusText }}>{jobsWord(view.state.jobs) ? `${jobsWord(view.state.jobs)} · ` : ""}</span>
             <span style={{ fg: c().statusDim }}>{view.state.rate ? `${Math.round(view.state.rate)} tok/s · ` : ""}</span>
-            <span style={{ fg: c().statusText }}>{p.credits?.() ? `${p.credits()} · ` : ""}</span>
+            <span style={{ fg: c().statusText }}>{p.spend?.() ? `${p.spend()} · ` : ""}</span>
             <span style={{ fg: ctx().color }}>{ctx().text}</span>
             <span style={{ fg: c().statusDim }}> · </span>
             <span style={{ fg: c().info }}>{isLocal() ? "local " : ""}</span>
