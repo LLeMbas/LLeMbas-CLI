@@ -119,7 +119,9 @@ this design.
   `session/new`'s result carries `instance`; a session the client opened runs on the
   chat's model and no other — refused rather than answered on the device's own, so the "answered on
   its own model" notice is gone; capability `show` with `_lembas/show`; memory through the
-  instance; a 3.0.0 instance sends neither `library` nor `prototypes`.
+  instance; a 3.0.0 instance sends neither `library` nor `prototypes`. `GET /v1/usage` counts
+  and prices without credits: the month's cost per currency (`month.cost_by_currency`), never
+  summed across currencies; the credit fields are null. The device asks for the `memory` scope.
 - **Permissions**: default rules for the new tools (`search`, `recall`, `show`, `python` allowed;
   the forge verbs asked); `modes.json` `confirm`.
 - **Conformance**: `fs_access`, `instructions`, `context`, `chunk_tokens` — new, their answers

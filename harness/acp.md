@@ -547,20 +547,15 @@ Besides `/v1/models`, the chat completions, `/api/v1/instance` and `/mcp`:
   `embedding: <served id>` also finds it. Voice uses the instance's own speech endpoints, not these
   entries. Any other kind is ignored.
 - **`GET /v1/usage`** →
-  `{ plan: { name, credits_per_month } | null, balance: number | null, month: { from, tokens_in, tokens_out, cost: number | null }, device: { tokens_in, tokens_out, cost: number | null }, unit: "credits" }`.
-  The CLI shows the balance in its status bar when `plan` is not null, and the whole of it under
-  `/usage`. A 404 (an instance without it) shows nothing.
-
-  Also read, every one optional (an instance without them gets credits alone):
-  `currency` (`"EUR"` | `"USD"` | `"GBP"`), `credit_value` (money per credit), `admin` (boolean:
-  no limit, never refused), `balance_money`, `month.cost_money` and `device.cost_money` (numbers or
-  `null`), and `windows: [{ window, limit, spent, frees_at }]` (rolling spending windows: `window`
-  names it, `limit` and `spent` in credits, `frees_at` an ISO time or `null`). Credits are shown
-  with up to two decimals below 1,000 and whole above; beside each, its money in `currency` where
-  given (`€1.23`, `$1.23`, `£1.23`) — `*_money` when sent, else the credits times `credit_value`.
-  `admin: true` shows `unlimited` in the status bar whatever the plan, and `/usage` says so, still
-  listing the month's and the device's spend; its windows are not listed. Otherwise `/usage` lists
-  each window's spend, limit and when it frees.
+  `{ month: { from, tokens_in, tokens_out, cost_money: number | null, cost_by_currency: { [currency]: number } }, device: { tokens_in, tokens_out }, currency, admin, unit: "money" }`.
+  Counting and money, no credits (spec 3.0.0): `cost_by_currency` is the month's cost in each
+  currency the account's use was priced in (a connection prices in its own; `{}` when nothing was
+  priced), and two currencies are never added together. `cost_money` is that cost when exactly one
+  currency is involved, in `currency`; with several it is `null`. `plan`, `balance`,
+  `balance_money`, `month.cost`, `device.cost` and `device.cost_money` are still sent, as `null`,
+  and `windows` as `[]`, for a 1.x client; a 3.0.0 client does not read them. The CLI shows the
+  month's cost (each currency's amount, `€2.00 · $0.75`) in its status bar when anything was
+  priced, and the whole of it under `/usage`. A 404 (an instance without it) shows nothing.
 - **`GET /v1/me/personalization`** →
   `{ enabled, available, personality, personality_custom, instructions }`; **`PUT`** the same fields
   (403 when personalization is not `available` **or** the token is not a device's token — the
@@ -572,8 +567,9 @@ Besides `/v1/models`, the chat completions, `/api/v1/instance` and `/mcp`:
   `enabled: true` — never the session's copy of the other two, which may be blanked or mapped — so
   the instance keeps what it has saved. LLeMbas must accept a partial `PUT`. Logged out, the local
   keys apply.
-- **The library**: logged in to one instance whose token has the `library` scope, a config that sets
-  no `library:` uses the account's (`lembas`); `library: local` written stays local.
+- **The library**: logged in to one instance whose token has the `memory` scope (or the older
+  `library`), a config that sets no `library:` uses the account's (`lembas`); `library: local`
+  written stays local. The device's login asks for `models memory link`.
   **Scope** (capability `library`): on a `tools/call` to `/mcp` made for a session the client opened,
   the device sends `params._meta.lembas.scope: <sessionId>`. The instance then answers within that
   chat's scope — its knowledge bases (`conformance/library_scope.json` for how `base` is read
