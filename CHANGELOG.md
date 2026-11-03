@@ -6,6 +6,8 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [2.0.0-beta.1] — 2026-11-03
+
 LLeMbas CLI 2.0 works with LLeMbas 2.0 and nothing else: it uses the server it is logged in to,
 keeps tool results short without ever rewriting what the model has already read, and reads every
 instruction file on the way down to where it was started. Harness spec 3.0.0.

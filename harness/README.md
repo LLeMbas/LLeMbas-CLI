@@ -62,11 +62,10 @@ page *Harness-parity* in LLeMbas CLI's wiki.
   every mode; `plan_submit` only in plan mode, where it is the approval. Their permission key is
   `plan` (`permission/defaults.json`), which a rule written for the former `todo` key still reaches.
 
-## 3.0.0 (draft)
+## 3.0.0
 
-`VERSION` says `3.0.0-draft` while the spec is written ahead of both implementations: a SemVer
-pre-release, ordered below `3.0.0`, which no stable release of either project carries. It becomes
-`3.0.0` when both implement it. **Two worlds, one harness**: a chat works in the server's file
+Written ahead of both implementations as `3.0.0-draft`, and `3.0.0` once both carried it (LLeMbas
+CLI 2.0.0-beta.1, LLeMbas 2.0.0-beta.1). **Two worlds, one harness**: a chat works in the server's file
 system, an agent session on its device's disk, and neither sees the other's files; what is shared is
 this design.
 
