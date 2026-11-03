@@ -236,6 +236,34 @@ export async function awaitToken(d: Discovery, start: DeviceStart, tls: Tls | un
   throw new LembasError("the code expired before it was approved — run login again")
 }
 
+/** The scopes a token carries, as the instance granted them (`models memory link`). */
+export function scopesOf(scope: string | undefined): string[] {
+  return (scope ?? "").split(/\s+/).filter(Boolean)
+}
+
+/** `lembas login --token-stdin`: prove a token handed over by another program — GET
+ *  /api/v1/instance with it, which says the account and what the token may do (`scope`) — and
+ *  return it as a device login's poll would have. A token that cannot link is refused: it would
+ *  give this machine models but no agent chats, and the program handing it over is after the
+ *  agent. Nothing is written by this. */
+export async function checkToken(d: Discovery, token: string, tls: Tls | undefined): Promise<Granted> {
+  const base = d.base_url
+  const host = new URL(base).host
+  const res = await call(`${base}/api/v1/instance`, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } }, tls)
+  const older = `${base} runs LLeMbas ${d.version}, which cannot say what a token may do: lembas login --token-stdin needs a newer LLeMbas 2.0 server. Update the server, or sign in with lembas login ${base}`
+  if (res.status === 401) throw new LembasError(`${host} does not accept this token: it is revoked, expired, or not one of this instance's`)
+  if (res.status === 403) throw new LembasError(`${host} refused this token for its models: it needs the models scope, and the account the “Use the API” permission`)
+  if (res.status === 404) throw new LembasError(older)
+  if (!res.ok) throw new LembasError(`checking the token: ${res.status} ${res.statusText}`)
+  const body = (await res.json().catch(() => undefined)) as (InstanceInfo & { scope?: unknown; account?: { email?: string; name?: string } }) | undefined
+  if (!body || typeof body !== "object" || typeof body.scope !== "string") throw new LembasError(older)
+  const scopes = scopesOf(body.scope)
+  if (!scopes.includes("link"))
+    throw new LembasError(`this token cannot link this machine to ${host}: it carries ${scopes.length ? scopes.join(" ") : "no scope"}, and LLeMbas CLI's needs link (models memory link). Sign in with lembas login ${base} instead`)
+  const account = body.account && typeof body.account === "object" ? { email: body.account.email, name: body.account.name } : {}
+  return { access_token: token, scope: scopes.join(" "), account, base_url: base }
+}
+
 export async function models(d: { api: { openai: string } }, token: string, tls: Tls | undefined, timeoutMs?: number): Promise<ServedModel[]> {
   const res = await call(`${d.api.openai}/models`, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } }, tls, timeoutMs)
   if (res.status === 401) throw new LembasError("the instance no longer accepts this sign-in — run login again")
@@ -249,6 +277,10 @@ export async function models(d: { api: { openai: string } }, token: string, tls:
  *  which of voice and web search it may use through the API. */
 export interface InstanceInfo {
   name?: string
+  /** The account the token belongs to. */
+  account?: { email?: string; name?: string }
+  /** What the token presented may do, space-separated, as its login granted it. */
+  scope?: string
   connection?: string
   version?: string
   default_model?: string | null

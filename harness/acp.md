@@ -546,6 +546,17 @@ Besides `/v1/models`, the chat completions, `/api/v1/instance` and `/mcp`:
   as `<connection>/<served id>` when no `embedding:` is set, and never replaces one that is;
   `embedding: <served id>` also finds it. Voice uses the instance's own speech endpoints, not these
   entries. Any other kind is ignored.
+- **`GET /api/v1/instance`** (the `models` scope) →
+  `{ service, version, name, connection, account: { email, name }, scope, default_model, services }`.
+  **`scope`** is what the token presented may do, space-separated, as its login granted it
+  (`models memory link`). `lembas login --token-stdin --server <url>` takes a token another
+  program already holds (LLeMbas Desktop: the `agent_token` of the one approval, App API) on
+  stdin, never from an argument or the environment, and proves it here before writing anything:
+  discovery must list protocol 3 (else the device login's own refusal), a 401 is a token the
+  instance does not accept, a 404 or an answer without `scope` an older server, and a `scope`
+  without `link` is refused. Then the login is stored exactly as a device login's, and `--json`
+  prints the device login's `done` line: `{ event: "done", fresh: true, connection, base_url,
+  version, models, changes }` (or `{ event: "error", message }`).
 - **`GET /v1/usage`** →
   `{ month: { from, tokens_in, tokens_out, cost_money: number | null, cost_by_currency: { [currency]: number } }, device: { tokens_in, tokens_out }, currency, admin, unit: "money" }`.
   Counting and money, no credits (spec 3.0.0): `cost_by_currency` is the month's cost in each

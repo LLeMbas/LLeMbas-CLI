@@ -13,7 +13,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join, resolve } from "node:path"
 import { parseDocument } from "yaml"
 import { expandHome, globalPaths, isLocal, paths } from "../config/paths.ts"
-import { awaitToken, discover, LembasError, signOut, spoken, startDevice, type DeviceStart, type Discovery, type InstanceInfo, type ServedModel, type Tls } from "./client.ts"
+import { awaitToken, checkToken, discover, LembasError, signOut, spoken, startDevice, type DeviceStart, type Discovery, type Granted, type InstanceInfo, type ServedModel, type Tls } from "./client.ts"
 import { dropCache, fetchWebui, isChatModel, readCache, specFor } from "./webui.ts"
 
 export interface Instance {
@@ -397,7 +397,29 @@ export async function login(address: string, o: LoginOptions): Promise<LoginResu
   const start = await startDevice(discovery, tls)
   o.onCode(start, discovery)
   const granted = await awaitToken(discovery, start, tls, { signal: o.signal, sleep: o.sleep })
+  return store(discovery, tls, granted, o)
+}
 
+/** `lembas login --token-stdin`: what a program that already holds an agent's token — LLeMbas
+ *  Desktop, from the one approval that gave it its own token too — hands over. Checked against the
+ *  instance before anything is written: it must speak this CLI's protocol, accept the token, and
+ *  say the token carries `link`. Then stored exactly as a device login's is. */
+export async function loginWithToken(address: string, token: string, o: Omit<LoginOptions, "onCode" | "sleep" | "signal"> = {}): Promise<LoginResult> {
+  const raw = token.trim()
+  if (!TOKEN.test(raw)) throw new LembasError("expected one LLeMbas token (lmb_…) on stdin, and nothing else")
+  const ca = o.ca ? resolve(expandHome(o.ca)) : undefined
+  const { discovery, tls } = await discover(address, ca ? { ca } : undefined)
+  const granted = await checkToken(discovery, raw, tls)
+  return store(discovery, tls, granted, o)
+}
+
+/** A token as the instance makes them: `lmb_` and URL-safe base64. */
+const TOKEN = /^lmb_[A-Za-z0-9_-]+$/
+
+/** What both kinds of login do once they hold a token: write it, replace an earlier login to the
+ *  same instance (signing its token out, naming this one), sign out of any other instance, and set
+ *  up the connection, voice, search and embedding. */
+async function store(discovery: Discovery, tls: Tls | undefined, granted: Granted, o: Pick<LoginOptions, "setDefault" | "keepServices">): Promise<LoginResult> {
   const connection = connectionNameFor(discovery.base_url, discovery.connection)
   // Logging in again under the same name: the token being replaced, read before its file is.
   const before = ownInstances()[connection]

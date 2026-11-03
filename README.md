@@ -27,6 +27,10 @@ lembas login https://your-server       # sign in to your LLeMbas server
 cd your-project && lembas              # the TUI, on the server's models
 ```
 
+A program that already holds an agent's token for this machine (LLeMbas Desktop does, from the
+same approval as its own) hands it over on stdin, never as an argument:
+`… | lembas login --token-stdin --server https://your-server [--json]`.
+
 From 2.0 the CLI talks only to the LLeMbas server it is logged in to; the custom connections of 1.x
 (`dialect:` entries in `connections.yaml`) are gone.
 

@@ -38,6 +38,9 @@ Usage:
                                   sign in to a LLeMbas instance: its models, voice and search
                                   (again: read them now; --default pins its default model;
                                   --json: one JSON object per line, for a program to read)
+  … | lembas login --token-stdin --server <url> [--ca file] [--json]
+                                  sign in with a token a program already holds (lmb_…, read
+                                  from stdin only), checked against the server first
   lembas logout [connection]      sign out of one, and remove what login wrote
   lembas serve --stdio            an ACP agent on stdin/stdout, for an editor that speaks ACP
   lembas service install | uninstall | status | logs [-f] | run
@@ -95,16 +98,40 @@ function fail(msg: string, code = 1): never {
 }
 
 async function loginCommand(cmd: "login" | "logout", args: string[]) {
-  const { codeEvent, codeInstructions, doneEvent, instances, isWebuiEntry, login, loginSummary, logout, sync, LembasError } = await import("./lembas/login.ts")
+  const { codeEvent, codeInstructions, doneEvent, instances, isWebuiEntry, login, loginSummary, loginWithToken, logout, sync, LembasError } = await import("./lembas/login.ts")
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { ca: { type: "string" }, default: { type: "boolean" }, "keep-services": { type: "boolean" }, json: { type: "boolean" } },
+    options: {
+      ca: { type: "string" },
+      default: { type: "boolean" },
+      "keep-services": { type: "boolean" },
+      json: { type: "boolean" },
+      // The token only ever from stdin: an argument or a variable would show in a process list.
+      "token-stdin": { type: "boolean" },
+      server: { type: "string" },
+    },
   })
   const known = instances()
   const json = cmd === "login" && values.json
   const emit = (o: object) => console.log(JSON.stringify(o))
+  const sameBase = (a: string, b: string) => a.replace(/^https?:\/\//, "").replace(/\/+$/, "") === b.replace(/^https?:\/\//, "").replace(/\/+$/, "")
+  if (cmd === "login" && (values["token-stdin"] || values.server !== undefined)) {
+    const usage = "usage: … | lembas login --token-stdin --server <url> [--json] [--ca file]"
+    if (!values["token-stdin"]) fail(`--server goes with --token-stdin (${usage}); a sign-in by code is lembas login <address>`, 2)
+    if (!values.server) fail(usage, 2)
+    if (positionals.length) fail(`--token-stdin takes the address as --server <url> (${usage})`, 2)
+    if (process.stdin.isTTY) fail(`--token-stdin reads the token from a pipe, never from the terminal or an argument (${usage})`, 2)
+  }
   try {
+    if (cmd === "login" && values["token-stdin"]) {
+      const token = (await Bun.stdin.text()).slice(0, 65536)
+      const before = Object.values(known).find((i) => sameBase(i.base_url, values.server!))
+      const r = await loginWithToken(values.server!, token, { ca: values.ca ?? before?.ca, setDefault: values.default, keepServices: values["keep-services"] })
+      if (json) emit(doneEvent(r, true))
+      else console.log(loginSummary(r, true).join("\n"))
+      return
+    }
     if (cmd === "logout") {
       const name = positionals[0] ?? (Object.keys(known).length === 1 ? Object.keys(known)[0]! : "")
       if (!name) fail(Object.keys(known).length ? `which one? lembas logout <${Object.keys(known).join("|")}>` : "not logged in to any instance", 2)
@@ -115,7 +142,7 @@ async function loginCommand(cmd: "login" | "logout", args: string[]) {
     }
     let address = positionals[0] ?? ""
     // `login` again with no address refreshes the one instance there is.
-    const again = address ? Object.values(known).find((i) => i.base_url.replace(/^https?:\/\//, "") === address.replace(/^https?:\/\//, "").replace(/\/+$/, "")) : Object.keys(known).length === 1 ? Object.values(known)[0] : undefined
+    const again = address ? Object.values(known).find((i) => sameBase(i.base_url, address)) : Object.keys(known).length === 1 ? Object.values(known)[0] : undefined
     if (again && !values.ca && isWebuiEntry(again.connection)) {
       const r = await sync(again.connection, { setDefault: values.default })
       if (json) emit(doneEvent(r, false))

@@ -60,6 +60,12 @@ instruction file on the way down to where it was started. Harness spec 3.0.0.
   a summary the model also gets a table of the files it had read.
 - **`show`**, in a session the web UI or LLeMbas Desktop opened: the model can open a file it made
   — a page, a document — in your viewer beside the chat.
+- **`lembas login --token-stdin --server <url>`**: sign in with a token a program already holds —
+  LLeMbas Desktop, from the one approval that gives it the agent's token beside its own. The token
+  is read from stdin only, never from an argument or the environment, and checked against the
+  server first: it must speak protocol 3, accept the token, and say it carries `link`. The login
+  is then stored exactly as a sign-in by code (an earlier one replaced and its token signed out),
+  and `--json` prints the same `done` (or `error`) line.
 
 ## [1.5.2] — 2026-10-25
 

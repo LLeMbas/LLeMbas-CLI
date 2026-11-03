@@ -9,7 +9,7 @@ import { parse } from "yaml"
 import { loadConfig } from "../src/config/load.ts"
 import { paths } from "../src/config/paths.ts"
 import { normalise, PROTOCOL } from "../src/lembas/client.ts"
-import { codeEvent, codeInstructions, doneEvent, instances, keyFile, login, logout, specFor, sync } from "../src/lembas/login.ts"
+import { codeEvent, codeInstructions, doneEvent, instances, keyFile, login, loginWithToken, logout, specFor, sync } from "../src/lembas/login.ts"
 import { cacheFile, refreshWebui } from "../src/lembas/webui.ts"
 import { resolveModel } from "../src/provider/index.ts"
 import { search } from "../src/search/index.ts"
@@ -33,6 +33,8 @@ interface Fake {
   services: { stt?: boolean; tts?: boolean; search?: boolean; fetch?: boolean }
   heard: { path: string; auth: string | null; body?: any; fields?: Record<string, string> }[]
   token: string
+  /** What /api/v1/instance says the token may do; null: an instance that does not say. */
+  scope: string | null
 }
 
 let fake: Fake | undefined
@@ -62,6 +64,7 @@ function lembas(o: Partial<Pick<Fake, "approveAfter" | "deny" | "protocol" | "mo
     services: o.services ?? { stt: true, tts: true, search: true, fetch: true },
     heard: [],
     token: "lmb_secret",
+    scope: "models memory link",
     models: o.models ?? [
       { id: "gemma", object: "model", context: 32768, vision: true, capacity: { group: "gpu", single_session: true } },
       { id: "qwen", object: "model", name: "Qwen", context: 131072, temperature: 0.6, top_p: 0.95, efforts: ["low", "high"], tools: true, capacity: { group: "gpu" }, default: true },
@@ -110,7 +113,7 @@ function lembas(o: Partial<Pick<Fake, "approveAfter" | "deny" | "protocol" | "mo
       if (u.pathname === "/api/v1/instance") {
         if (state.old) return new Response("not found", { status: 404 })
         const def = (state.models as { id: string; default?: boolean }[]).find((m) => m.default)?.id ?? null
-        return Response.json({ service: "lembas", version: "1.21.0", name: "Example", connection: "example", default_model: def, services: state.services })
+        return Response.json({ service: "lembas", version: "1.21.0", name: "Example", connection: "example", account: { email: "frodo@shire.test", name: "Frodo" }, ...(state.scope === null ? {} : { scope: state.scope }), default_model: def, services: state.services })
       }
       if (u.pathname === "/v1/audio/transcriptions") {
         const f = await req.formData()
@@ -451,4 +454,104 @@ test("only chat models are models; the first embedding one becomes the library's
   writeFileSync(join(paths.config, "config.yaml"), "embedding: example/llama/nomic-embed\n")
   await logout("example")
   expect(cfg().embedding).toBeUndefined()
+})
+
+// `lembas login --token-stdin`: a token a program already holds (Desktop, from the one approval
+// that gave it the agent's token beside its own), checked first, then stored as a device login is.
+
+test("--token-stdin stores the login exactly as a device login does, with no code", async () => {
+  fake = lembas()
+  const viaCode = await login(fake.url, { ...quick, onCode: () => {} })
+  const deviceFiles = { conns: conns(), cfg: cfg(), key: readFileSync(keyFile("example"), "utf8") }
+  const deviceDone = doneEvent(viaCode, true)
+  const { logged_in_at: _, ...deviceInstance } = instances().example!
+  rmSync(paths.config, { recursive: true, force: true })
+  mkdirSync(paths.config, { recursive: true })
+  fake.polls = 0
+  fake.revoked = []
+
+  const r = await loginWithToken(fake.url, "lmb_secret\n")
+  expect(fake.polls).toBe(0)
+  expect({ conns: conns(), cfg: cfg(), key: readFileSync(keyFile("example"), "utf8") }).toEqual(deviceFiles)
+  expect(statSync(keyFile("example")).mode & 0o777).toBe(0o600)
+  const { logged_in_at: __, ...instance } = instances().example!
+  // The same login, but the scope is the token's own (the fake's device poll says only models).
+  expect(instance).toEqual({ ...deviceInstance, scope: "models memory link" })
+  expect(instance.email).toBe("frodo@shire.test")
+  // The same --json line, so a program reads both kinds alike.
+  expect(doneEvent(r, true)).toEqual(deviceDone)
+  expect(JSON.stringify(doneEvent(r, true))).not.toContain("lmb_secret")
+  expect(fake.revoked).toEqual([])
+})
+
+test("--token-stdin over an earlier login replaces it, signing the old token out naming the new", async () => {
+  fake = lembas()
+  await login(fake.url, { ...quick, onCode: () => {} })
+  fake.token = "lmb_agent-From_Desktop"
+  const r = await loginWithToken(fake.url, "lmb_agent-From_Desktop")
+  expect(fake.revoked).toEqual(["Bearer lmb_secret"])
+  expect(fake.replacedBy).toEqual(["lmb_agent-From_Desktop"])
+  expect(readFileSync(keyFile(r.connection), "utf8").trim()).toBe("lmb_agent-From_Desktop")
+  expect(Object.keys(instances())).toEqual(["example"])
+  // The same token again: nothing to sign out.
+  await loginWithToken(fake.url, "lmb_agent-From_Desktop")
+  expect(fake.revoked).toEqual(["Bearer lmb_secret"])
+})
+
+test("--token-stdin refuses, writing nothing: no link, a token not accepted, an older server, not a token", async () => {
+  fake = lembas()
+  fake.scope = "app models"
+  await expect(loginWithToken(fake.url, "lmb_secret")).rejects.toThrow("this token cannot link this machine to")
+  await expect(loginWithToken(fake.url, "lmb_secret")).rejects.toThrow("it carries app models, and LLeMbas CLI's needs link")
+  fake.scope = ""
+  await expect(loginWithToken(fake.url, "lmb_secret")).rejects.toThrow("it carries no scope")
+  fake.scope = "models memory link"
+  await expect(loginWithToken(fake.url, "lmb_wrong")).rejects.toThrow("does not accept this token")
+  // An instance that does not say what a token may do, or has no /api/v1/instance at all.
+  fake.scope = null
+  await expect(loginWithToken(fake.url, "lmb_secret")).rejects.toThrow("needs a newer LLeMbas 2.0 server")
+  fake.stop()
+  fake = lembas({ old: true })
+  await expect(loginWithToken(fake.url, "lmb_secret")).rejects.toThrow("needs a newer LLeMbas 2.0 server")
+  fake.stop()
+  // Another protocol: the device login's own words.
+  fake = lembas({ protocol: 2 })
+  await expect(loginWithToken(fake.url, "lmb_secret")).rejects.toThrow("needs a LLeMbas 2.0 server (protocol 3). Update the server, or use LLeMbas CLI 1.x with it.")
+  fake.stop()
+  fake = lembas({ protocol: PROTOCOL + 1 })
+  await expect(loginWithToken(fake.url, "lmb_secret")).rejects.toThrow("Update LLeMbas CLI")
+  for (const bad of ["", "secret", "lmb_a lmb_b", "lmb_a\nlmb_b", "Bearer lmb_a"])
+    await expect(loginWithToken(fake.url, bad)).rejects.toThrow("expected one LLeMbas token (lmb_…) on stdin")
+  expect(existsSync(join(paths.config, "connections.yaml"))).toBe(false)
+  expect(instances()).toEqual({})
+})
+
+async function cli(args: string[], stdin: string) {
+  const p = Bun.spawn(["bun", join(import.meta.dir, "../src/cli.ts"), ...args], { env: { ...process.env }, stdin: new TextEncoder().encode(stdin), stdout: "pipe", stderr: "pipe" })
+  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+  return { out, err, code }
+}
+
+test("lembas login --token-stdin --server --json: the token from stdin, the device login's done line", async () => {
+  fake = lembas()
+  const ok = await cli(["login", "--token-stdin", "--server", fake.url, "--json"], "lmb_secret\n")
+  expect(ok.code).toBe(0)
+  const lines = ok.out.trim().split("\n").map((l) => JSON.parse(l))
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toMatchObject({ event: "done", fresh: true, connection: "example", base_url: fake.url, version: "1.21.0", models: 2 })
+  expect(Object.keys(lines[0]).sort()).toEqual(["base_url", "changes", "connection", "event", "fresh", "models", "version"])
+  expect(ok.out + ok.err).not.toContain("lmb_secret")
+  expect(readFileSync(keyFile("example"), "utf8").trim()).toBe("lmb_secret")
+
+  // A refusal is the device login's error line, and nothing changes.
+  fake.scope = "models"
+  const no = await cli(["login", "--token-stdin", "--server", fake.url, "--json"], "lmb_secret")
+  expect(no.code).toBe(1)
+  expect(JSON.parse(no.out.trim())).toMatchObject({ event: "error" })
+  expect(JSON.parse(no.out.trim()).message).toContain("cannot link")
+
+  // Never from an argument: there is no --token, and the address is --server's.
+  expect((await cli(["login", "--token", "lmb_secret", "--server", fake.url], "")).code).not.toBe(0)
+  expect((await cli(["login", "--token-stdin", fake.url], "lmb_secret")).code).toBe(2)
+  expect((await cli(["login", "--server", fake.url], "lmb_secret")).code).toBe(2)
 })
