@@ -63,7 +63,8 @@ describe("subagents", () => {
     const child = fake!.requests[1]
     expect(child.messages[0].content).toContain('You are the "explore" subagent')
     expect(child.messages[0].content).not.toContain("Permission mode: plan")
-    expect(child.messages.at(-1).content).toBe("Find why average is wrong in calc.py")
+    // Its prompt has no date either: its first message says it (harness context.md §10).
+    expect(child.messages.at(-1).content).toMatch(/^Find why average is wrong in calc\.py\n<session-note>\nToday is \d{4}-\d{2}-\d{2}\.\n<\/session-note>$/)
     // its own job tools for commands it starts, and report for a word to the main agent
     expect(names(child)).toEqual(["read", "glob", "grep", "list", "bash", "job_output", "job_list", "job_stop", "web_search", "web_fetch", "report"])
     // the preamble is the spec's text; a subagent is told nothing of plan_write or ask_user

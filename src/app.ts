@@ -17,7 +17,8 @@ import { DEFAULT_RULES, toRules } from "./permission/evaluate.ts"
 import { hardlineRules } from "./permission/hardline.ts"
 import { defaultEffort } from "./provider/effort.ts"
 import { clientFor, familyOf, resolveModel } from "./provider/index.ts"
-import { assembleSystem, instructionFiles, knowledgeScope } from "./prompt/assemble.ts"
+import { assembleSystem, instructionFiles, knowledgeScope, modeText } from "./prompt/assemble.ts"
+import type { Changing } from "./session/prefix.ts"
 import { describeRepo, repoState } from "./git/repo.ts"
 import { findProject, persistProjectRule, trustOf, type Project } from "./project/root.ts"
 import type { Message } from "./provider/types.ts"
@@ -41,7 +42,7 @@ import { Library, type Embedder } from "./library/store.ts"
 import { instances as lembasInstances, keyFile as lembasKeyFile } from "./lembas/login.ts"
 import { PERSONAL_KEYS, personalConfig, pushPersonalization } from "./lembas/personal.ts"
 import type { Plan } from "./plan/plan.ts"
-import { LIBRARY_SERVER } from "./mcp/index.ts"
+import { LIBRARY_SERVER, mcpInstructions } from "./mcp/index.ts"
 import type { McpServer } from "./config/schema.ts"
 import { embedderFor } from "./library/embed.ts"
 import { effortsFor } from "./provider/effort.ts"
@@ -253,8 +254,9 @@ export function createApp(o: AppOptions): App {
     return s ? describeRepo(s) : undefined
   }
 
-  // Memory and skills go into the system prompt as they stood when the session started: a write
-  // during the session reaches the file, not the prompt (Hermes' frozen snapshot).
+  // Memory and skills go into the system prompt as they stood when it was made: a write during the
+  // session reaches the file, not the prompt (Hermes' frozen snapshot) — the person's own edit
+  // reaches the model as a note (session/prefix.ts).
   const memoryOn = loaded.config.memory?.enabled !== false
   const memory = new MemoryStore({ memory: loaded.config.memory?.memory_chars ?? DEFAULT_LIMITS.memory, user: loaded.config.memory?.user_chars ?? DEFAULT_LIMITS.user })
   const projectDir = () => (trusted && existsSync(project.dir) ? project.dir : undefined)
@@ -263,17 +265,18 @@ export function createApp(o: AppOptions): App {
     ? new MemoryStore({ memory: loaded.config.memory?.memory_chars ?? DEFAULT_LIMITS.memory, user: 0 }, join(project.dir, "local"), { memory: "PROJECT MEMORY (this project only)" })
     : undefined
   const skillList = () => loadSkills({ projectDir: projectDir(), external: loaded.config.skills?.external_dirs, disabled: loaded.config.skills?.disabled })
-  // Everything in the system prompt that could change during a session is taken once, here, for
-  // the same reason as the git block: the prompt must stay byte for byte the same, or the server
-  // reads the whole conversation again.
+  // What the system prompt holds that nothing during the session updates: taken as the session
+  // starts, for the same reason as the git block. The engine makes the prompt once and resends it
+  // byte for byte (harness context.md §10); what may change and is said in a note when it does —
+  // memory, instruction files, personality, MCP instructions — is read by `changing` below.
   const freeze = () => ({
-    // The server's memory, when it is the server's: as last read for this session (readServerMemory).
-    memory: !memoryOn ? undefined : serverMemory !== undefined ? serverMemory.text : [memory.snapshot(), projectMemory?.block("memory") ?? ""].filter(Boolean).join("\n\n"),
     skills: skillLines(skillList()),
     git: gitSummary(),
     tasks: projectDir() && !unsafeProjectFile(join(project.dir, "tasks.md"), project.root) ? boardSummary(project.dir) : undefined,
-    files: instructionFiles(o.cwd, project.root, loaded.instructions),
   })
+  /** The memory block as it is now: the server's when it is the server's (as last read for this
+   *  session, readServerMemory), else this machine's files; undefined when memory is off. */
+  const memoryNow = () => (!memoryOn ? undefined : serverMemory !== undefined ? serverMemory.text : [memory.snapshot(), projectMemory?.block("memory") ?? ""].filter(Boolean).join("\n\n"))
   // `library: lembas`: the server keeps the memory (acp.md *Memory*); its entries for the prompt are
   // read from it as a session starts. Until the read answers, none.
   const memoryOnServer = loaded.config.library === "lembas" && memoryOn
@@ -299,7 +302,7 @@ export function createApp(o: AppOptions): App {
   const lembasLibrary = memoryOnServer ? lembasLibraryServer(loaded.warnings) : undefined
   if (lembasLibrary) loaded.mcp[LIBRARY_SERVER] = lembasLibrary
   // Without a way to the server's memory, this machine's is used for now.
-  if (memoryOnServer && !lembasLibrary) serverMemory = undefined, frozen = freeze()
+  if (memoryOnServer && !lembasLibrary) serverMemory = undefined
   const mcp = new McpManager(loaded.mcp, {
     root: project.root,
     version: VERSION,
@@ -340,8 +343,29 @@ export function createApp(o: AppOptions): App {
   const prototypesBlock = () => (context.prototypes?.offered || (!context.prototypes && loaded.config.prototypes === true) ? { sources: context.prototypes?.sources ?? "" } : undefined)
   /** The three personal keys this session uses: the client's for it, else the config's. */
   const personal = () => (context.personalization ? personalConfig({ enabled: true, available: true, ...context.personalization }) : loaded.config)
-  const system = (m: Mode, current: ResolvedModel, subagent?: { name: string; instructions: string; report: boolean; skills: boolean; recall: boolean }, at?: { cwd: string; root: string }, plan?: Plan) =>
-    assembleSystem({
+  /** What may change during the session, as it is now (session/prefix.ts `Changing`): what the
+   *  prompt is made from, and what a note compares. A subagent's prompt holds no memory and no
+   *  personality; a worktree subagent reads its own checkout's instruction files. */
+  type Source = { files: { path: string; text: string; chain?: true }[]; memory?: string; personality?: string; userInstructions?: string; instance?: { name: string; instructions: string }; mcp: Record<string, string> }
+  const changing = (subagent?: boolean, at?: { cwd: string; root: string }): Changing => {
+    const files = instructionFiles(at?.cwd ?? o.cwd, at?.root ?? project.root, loaded.instructions)
+    const p = subagent ? {} : personalityOf(personal())
+    const src: Source = {
+      files,
+      memory: subagent ? undefined : memoryNow(),
+      ...p,
+      ...(!subagent && context.instructions ? { instance: { name: contextFrom, instructions: context.instructions } } : {}),
+      mcp: mcp.serverInstructions(),
+    }
+    const named: Record<string, string> = Object.fromEntries(files.map((f) => [f.path, f.text]))
+    // What a note names the person's own instructions by (loop.json context.note.personal).
+    if (src.userInstructions) named[LOOP.context.note.personal] = src.userInstructions
+    if (src.instance) named[`Instructions from ${src.instance.name}`] = src.instance.instructions
+    return { memory: src.memory ?? "", personality: src.personality ?? "", files: named, mcp: src.mcp, source: src }
+  }
+  const system = (m: Mode, current: ResolvedModel, ch: Changing, subagent?: { name: string; instructions: string; report: boolean; skills: boolean; recall: boolean }, at?: { cwd: string; root: string }, plan?: Plan) => {
+    const src = ch.source as Source
+    return assembleSystem({
       modelRef: current.ref,
       family: familyOf(current),
       cwd: at?.cwd ?? o.cwd,
@@ -355,22 +379,26 @@ export function createApp(o: AppOptions): App {
       // A worktree subagent works elsewhere: its own snapshot, taken as it starts.
       git: at ? gitSummary() : frozen.git,
       tasks: frozen.tasks,
-      files: at ? undefined : frozen.files,
+      files: src.files,
       subagent,
-      memory: frozen.memory,
+      memory: src.memory,
       // The skills block tells of skill_view; a subagent without the tool gets no block.
       skills: subagent && !subagent.skills ? undefined : frozen.skills,
       manageSkills: true,
-      // Read on every prompt: /personality and /settings change it without a restart.
-      ...personalityOf(personal()),
-      mcp: mcp.instructions(),
+      // As the prompt is made; /personality and /settings later change it by a note.
+      personality: src.personality,
+      userInstructions: src.userInstructions,
+      mcp: mcpInstructions(src.mcp),
       roster: roster(current.ref),
       plan,
-      ...(context.instructions ? { instance: { name: contextFrom, instructions: context.instructions } } : {}),
+      ...(src.instance ? { instance: src.instance } : {}),
       library: libraryBlock(),
       prototypes: prototypesBlock(),
       context: subagent ? subagent.recall : true,
     })
+  }
+  /** A mode's text for a note, as the prompt would have it. */
+  const modeNote = (m: Mode) => modeText(m, planDir, o.unattended ? UNATTENDED[m] : undefined)
   // The other configured models, for the task tool's `model`, or a switch.
   const roster = (current: string) =>
     loaded.refs
@@ -507,10 +535,13 @@ export function createApp(o: AppOptions): App {
         jobs: { registry, owner: () => ({ sessionId: childSessionId, job }) },
       },
       steerMark: MARKS.to_subagent,
-      system: (mode, current, plan) =>
+      changing: () => changing(true, at),
+      modeText: modeNote,
+      system: (mode, current, plan, ch) =>
         system(
           mode,
           current,
+          ch,
           {
             name: spec.name,
             instructions: wt
@@ -572,7 +603,11 @@ export function createApp(o: AppOptions): App {
     compaction,
     perm,
     toolCtx: { ...baseToolCtx(), jobs: { registry, owner: baseOwner } },
-    system: (m, current, plan) => system(m, current, undefined, undefined, plan),
+    system: (m, current, plan, ch) => system(m, current, ch, undefined, undefined, plan),
+    changing: () => changing(),
+    modeText: modeNote,
+    // The configured MCP servers, up to loop.json's wait: their tools in the first list.
+    beforeFirst: () => Promise.race([mcpReady.catch(() => {}), Bun.sleep(LOOP.context.mcp_wait_ms)]),
     persistRule: trusted ? (rule) => persistProjectRule(project, rule) : undefined,
     spawn,
   })
@@ -597,14 +632,13 @@ export function createApp(o: AppOptions): App {
   })
   const mcpReady = mcp.start()
   /** The server's memory entries for the prompt (`lembas://memory`), read as a session starts, in
-   *  the session's scope: put into the prompt while nothing has been sent yet, kept for the next
-   *  session otherwise — the prompt does not change under a session. */
+   *  the session's scope: in the prompt when it is made after this, else said in a note on the next
+   *  user message — the prompt does not change under a session. */
   const readServerMemory = async () => {
     if (!lembasLibrary || !serverMemory) return
     try {
       const text = await mcp.readResource(LIBRARY_SERVER, MEMORY_RESOURCE, engine.o.toolCtx.libraryScope)
       serverMemory = { text }
-      if (!engine.messages.length && memoryOn) frozen = { ...frozen, memory: text }
     } catch (e) {
       bus.emit({ type: "notice", level: "warn", message: `memory: the server's entries could not be read (${(e as Error).message}); none are in this session's prompt` })
     }

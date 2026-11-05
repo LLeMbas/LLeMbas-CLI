@@ -47,5 +47,5 @@ test("an untrusted project's task board is neither in the prompt nor writable", 
   setTrust(root, "readonly")
   const app = createApp({ cwd: root, store: false, snapshots: false, asker: { ask: async () => ({ kind: "once" }) } })
   expect(app.engine.o.toolCtx.projectDir).toBeUndefined()
-  expect(app.engine.o.system("plan", app.engine.model)).not.toContain("IGNORE PREVIOUS INSTRUCTIONS")
+  expect(app.engine.compose("plan")).not.toContain("IGNORE PREVIOUS INSTRUCTIONS")
 })

@@ -4,6 +4,7 @@
 // backstop, not a budget (LLeMbas generation._run / _wrap_up).
 // The text is the harness spec's, so LLeMbas's Continue sends the same words.
 import continueText from "../../harness/prompts/tasks/continue.md" with { type: "text" }
+import { isAbsolute } from "node:path"
 import type { Asker, AttachmentInfo, Bus } from "../bus/index.ts"
 import type { Effort, Mode } from "../config/schema.ts"
 import { evaluate, shadowsDeny, type Context as PermContext, type Rule } from "../permission/evaluate.ts"
@@ -12,13 +13,15 @@ import type { Plan } from "../plan/plan.ts"
 import { LOOP } from "../harness.ts"
 import { fillPrompt } from "../prompt/fill.ts"
 import { splitPurpose, toSpec, ToolError, type Tool, type ToolContext, type ToolResult } from "../tool/tool.ts"
-import { fill, promptText } from "../prompt/assemble.ts"
+import { promptText } from "../prompt/assemble.ts"
 import { resolveCall } from "../tool/names.ts"
 import { contextWindow } from "../provider/index.ts"
 import { summaryTurns, type Store } from "./store.ts"
 import { estimateTokens, estimateValue } from "../provider/tokens.ts"
 import { duration } from "../duration.ts"
 import { memoryResults, presentIds, ResultContext } from "./results.ts"
+import { render } from "../plan/plan.ts"
+import { compactAsk, isNote, NO_CHANGING, noteFor, offeredFor, PREFIX_META, summaryOf, today, toldAt, unavailable, type Changing, type Kept, type Now, type Requirement, type Told } from "./prefix.ts"
 
 export interface EngineOptions {
   bus: Bus
@@ -28,8 +31,20 @@ export interface EngineOptions {
   tools: Tool[]
   store?: Store
   sessionId?: string
-  /** The system prompt for a step; `plan`: the session's plan, for `{{plan_context}}`. */
-  system: (mode: Mode, model: ResolvedModel, plan?: Plan) => string
+  /** The session's system prompt, made from `changing` (what may change during the session, as it
+   *  is now); `plan`: the session's plan, for `{{plan_context}}`. Called once per session, after a
+   *  compaction and on a model switch — never per request (harness context.md §10). */
+  system: (mode: Mode, model: ResolvedModel, plan: Plan | undefined, changing: Changing) => string
+  /** What may change during the session, as it is now: compared at every user message, and a
+   *  difference said in a note. Absent: nothing (a subagent's prompt holds none of it). */
+  changing?: () => Changing
+  /** The text a note gives for a permission mode (modes/<mode>.md as the prompt fills it). */
+  modeText?: (mode: Mode) => string
+  /** Awaited before a prompt is made at a turn's start: the app waits up to loop.json
+   *  `context.mcp_wait_ms` for its MCP servers. */
+  beforeFirst?: () => Promise<void>
+  /** Today's date, as the note says it (tests set it). */
+  today?: () => string
   mode: Mode
   effort: Effort | null
   perm: Omit<PermContext, "mode">
@@ -126,8 +141,9 @@ export class Engine {
   plan: Plan | undefined
   private sessionRules: Rule[] = []
   private recentCalls: string[] = []
-  /** Tools refused with no one able to approve them: no longer offered. */
-  private withdrawn = new Set<string>()
+  /** Tools refused with no one able to approve them, and the refusal: still listed (the tool list
+   *  is the session's, harness context.md §10), and every further call answers that refusal. */
+  private withdrawn = new Map<string, string>()
   /** This prompt's spending, against `budget`: time waiting for the user, tool output, tokens written. */
   private turnWaitedMs = 0
   private turnOutputBytes = 0
@@ -140,6 +156,16 @@ export class Engine {
    *  (session/results.ts, harness context.md). */
   results: ResultContext
 
+  /** The prefix (harness context.md §10): the system prompt this session sends, the tools left out
+   *  of its list, and what the model has been told — made at the first request, kept with the
+   *  session, made again only after a compaction or on a model switch. */
+  private kept: Kept | undefined
+  /** What was told when the prompt was made: where a rewind (/undo) goes back to, since the notes
+   *  after it may be gone from the conversation. */
+  private keptBase: Told | undefined
+  /** The last request's usage, cached input tokens included, and what it was for. */
+  lastRequest: { usage: Usage; kind: "step" | "compaction" } | undefined
+
   constructor(readonly o: EngineOptions) {
     this.mode = o.mode
     this._effort = o.effort
@@ -148,6 +174,121 @@ export class Engine {
     this.sessionId = o.sessionId
     this.plan = this.storedPlan()
     this.results = this.resultsFor(o.sessionId)
+    this.kept = this.storedPrefix()
+  }
+
+  /** The prefix the store holds for this session, if any: a resumed session sends what it kept. */
+  private storedPrefix(): Kept | undefined {
+    if (!this.o.store || !this.sessionId) return undefined
+    const k = this.o.store.meta<Kept | null>(this.sessionId, PREFIX_META)
+    if (!k || typeof k !== "object" || typeof k.system !== "string" || !Array.isArray(k.left) || !k.told) return undefined
+    this.keptBase = { ...structuredClone(k.told), date: undefined }
+    return k
+  }
+
+  private saveKept() {
+    if (this.o.store && this.sessionId) this.o.store.setMeta(this.sessionId, PREFIX_META, this.kept ?? null)
+  }
+
+  /** What could ever be met in this session (§10 rule 4), decided as the prompt is made: plan mode
+   *  always can be entered; vision, a project directory, knowledge with documents and a display
+   *  are as they are now, for the whole session. */
+  private could(): Set<Requirement> {
+    const could = new Set<Requirement>(["plan"])
+    if (this.model.spec.vision === true) could.add("vision")
+    if (this.o.toolCtx.projectDir !== undefined) could.add("project")
+    if (this.o.toolCtx.show !== undefined) could.add("display")
+    const L = this.o.toolCtx.library
+    const have = L?.lib.bases().filter((b) => b.documents > 0).map((b) => b.name) ?? []
+    if (have.some((b) => !L!.bases || L!.bases.includes(b))) could.add("knowledge")
+    return could
+  }
+
+  /** What is met now, for a call: the mode for plan, the display as it is; the rest are fixed. */
+  private met(): Set<Requirement> {
+    const met = this.could()
+    if (this.mode !== "plan") met.delete("plan")
+    if (this.o.toolCtx.show === undefined) met.delete("display")
+    return met
+  }
+
+  /** Everything the note compares, as it is now. */
+  private now(changing = this.o.changing?.() ?? NO_CHANGING): Now {
+    const { source: _source, ...rest } = changing
+    return { ...structuredClone(rest), date: (this.o.today ?? today)(), mode: this.mode, plan: this.plan ? render(this.plan) : "" }
+  }
+
+  /** The session's prefix, made now if there is none yet (or it was made for another model). */
+  prefix(): Kept {
+    if (this.kept && this.kept.model === this.model.ref) return this.kept
+    const changing = this.o.changing?.() ?? NO_CHANGING
+    const now = this.now(changing)
+    const could = this.could()
+    // Left out for the whole session: what it can never meet, and task where nothing can spawn.
+    // Everything else — MCP tools arriving as their servers connect among them — is offered.
+    const left = this.o.tools.filter((t) => (t.name === "task" && !this.o.spawn) || !offeredFor(t.requires ? [t.requires] : undefined, could)).map((t) => t.name)
+    const told = toldAt(now)
+    // A model switch keeps the conversation, and with it the date already said.
+    if (this.kept?.told.date) told.date = this.kept.told.date
+    this.keptBase = { ...structuredClone(told), date: undefined }
+    this.kept = { system: this.o.system(this.mode, this.model, this.plan, changing), left, model: this.model.ref, told }
+    this.saveKept()
+    return this.kept
+  }
+
+  /** A system prompt as it would be made now, kept nowhere (what /context and tests look at
+   *  before a session has made its own). */
+  compose(mode: Mode = this.mode, plan: Plan | undefined = this.plan): string {
+    return this.o.system(mode, this.model, plan, this.o.changing?.() ?? NO_CHANGING)
+  }
+
+  /** The system prompt this session sends (made now if it has none yet). */
+  systemPrompt(): string {
+    return this.prefix().system
+  }
+
+  /** The tools a request offers: the session's list, the same on every request — the wrap-up's
+   *  included, and a tool withdrawn after a final refusal too (it answers that refusal). */
+  private toolSpecs() {
+    const left = new Set(this.prefix().left)
+    return this.o.tools.filter((t) => !left.has(t.name)).map(toSpec)
+  }
+
+  /** The note for the next user message (§10 rule 3), "" when nothing changed; what it tells is
+   *  the model's from then on. */
+  private takeNote(): string {
+    const kept = this.prefix()
+    const { note, told } = noteFor(kept.told, this.now(), (m) => this.o.modeText?.(m) ?? fillPrompt(promptText(`modes/${m}.md`), { plan_dir: this.o.toolCtx.planDir ?? "" }))
+    if (note) {
+      kept.told = told
+      this.saveKept()
+    }
+    return note
+  }
+
+  /** Something the model learnt from its own tool's result (a plan it wrote, the mode its
+   *  plan_submit set, a memory or file it changed): told, so no note says it again. */
+  private learnt(fields: Partial<Told>) {
+    if (!this.kept) return
+    Object.assign(this.kept.told, structuredClone(fields))
+    this.saveKept()
+  }
+
+  /** The conversation was cut back (/undo, a rewind): the notes after the cut may be gone, so what
+   *  the model knows is the prompt again, and the next user message says the rest. */
+  rewound() {
+    if (!this.kept || !this.keptBase) return
+    this.kept.told = structuredClone(this.keptBase)
+    this.saveKept()
+  }
+
+  /** A request's usage, kept with the session (cached input tokens included, §10 rule 6). */
+  private recordUsage(usage: Usage, kind: "step" | "compaction") {
+    this.lastRequest = { usage, kind }
+    if (this.o.store && this.sessionId)
+      try {
+        this.o.store.request(this.sessionId, { model: this.model.ref, kind, ...usage })
+      } catch {}
   }
 
   /** A session's results: kept with it in the store, or in memory without one. A stub may point
@@ -164,10 +305,12 @@ export class Engine {
   }
 
   /** Replace the plan (null clears it): kept with the session, and said on the bus so every
-   *  front end's card follows. */
-  setPlan(plan: Plan | null) {
+   *  front end's card follows. `by`: the model's own tool, whose result shows it the plan; a
+   *  change by the person reaches the model as a note on the next user message. */
+  setPlan(plan: Plan | null, by: "person" | "model" = "person") {
     this.plan = plan ?? undefined
     if (this.o.store && this.sessionId) this.o.store.setMeta(this.sessionId, PLAN_META, plan)
+    if (by === "model") this.learnt({ plan: this.plan ? render(this.plan) : "" })
     this.o.bus.emit({ type: "plan", plan: this.plan })
   }
 
@@ -182,7 +325,8 @@ export class Engine {
     this.o.bus.emit({ type: "model", ref: this.model.ref, effort: v ?? "off", connection: this.model.connectionName })
   }
 
-  /** Switch model mid-session. The conversation carries over; the effort resets to the new model's. */
+  /** Switch model mid-session. The conversation carries over; the effort resets to the new model's.
+   *  The prompt is made again for it at the next request (prefix(): it was made for another). */
   setModel(model: ResolvedModel, client: Client, effort: Effort | null) {
     const changed = model.ref !== this.model.ref || effort !== this._effort
     this.model = model
@@ -201,8 +345,12 @@ export class Engine {
     this.withdrawn.clear()
     this.results = this.resultsFor(sessionId)
     // A new session's plan is whatever the store holds for it: none for a fresh one, the old one
-    // on a resume.
+    // on a resume; its prefix likewise.
     this.plan = this.storedPlan()
+    this.kept = undefined
+    this.keptBase = undefined
+    this.lastRequest = undefined
+    this.kept = this.storedPrefix()
     this.o.bus.emit({ type: "plan", plan: this.plan })
     this.o.toolCtx.readFiles.clear()
     this.o.toolCtx.fileStamps.clear()
@@ -227,17 +375,17 @@ export class Engine {
     }
   }
 
+  /** The summary, asked for as the next turn of this same conversation (harness context.md §7):
+   *  the same system prompt and tools, every message as it is, then tasks/compact.md with an empty
+   *  transcript and previous summary. Nothing of it is shown or stored as a turn; a tool call in the reply is not run. */
   private async summarise(signal: AbortSignal): Promise<string> {
-    const previous = this.messages[0]?.role === "user" && this.messages[0].parts[0]?.type === "text" && this.messages[0].parts[0].text.startsWith("The earlier part of this conversation was compacted")
-      ? this.messages[0].parts[0].text
-      : ""
-    const prompt = fill(promptText("tasks/compact.md"), {
-      previous_summary: previous ? `## Summary of even earlier turns\n\n${previous}` : "",
-      transcript: transcript(this.messages, 60_000),
-    })
+    // No previous summary in the ask: an earlier one is already the conversation's first message.
+    const ask: Message = { role: "user", parts: [{ type: "text", text: compactAsk() }] }
     let summary = ""
-    for await (const ev of this.client.stream({ system: "", messages: [{ role: "user", parts: [{ type: "text", text: prompt }] }], tools: [], effort: null, signal }))
-      if (ev.type === "finish") summary = ev.message.parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("").trim()
+    for await (const ev of this.client.stream({ system: this.systemPrompt(), messages: mergeUsers([...this.messages, ask]), tools: this.toolSpecs(), effort: this.effort, signal })) {
+      if (ev.type === "finish") summary = summaryOf(ev.message.parts)
+      else if (ev.type === "usage") this.recordUsage(ev.usage, "compaction")
+    }
     if (!summary) throw new Error("the model returned an empty summary")
     // The harness's own table of the reads still in the conversation (context.md §7), after the
     // summary; the conversation is then the summary alone, so no stub can point at a result before it.
@@ -247,6 +395,11 @@ export class Engine {
     this.messages = summaryTurns(summary)
     this.usage = undefined
     this.usageAt = 0
+    // Everything is read again now anyway: the prompt is made again at the next request, and the
+    // next user message says the date again (what said it is in the summary, if anywhere).
+    this.kept = undefined
+    this.keptBase = undefined
+    this.saveKept()
     // Said on the bus: the web UI marks the point in a shared session, as the TUI does.
     this.o.bus.emit({ type: "compacted", summary })
     return summary
@@ -293,14 +446,18 @@ export class Engine {
       await this.summarise(signal)
       // The task is never left to the summary: the prompt that started this turn comes back word
       // for word (found on a real run, where a small model's summary lost the task entirely).
-      const original = this.turnPrompt?.role === "user" ? this.turnPrompt.parts : []
+      // Its note is not: what it said may be out of date, and the new prompt's first user message
+      // gets a note of its own.
+      const original = this.turnPrompt?.role === "user" ? this.turnPrompt.parts.filter((p) => p.type !== "text" || !isNote(p.text)) : []
       const steers = this.turnSteers.map((s) => ({ type: "text" as const, text: `(Sent while you were working:) ${s}` }))
+      const note = this.takeNote()
       this.push({
         role: "user",
         parts: [
           ...original,
           ...steers,
           { type: "text", text: "(The conversation was compacted to fit the context window; the summary above records what was done so far. This was the request — continue it from where the summary leaves off.)" },
+          ...(note ? [{ type: "text" as const, text: note }] : []),
         ],
       })
       this.o.bus.emit({ type: "notice", message: "compacted — carrying on from the summary, with your request kept word for word" })
@@ -330,23 +487,6 @@ export class Engine {
     if (b.output_bytes && this.turnOutputBytes > b.output_bytes) return { limit: "tool output budget", said: "with too much tool output to read" }
     if (b.completion_tokens && this.turnCompletion > b.completion_tokens) return { limit: "output budget", said: `after writing about ${this.turnCompletion.toLocaleString("en")} tokens` }
     return undefined
-  }
-
-  /** Tools a model can use at all: view_image only with vision, plan_submit only in plan mode
-   *  (`requires: "plan"`; plan_write and plan_update are offered in every mode). */
-  private offered(name: string): boolean {
-    const t = this.o.tools.find((x) => x.name === name)
-    if (name === "task" && !this.o.spawn) return false
-    if (!t?.requires) return true
-    if (t.requires === "vision") return this.model.spec.vision === true
-    if (t.requires === "project") return this.o.toolCtx.projectDir !== undefined
-    if (t.requires === "display") return this.o.toolCtx.show !== undefined
-    if (t.requires === "knowledge") {
-      const L = this.o.toolCtx.library
-      const have = L?.lib.bases().filter((b) => b.documents > 0).map((b) => b.name) ?? []
-      return have.some((b) => !L!.bases || L!.bases.includes(b))
-    }
-    return this.mode === "plan"
   }
 
   cancel() {
@@ -449,12 +589,21 @@ export class Engine {
     const { bus } = this.o
     this.abort = new AbortController()
     const signal = this.abort.signal
-    this.push({ role: "user", parts: [{ type: "text", text }, ...extra.map((t) => (typeof t === "string" ? { type: "text" as const, text: t } : t))], ...(turnId ? { turnId } : {}), ...(machine ? { machine } : {}) })
+    // Before a session's first request: the configured MCP servers get a moment to connect, so
+    // their tools are in the first list (§10 rule 4).
+    if (!this.kept || this.kept.model !== this.model.ref) await this.o.beforeFirst?.()
+    // What changed since the prompt was made goes after the person's words, as a note (§10 rule 3).
+    const note = this.takeNote()
+    this.push({
+      role: "user",
+      parts: [{ type: "text", text }, ...extra.map((t) => (typeof t === "string" ? { type: "text" as const, text: t } : t)), ...(note ? [{ type: "text" as const, text: note }] : [])],
+      ...(turnId ? { turnId } : {}),
+      ...(machine ? { machine } : {}),
+    })
     this.turnPrompt = this.messages[this.messages.length - 1]
     this.turnSteers = []
     this.autoCompactions = 0
     const toolMap = new Map(this.o.tools.map((t) => [t.name, t]))
-    const allSpecs = this.o.tools.map(toSpec)
     const maxSteps = this.o.maxSteps ?? LOOP.steps.default
     const started = performance.now()
     this.turnWaitedMs = 0
@@ -486,10 +635,13 @@ export class Engine {
       // What was said before a stop: kept, so /continue picks up from there.
       let partial = ""
       try {
+        // The same system prompt and tool list on every request of the session (§10).
         const stream = this.client.stream({
-          system: this.o.system(this.mode, this.model, this.plan),
+          system: this.systemPrompt(),
           messages: mergeUsers(wrapUp ? [...this.messages, { role: "user", parts: [{ type: "text", text: wrapUpText(ranOut ? ranOut.limit : "step limit") }] }] : this.messages),
-          tools: wrapUp ? [] : allSpecs.filter((s) => !this.withdrawn.has(s.name) && this.offered(s.name)),
+          // The wrap-up too (loop.json wrap_up): its message says the tools are withdrawn, and a
+          // call in its reply is not run.
+          tools: this.toolSpecs(),
           effort: this.effort,
           signal,
         })
@@ -533,8 +685,16 @@ export class Engine {
         bus.emit({ type: "done", reason: "error" })
         return "error"
       }
+      // The wrap-up's answer is its text before any call: a call there is not run, and none is kept
+      // without a result to go with it.
+      if (wrapUp && assistant.parts.some((p) => p.type === "tool_call")) {
+        const first = assistant.parts.findIndex((p) => p.type === "tool_call")
+        assistant = { ...assistant, parts: assistant.parts.slice(0, first) }
+        bus.emit({ type: "notice", message: "the wrap-up reply called a tool; it was not run" })
+      }
       this.push(assistant)
       if (usage) {
+        this.recordUsage(usage, "step")
         this.turnCompletion += usage.output
         // Counted once the reply is in the history, so the reply itself is not estimated again.
         this.usage = usage
@@ -608,11 +768,13 @@ export class Engine {
         question: this.o.asker.question ? (req, id) => this.waiting(this.o.asker.question!(req, id)) : undefined,
         plan: {
           get: () => this.plan,
-          set: (p) => this.setPlan(p),
+          set: (p) => this.setPlan(p, "model"),
           ask: this.o.asker.plan ? (req, id) => this.waiting(this.o.asker.plan!(req, id)) : undefined,
         },
         setMode: (m) => {
           this.mode = m
+          // Its own plan_submit's result tells the model the mode.
+          this.learnt({ mode: m })
           bus.emit({ type: "mode", mode: m })
         },
         spawn: this.o.spawn,
@@ -647,6 +809,16 @@ export class Engine {
         )
       }
       this.bgNow = undefined
+      // A memory or instruction file changed by this step's tools is the model's own doing, which
+      // their results showed it: no note says it again. Changed between turns, it is the person's.
+      if (runnable.some((r) => r.writes) && this.o.changing && this.kept) {
+        const now = this.now()
+        // Files by their path only: the person's own instructions and an instance's (named by a
+        // heading) are not something a tool of the model writes.
+        const told = this.kept.told.files
+        const files = Object.fromEntries([...Object.entries(told).filter(([k]) => !isAbsolute(k)), ...Object.entries(now.files).filter(([k]) => isAbsolute(k))])
+        this.learnt({ memory: now.memory, files, ...(runnable.some((r) => r.tool.name === "settings") ? { personality: now.personality } : {}) })
+      }
       const images: ImagePart[] = []
       for (const call of calls) {
         const r = results.get(call.id) ?? { output: "Not run: the reply was cancelled.", isError: true }
@@ -702,6 +874,12 @@ export class Engine {
     const resolved = resolveCall(call.name, raw)
     tool = toolMap.get(resolved.name) ?? tool
     raw = resolved.raw
+    // Offered for the whole session; while what it needs is not met, the spec's sentence (§10 rule 4).
+    const no = unavailable(tool.name, tool.requires ? [tool.requires] : undefined, this.met())
+    if (no) return { result: { output: no, isError: true } }
+    // Withdrawn after a final refusal: still listed, and the refusal is the answer.
+    const refused = this.withdrawn.get(tool.name)
+    if (refused !== undefined) return { result: { output: refused, isError: true }, denied: true }
     // What the call is for goes to the user when they are asked; the tool never sees an added `purpose`.
     const { args: own, purpose } = splitPurpose(tool, raw)
     const parsed = tool.schema.safeParse(own)
@@ -746,15 +924,10 @@ export class Engine {
       if (reply.kind === "deny" && withdraw) {
         // Every tool behind the same permission goes: edit and write share "edit".
         const siblings = this.o.tools.filter((t) => t.access === tool.access)
-        for (const t of siblings) this.withdrawn.add(t.name)
         const gone = siblings.map((t) => t.name).join(", ")
-        return {
-          result: {
-            output: `Refused: ${reply.feedback ?? "nobody can approve this"} It will be refused every time in this session, so ${gone} ${gone.includes(",") ? "are" : "is"} no longer offered. Do not look for a way around it. Finish with what you can do without it, and say exactly what you would have done — the change, the command — so the user can do it.`,
-            isError: true,
-          },
-          denied: true,
-        }
+        const output = `Refused: ${reply.feedback ?? "nobody can approve this"} It will be refused every time in this session: every further call to ${gone} answers this same refusal. Do not look for a way around it. Finish with what you can do without it, and say exactly what you would have done — the change, the command — so the user can do it.`
+        for (const t of siblings) this.withdrawn.set(t.name, output)
+        return { result: { output, isError: true }, denied: true }
       }
       if (reply.kind === "deny") {
         const output = reply.feedback
@@ -789,20 +962,4 @@ export class Engine {
     // A command's path is its working directory, not a file it changes.
     return { tool, args, paths: request.command === undefined ? (request.paths ?? []) : [], writes: request.class !== "read", edited }
   }
-}
-
-
-/** The conversation as plain text for the summariser, newest kept when it is too long. */
-export function transcript(messages: Message[], maxChars: number): string {
-  const lines: string[] = []
-  for (const m of messages) {
-    if (m.role === "tool") lines.push(`[${m.name} result${m.isError ? ", error" : ""}]\n${m.content.slice(0, 2000)}`)
-    else
-      for (const p of m.parts) {
-        if (p.type === "text") lines.push(`${m.role === "user" ? "User" : "Assistant"}: ${p.text}`)
-        else if (p.type === "tool_call") lines.push(`[assistant called ${p.name} ${p.args.slice(0, 400)}]`)
-      }
-  }
-  const all = lines.join("\n\n")
-  return all.length <= maxChars ? all : "[…earlier turns cut…]\n\n" + all.slice(-maxChars)
 }

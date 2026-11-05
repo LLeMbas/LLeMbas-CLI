@@ -231,8 +231,8 @@ export interface PromptContext {
   /** Set for a subagent: who it is and what it is for; replaces the mode's own instructions.
    *  `report`: it has the report tool. */
   subagent?: { name: string; instructions: string; report?: boolean }
-  /** The memory snapshot taken when the session started ("" when both files are empty);
-   *  undefined when memory is off. */
+  /** The memory as it was when the prompt was made ("" when both files are empty); undefined
+   *  when memory is off. A later change by the person goes as a note. */
   memory?: string
   /** The skills list (skillLines), taken when the session started. */
   skills?: string
@@ -246,7 +246,8 @@ export interface PromptContext {
   mcp?: string
   /** The other configured models, one line each (with their notes). */
   roster?: string
-  /** The session's plan (plan_write / plan_update), put into the prompt while it exists. */
+  /** The session's plan (plan_write / plan_update) as it stood when the prompt was made; a change
+   *  after that is the model's own tool result, or a note when the person made it. */
   plan?: Plan
   /** An instance's own instructions for this session (the chat's authored prompt, over the link),
    *  appended after the shared text under `## Instructions from <name>`. */
@@ -263,6 +264,13 @@ export interface PromptContext {
 
 const MAX_INSTRUCTION_CHARS = 40_000
 
+/** The system prompt (harness spec; its stability is context.md §10, from 3.1.0). It is made once
+ *  per session — at the start, after a compaction, on a model switch — and the engine resends
+ *  those bytes on every request, so nothing in it may be a clock or anything else that moves on
+ *  its own: no date (a note on the first user message says it, session/prefix.ts), the permission
+ *  mode's text as it was at the start, the plan as it stood then, memory, instruction files,
+ *  personality and MCP instructions as they were read for it. What changes later reaches the model
+ *  as a `<session-note>` on the next user message, never by making this again. */
 export function assembleSystem(ctx: PromptContext): string {
   const vars = {
     agent_name: ctx.agentName ?? "LLeMbas",
@@ -297,7 +305,7 @@ export function assembleSystem(ctx: PromptContext): string {
       `Project root: ${ctx.root}`,
       `Git repository: ${ctx.isGit ? "yes" : "no"}`,
       `Platform: ${platform()} ${release()}`,
-      `Today: ${new Date().toISOString().slice(0, 10)}`,
+      // No date: it would change at midnight and the whole session be read again (§10 rule 2).
       `Model: ${ctx.modelRef}`,
       "</env>",
     ].join("\n"),
@@ -320,8 +328,8 @@ export function assembleSystem(ctx: PromptContext): string {
   if (ctx.mcp) sections.push(ctx.mcp)
   if (!ctx.subagent) sections.push(agentsBlock(ctx, files))
 
-  // Memory and skills: snapshots taken when the session started, so the prompt does not change
-  // under a session (Hermes' frozen snapshot).
+  // Memory and skills: as they were when the prompt was made, so the prompt does not change under
+  // a session (Hermes' frozen snapshot); the person's later edit to memory goes as a note.
   if (ctx.memory !== undefined && !ctx.subagent) {
     sections.push(promptText("blocks/memory.md"))
     if (ctx.memory) sections.push(ctx.memory)
@@ -353,13 +361,20 @@ export function assembleSystem(ctx: PromptContext): string {
         read_only: ctx.mode === "plan" ? SUBAGENT_READ_ONLY : "",
       }),
     )
-  else sections.push(fillPrompt(promptText(`modes/${ctx.mode}.md`), vars))
-  if (ctx.unattended) sections.push(fillPrompt(promptText("modes/unattended.md"), { ...vars, refused: ctx.unattended }))
+  else sections.push(modeText(ctx.mode, ctx.planDir, ctx.unattended))
   // What the person said about themselves goes last, under the web UI's headings and in its order.
   // Not for a subagent: it answers the main agent, not the person.
   if (ctx.userInstructions && !ctx.subagent) sections.push(`## How the person you are talking to wants to be helped\n\n${ctx.userInstructions}`)
   if (ctx.personality && !ctx.subagent) sections.push(`## Personality\n\n${ctx.personality}`)
   return sections.join("\n\n")
+}
+
+/** A permission mode's text (modes/<mode>.md), with the unattended block when nobody can approve
+ *  (`refused`: what will be refused, in words): the prompt's own as it was made, and the body of a
+ *  note when the mode changes later (session/prefix.ts). */
+export function modeText(mode: Mode, planDir: string, refused?: string): string {
+  const own = fillPrompt(promptText(`modes/${mode}.md`), { plan_dir: planDir })
+  return refused ? `${own}\n\n${fillPrompt(promptText("modes/unattended.md"), { plan_dir: planDir, refused })}` : own
 }
 
 const GIT_QUESTION =

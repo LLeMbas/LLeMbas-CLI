@@ -155,10 +155,11 @@ test("the tools: knowledge_search is offered only with something to search; a pr
   lib.putDocument("private", { title: "Diary", source: "d", text: "The pump primes in my dreams." })
   await app.engine.prompt("anything")
   expect(offered()).not.toContain("knowledge_search")
-  // A document in the project's base: offered, and only that base is searched.
+  // A document in the project's base: offered from the next session — the tool list is the
+  // session's, decided as it starts (harness context.md §10) — and only that base is searched.
   const pump = lib.putDocument("manuals", { title: "Pump", source: "p", text: "The pump primes in thirty seconds." })
   fake.requests.length = 0
-  app.engine.messages = []
+  app.newSession()
   await app.engine.prompt("how long does the pump take to prime?")
   expect(offered()).toContain("knowledge_search")
   const results = app.engine.messages.filter((m) => m.role === "tool").map((m) => (m.role === "tool" ? m.content : ""))

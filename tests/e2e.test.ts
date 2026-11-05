@@ -53,7 +53,7 @@ describe("end to end", () => {
     expect(fake!.requests[0].messages[0].content).toContain("Permission mode: edit")
     // knowledge_search/get are offered once any knowledge base has documents, and the suite shares
     // one LEMBAS_HOME: another file's base must not decide this list (found in the full run).
-    expect(fake!.requests[0].tools.map((t: any) => t.function.name).filter((n: string) => !n.startsWith("knowledge_"))).toEqual(["read", "write", "edit", "multiedit", "apply_patch", "glob", "grep", "list", "bash", "job_output", "job_list", "job_stop", "job_send", "web_search", "web_fetch", "task", "plan_write", "plan_update", "ask_user", "memory", "session_search", "notes_search", "note_view", "note_manage", "skills_list", "skill_view", "skill_manage", "settings", "recall"])
+    expect(fake!.requests[0].tools.map((t: any) => t.function.name).filter((n: string) => !n.startsWith("knowledge_"))).toEqual(["read", "write", "edit", "multiedit", "apply_patch", "glob", "grep", "list", "bash", "job_output", "job_list", "job_stop", "job_send", "web_search", "web_fetch", "task", "plan_write", "plan_update", "ask_user", "plan_submit", "memory", "session_search", "notes_search", "note_view", "note_manage", "skills_list", "skill_view", "skill_manage", "settings", "recall"])
     const ends = events.filter((e) => e.type === "tool_end")
     expect(ends.map((e) => e.type === "tool_end" && e.result.title)).toEqual(["hello.txt · 1–1 of 1", "hello.txt +1 −1"])
     const sid = store.sessions(1)[0]!.id
@@ -109,16 +109,20 @@ describe("end to end", () => {
     expect(Bun.YAML.parse(saved)).toEqual({ mode: "manual", permission: { bash: { "echo *": "allow" } } })
   })
 
-  test("step ceiling withdraws tools and asks for an answer", async () => {
+  test("step ceiling: the same tools are listed, the model is asked for an answer, and a call in it is not run", async () => {
     const dir = setup([
       { chunks: [toolCall(0, "c1", "list", "{}")] },
-      { chunks: [delta({ content: "summary" })] },
+      { chunks: [delta({ content: "summary" }), toolCall(0, "c2", "list", "{}")] },
     ])
     writeFileSync(join(paths.config, "config.yaml"), "model: fake/m\nlimits: { steps: 1 }\n")
     const app = createApp({ cwd: dir, mode: "edit", asker: noAsk, store: false })
     expect(await app.engine.prompt("go")).toBe("steps")
-    expect(fake!.requests[1].tools).toBeUndefined()
+    // The tool list is the session's, the wrap-up's request included (harness context.md §10).
+    expect(fake!.requests[1].tools).toEqual(fake!.requests[0].tools)
     expect(fake!.requests[1].messages.at(-1).content).toContain("step limit")
+    expect(fake!.requests).toHaveLength(2)
+    const last = app.engine.messages.at(-1)!
+    expect(last).toEqual({ role: "assistant", parts: [{ type: "text", text: "summary" }] })
   })
 
   test("the CLI: lembas run", async () => {
@@ -137,9 +141,11 @@ describe("end to end", () => {
 })
 
 describe("nobody to approve", () => {
-  test("a final denial withdraws every tool under that permission, and the prompt says so up front", async () => {
+  test("a final denial withdraws every tool under that permission: still listed, each further call answers the refusal", async () => {
+    const asked: string[] = []
     const dir = setup([
       { chunks: [toolCall(0, "c1", "read", '{"path":"hello.txt"}'), toolCall(1, "c2", "edit", JSON.stringify({ path: "hello.txt", old: "world", new: "x" }))] },
+      { chunks: [toolCall(0, "c3", "write", JSON.stringify({ path: "hello.txt", content: "x" }))] },
       { chunks: [delta({ content: "I would change world to x." })] },
     ])
     const app = createApp({
@@ -147,16 +153,17 @@ describe("nobody to approve", () => {
       mode: "manual",
       store: false,
       unattended: true,
-      asker: { ask: async ({ tool }) => ({ kind: "deny", final: true, feedback: `nobody is present to approve ${tool}.` }) },
+      asker: { ask: async ({ tool }) => (asked.push(tool), { kind: "deny", final: true, feedback: `nobody is present to approve ${tool}.` }) },
     })
     await app.engine.prompt("go")
     expect(fake!.requests[0].messages[0].content).toContain("nobody can approve anything")
     expect(fake!.requests[0].messages[0].content).toContain("any file change")
-    const names = fake!.requests[1].tools.map((t: any) => t.function.name)
-    expect(names).not.toContain("edit")
-    expect(names).not.toContain("write")
-    expect(names).toContain("read")
-    expect(fake!.requests[1].messages.at(-1).content).toContain("no longer offered")
+    expect(fake!.requests[1].tools).toEqual(fake!.requests[0].tools)
+    const refusal = fake!.requests[1].messages.at(-1).content as string
+    expect(refusal).toContain("every further call to write, edit, multiedit, apply_patch answers this same refusal")
+    // The write is not put to anybody: its answer is that same refusal.
+    expect(asked).toEqual(["edit"])
+    expect(fake!.requests[2].messages.at(-1).content).toBe(refusal.replace(/^\[#0002\]/, "[#0003]"))
   })
 
   test("a 5xx before any output is retried once, then given up", async () => {

@@ -23,6 +23,9 @@ import { CONTEXT, hunks, lineCount, memoryResults, presentIds, ResultContext, sh
 import { readBody } from "../src/tool/read.ts"
 import { applyOps, type Op, type Target } from "../src/memory/store.ts"
 import { jobNote, type NoteCase } from "../src/jobs/note.ts"
+import { compactAsk, noteFor, offeredFor, toldAt, unavailable, type Now, type Requirement, type Told } from "../src/session/prefix.ts"
+import { promptText } from "../src/prompt/assemble.ts"
+import { TOOL_SPECS } from "../src/harness.ts"
 
 type Case = Record<string, unknown>
 
@@ -148,6 +151,58 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
       messages.push({ role: "tool", content: text })
       history.add(st.id)
       return text
+    })
+  },
+  // The prefix (context.md §10): one session's requests, step by step — which prompt each sends (a
+  // new number each time one is made), which tools it offers, and the note on a user message.
+  prefix: (c) => {
+    const start = c.start as Partial<Now> & { could?: Requirement[]; met?: Requirement[] }
+    const could = new Set<Requirement>(start.could ?? [])
+    let met = new Set<Requirement>(start.met ?? could)
+    const now: Now = { date: start.date!, mode: start.mode ?? "manual", plan: start.plan ?? "", memory: start.memory ?? "", personality: start.personality ?? "", files: start.files ?? {}, mcp: start.mcp ?? {} }
+    const modeText = (m: Mode) => fillPrompt(promptText(`modes/${m}.md`), { plan_dir: (c.plan_dir as string | undefined) ?? ".agent/plans" })
+    const requires = (t: string) => TOOL_SPECS[t]?.requires as Requirement[] | undefined
+    let made: { system: number; tools: string[]; told: Told } | undefined
+    let prompts = 0
+    let carried: string | undefined
+    const make = () => {
+      if (made) return made
+      made = { system: ++prompts, tools: (c.tools as string[]).filter((t) => offeredFor(requires(t), could)), told: { ...toldAt(now), ...(carried ? { date: carried } : {}) } }
+      carried = undefined
+      return made
+    }
+    const fields = ["date", "mode", "plan", "memory", "personality", "files", "mcp"] as const
+    return (c.steps as Record<string, any>[]).map((st) => {
+      if (st.op === "set") {
+        for (const f of fields) if (f in st) (now as unknown as Record<string, unknown>)[f] = structuredClone(st[f])
+        if (st.met) met = new Set(st.met)
+        // The model's own tool changed it: its result told the model.
+        if (st.by === "model" && made) for (const f of fields) if (f in st && f !== "date") (made.told as unknown as Record<string, unknown>)[f] = structuredClone(st[f])
+        return null
+      }
+      if (st.op === "call") {
+        const here = new Set(met)
+        if (now.mode === "plan") here.add("plan")
+        else here.delete("plan")
+        return unavailable(st.tool, requires(st.tool), here) ?? null
+      }
+      if (st.op === "model") {
+        carried = made?.told.date
+        made = undefined
+        return null
+      }
+      const k = make()
+      if (st.op === "user") {
+        const { note, told } = noteFor(k.told, now, modeText)
+        if (note) k.told = told
+        return { system: k.system, tools: k.tools, note: note || null }
+      }
+      if (st.op === "tool" || st.op === "wrapup") return { system: k.system, tools: k.tools, note: null }
+      if (st.op === "compact") {
+        made = undefined
+        return { system: k.system, tools: k.tools, ask: compactAsk() }
+      }
+      throw new Error(`prefix: unknown op ${String(st.op)}`)
     })
   },
   library_scope: (c) => resolveBase(c.bases as { id: string; name: string }[], c.base as string | null),

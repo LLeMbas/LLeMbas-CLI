@@ -627,7 +627,8 @@ export const COMMANDS: Command[] = [
     description: "where the context window goes",
     run(c) {
       const e = c.app.engine
-      const system = e.o.system(e.mode, e.model)
+      // The prompt the session sends (made now if no request has gone yet).
+      const system = e.systemPrompt()
       const git = /<git>\n([\s\S]*?)\n<\/git>/.exec(system)?.[1]
       c.view.info(renderBreakdown(contextBreakdown(e, system, instructionFiles(e.o.toolCtx.cwd, c.app.project.root, c.app.loaded.instructions), git, e.o.tools)))
     },

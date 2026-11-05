@@ -96,6 +96,7 @@ export class Turns {
       this.snaps.restore(turn.before, files)
     }
     const messages = this.engine.messages.splice(turn.at)
+    this.engine.rewound()
     if (this.store && this.engine.sessionId && turn.lastRow >= turn.firstRow) this.store.setKind(this.engine.sessionId, turn.firstRow, turn.lastRow, "reverted")
     this.undone.push({ turn, current, messages })
     return { prompt: turn.prompt, files }
@@ -129,6 +130,7 @@ export class Turns {
       const first = dropped[0]!
       const last = dropped[dropped.length - 1]!
       this.engine.messages.splice(first.at)
+      this.engine.rewound()
       if (this.store && sessionId && last.lastRow >= first.firstRow) this.store.setKind(sessionId, first.firstRow, last.lastRow, "reverted")
       this.undone = []
       return dropped.map((t) => t.turnId)
@@ -142,6 +144,7 @@ export class Turns {
     this.store.setKind(sessionId, row, Number.MAX_SAFE_INTEGER, "reverted")
     const at = this.engine.messages.findIndex((m) => m.role === "user" && m.turnId === turnId)
     if (at >= 0) this.engine.messages.splice(at)
+    this.engine.rewound()
     this.done = []
     this.undone = []
     return ids

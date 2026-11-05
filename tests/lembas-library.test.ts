@@ -82,8 +82,8 @@ test("memory is the server's; notes, knowledge and skills stay this machine's", 
   // The entries for the prompt: read from the resource as the session started.
   for (let i = 0; i < 50 && !lembas.calls.some((c) => c.uri); i++) await Bun.sleep(10)
   expect(lembas.calls.find((c) => c.uri)).toEqual({ auth: "Bearer lmb_lib", uri: "lembas://memory" })
-  for (let i = 0; i < 50 && !app.engine.o.system("manual", app.engine.model).includes("Prefers tabs."); i++) await Bun.sleep(10)
-  expect(app.engine.o.system("manual", app.engine.model)).toContain("MEMORY (the account's)\nPrefers tabs.")
+  for (let i = 0; i < 50 && !app.engine.compose("manual").includes("Prefers tabs."); i++) await Bun.sleep(10)
+  expect(app.engine.compose("manual")).toContain("MEMORY (the account's)\nPrefers tabs.")
   await app.close()
 })
 
@@ -106,7 +106,7 @@ test("a session the client opened sends its id on every memory call and on the r
   for (let i = 0; i < 50 && !lembas.calls.some((c) => c.uri && c.meta); i++) await Bun.sleep(10)
   expect(lembas.calls.find((c) => c.uri && c.meta)).toEqual({ auth: "Bearer lmb_lib", uri: "lembas://memory", meta: { scope: app.engine.sessionId } })
   // Knowledge is this machine's: nothing the server holds is named to the model.
-  expect(app.engine.o.system("manual", app.engine.model)).not.toContain("Knowledge searches here cover only")
+  expect(app.engine.compose("manual")).not.toContain("Knowledge searches here cover only")
 })
 
 test("without a login it says so and keeps this machine's memory", () => {

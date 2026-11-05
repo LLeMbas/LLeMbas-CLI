@@ -59,6 +59,8 @@ describe("images", () => {
     const atts = att("see @shot.png", app.engine.o.toolCtx, true)
     await app.engine.prompt("see @shot.png", atts.flatMap((a) => (a.image ? [a.text, a.image] : [a.text])))
     const content = fake!.requests[0].messages.at(-1).content
-    expect(content.map((p: any) => p.type)).toEqual(["text", "text", "image_url"])
+    // The session's first user message also carries the date, as a note after everything else.
+    expect(content.map((p: any) => p.type)).toEqual(["text", "text", "image_url", "text"])
+    expect(content.at(-1).text).toStartWith("<session-note>\nToday is ")
   })
 })

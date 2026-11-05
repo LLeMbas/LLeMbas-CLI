@@ -76,8 +76,10 @@ export interface ToolSpecDef {
   offered?: "subagent"
   argument_aliases?: Record<string, string>
   /** Spec 3.0.0: what must hold for it to be offered — `display` (the session is shown where a file
-   *  can be opened: over the link, to a client that offers `show`), `page`, `forge` (the chat's). */
-  requires?: ("display" | "page" | "forge")[]
+   *  can be opened: over the link, to a client that offers `show`), `page`, `forge` (the chat's);
+   *  `plan` (3.1.0): plan mode. From 3.1.0 one that can come and go during a session does not
+   *  leave the tool out: it is offered and answers `unavailable` while unmet (context.md §10). */
+  requires?: ("display" | "page" | "forge" | "plan")[]
   /** What a call answers, word for word, when a requirement went away after the offer. */
   unavailable?: string
   /** `always`: put to the person in every mode, auto included; never remembered. */
@@ -131,6 +133,18 @@ export const LOOP: {
     dedupe: { by_hash: string[]; by_result: string[] }
     compaction: { heading: string; line: string; rows: number }
     reasoning: string
+    /** A note on the next user message (spec 3.1.0, context.md §10): its tags and its lines, in
+     *  the order they are said. */
+    note: { open: string; close: string; date: string; mode: string; plan: string; memory: string; instructions: string; personality: string; mcp: string; empty: string
+      /** What a note names the person's own instructions by (the instructions block's `{{path}}`). */
+      personal: string
+      /** For a chat, whose modes have no text of their own; the CLI says modes/<mode>.md. */
+      plan_ended: string
+      /** For a chat, which does not resend earlier tool results; the CLI's model has them. */
+      plan_own: string
+    }
+    /** How long a session waits for its configured MCP servers before its first request. */
+    mcp_wait_ms: number
   }
 } = LOOP_JSON
 

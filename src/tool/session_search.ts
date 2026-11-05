@@ -7,6 +7,7 @@ import type { Message } from "../provider/types.ts"
 import type { Row, SessionRow, Store } from "../session/store.ts"
 import { defineTool, ToolError, type ToolContext } from "./tool.ts"
 import { described } from "../harness.ts"
+import { isNote } from "../session/prefix.ts"
 
 /** A user's words made safe for FTS5 MATCH: quoted phrases kept, operators' punctuation dropped,
  *  terms with dots or hyphens quoted (FTS5 would read them as syntax). */
@@ -35,7 +36,8 @@ export function readable(json: string): { role: string; text: string } {
   const m = JSON.parse(json) as Message
   if (m.role === "tool") return { role: "tool", text: `[${m.name} result, ${m.content.length} chars]` }
   const text = m.parts
-    .map((p) => (p.type === "text" ? p.text : p.type === "tool_call" ? `[called ${p.name}]` : p.type === "image" ? "[image]" : ""))
+    // A session note is the harness's, not what was said.
+    .map((p) => (p.type === "text" ? (isNote(p.text) ? "" : p.text) : p.type === "tool_call" ? `[called ${p.name}]` : p.type === "image" ? "[image]" : ""))
     .filter(Boolean)
     .join("\n")
   return { role: m.role, text }

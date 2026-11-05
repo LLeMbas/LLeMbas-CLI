@@ -66,7 +66,15 @@ describe("context", () => {
     a.bus.on((e: Event) => e.type === "notice" && notices.push(e.message))
     await a.engine.prompt("go")
     expect(notices.some((n) => n.includes("compacting the conversation"))).toBe(true)
-    expect(fake!.requests[1].messages[0].content).toContain("## Transcript")
+    // The summary is the next turn of the same conversation (context.md §7, spec 3.1.0): the same
+    // system prompt and tools, every message as it was, then the compaction text — no transcript.
+    const [first, compaction] = [fake!.requests[0], fake!.requests[1]]
+    expect(compaction.messages[0]).toEqual(first.messages[0])
+    expect(compaction.tools).toEqual(first.tools)
+    expect(compaction.messages.slice(0, first.messages.length)).toEqual(first.messages)
+    expect(compaction.messages.at(-2).role).toBe("tool")
+    expect(compaction.messages.at(-1).content).toStartWith("Summarise the conversation")
+    expect(compaction.messages.at(-1).content).not.toContain("yyyy")
     const last = fake!.requests[2].messages
     expect(JSON.stringify(last[1])).toContain("A long task.")
     // the original request comes back verbatim, with the note
@@ -77,7 +85,7 @@ describe("context", () => {
   test("/context: parts of the system prompt, tools, the conversation, against the window", async () => {
     const a = app(`connections:\n  f:\n    type: webui\n    url: URL\n    models: { f/m: { context: 32768 } }\n`, [{ chunks: [toolCall(0, "c1", "read", '{"path":"big.txt"}'), usage(1500, 20)] }, { chunks: [delta({ content: "ok" }), usage(3100, 5)] }])
     await a.engine.prompt("read it")
-    const system = a.engine.o.system(a.engine.mode, a.engine.model)
+    const system = a.engine.compose(a.engine.mode)
     const text = renderBreakdown(contextBreakdown(a.engine, system, [], undefined, a.engine.o.tools))
     expect(text).toContain("window 32.8k")
     expect(text).toContain("system prompt")

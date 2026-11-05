@@ -1,5 +1,6 @@
-// plan_submit: the plan written with plan_write, presented for approval — plan mode only, where
-// it is the approval. The plan itself is the session's (src/plan/plan.ts); a copy goes under the
+// plan_submit: the plan written with plan_write, presented for approval — in plan mode, where it is
+// the approval. Offered in every mode (spec 3.1.0, `requires: plan`): outside plan mode the engine
+// answers the spec's `unavailable` text and nothing runs. The plan itself is the session's (src/plan/plan.ts); a copy goes under the
 // project's plans directory for the record, since that is the one place plan mode may write.
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"

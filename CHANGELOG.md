@@ -6,6 +6,34 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+Harness spec 3.1.0 (draft): what the model has already read stays exactly as it was, so its server
+can reuse it instead of reading the whole session again.
+
+### Changed
+
+- **The system prompt is made once per session** — at the start, after a compaction, on a model
+  switch — kept with the session and sent byte for byte on every request; a resumed session sends
+  the one it kept. It holds no date any more.
+- **What changes during a session is said in a note** after your words on your next message: the
+  date (on the first message, and when it changes), a permission mode you chose, a plan you
+  changed, memory or an instruction file you edited, a personality you picked, an MCP server's
+  instructions that arrived later. The model's own changes (its plan, its edits, a plan approval)
+  are not said again. Notes are not shown as your words.
+- **The tool list is the same for the whole session.** `plan_submit` is offered in every mode and
+  answers that it works only in plan mode; `show` is offered from the start where the session can
+  have a viewer; knowledge search is decided as the session starts. The tools stay listed when a
+  step limit or budget winds a prompt up (a call in that answer is not run), and a tool refused
+  for good stays listed and answers that refusal. The first request waits up to 3 seconds for the
+  configured MCP servers, so their tools are in the first list.
+- **Compaction asks for its summary as the next turn of the same conversation** instead of a
+  separate request with a pasted transcript, so it reuses what the server has read and no longer
+  loses the middle of a long session. A tool call in the summary's reply is not run.
+
+### Added
+
+- **Cached input tokens are recorded for every request** (the usage's own count, or llama.cpp's
+  `timings` and progress), kept with the session, and shown by `/context` for the last request.
+
 ## [2.0.0-beta.1] — 2026-11-03
 
 LLeMbas CLI 2.0 works with LLeMbas 2.0 and nothing else: it uses the server it is logged in to,

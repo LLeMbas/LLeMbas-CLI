@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { paths } from "../config/paths.ts"
-import type { Message } from "../provider/types.ts"
+import type { Message, Usage } from "../provider/types.ts"
+import { isNote } from "./prefix.ts"
 
 // Sessions and their messages, in ~/.local/share/lembas/sessions.db. Message text is also
 // indexed with FTS5 so past sessions can be searched (session_search).
@@ -53,6 +54,11 @@ CREATE TABLE IF NOT EXISTS results (
   json TEXT NOT NULL, text TEXT NOT NULL,
   PRIMARY KEY (session_id, id)
 );
+CREATE TABLE IF NOT EXISTS requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  created INTEGER NOT NULL, model TEXT NOT NULL, kind TEXT NOT NULL,
+  input INTEGER NOT NULL, output INTEGER NOT NULL, reasoning INTEGER, cached INTEGER, estimated INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS session_meta (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, key TEXT NOT NULL, value TEXT NOT NULL,
   PRIMARY KEY (session_id, key)
@@ -70,7 +76,16 @@ export const CWD_META = "cwd"
 
 export function plainText(m: Message): string {
   if (m.role === "tool") return m.content
-  return m.parts.map((p) => (p.type === "text" || p.type === "reasoning" ? p.text : p.type === "tool_call" ? `${p.name} ${p.args}` : "")).join("\n")
+  // A session note is the harness's, not the person's words: not searched.
+  return m.parts.map((p) => (p.type === "text" ? (m.role === "user" && isNote(p.text) ? "" : p.text) : p.type === "reasoning" ? p.text : p.type === "tool_call" ? `${p.name} ${p.args}` : "")).join("\n")
+}
+
+/** One request's usage as the store keeps it (harness context.md §10 rule 6): what it was for — a
+ *  step of a turn, or a compaction's summary — and the cached input tokens where the server said. */
+export interface RequestRow extends Usage {
+  model: string
+  kind: "step" | "compaction"
+  created?: number
 }
 
 export interface Row {
@@ -223,6 +238,19 @@ export class Store {
       // Without their text: the table is decided by hashes and ranges.
       all: () => (q.all.all(sessionId) as { json: string }[]).map((r) => ({ ...JSON.parse(r.json), text: "" }) as R),
     }
+  }
+
+  /** Record one request's usage. */
+  request(sessionId: string, r: RequestRow) {
+    this.db
+      .query("INSERT INTO requests (session_id, created, model, kind, input, output, reasoning, cached, estimated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(sessionId, Date.now(), r.model, r.kind, r.input, r.output, r.reasoning ?? null, r.cached ?? null, r.estimated ? 1 : 0)
+  }
+
+  /** A session's requests, oldest first. */
+  requests(sessionId: string): RequestRow[] {
+    const rows = this.db.query("SELECT created, model, kind, input, output, reasoning, cached, estimated FROM requests WHERE session_id = ? ORDER BY id").all(sessionId) as (Omit<RequestRow, "estimated" | "reasoning" | "cached"> & { estimated: number; reasoning: number | null; cached: number | null })[]
+    return rows.map(({ estimated, reasoning, cached, ...r }) => ({ ...r, ...(reasoning !== null ? { reasoning } : {}), ...(cached !== null ? { cached } : {}), ...(estimated ? { estimated: true } : {}) }))
   }
 
   /** Something a session keeps besides its messages, as JSON. */

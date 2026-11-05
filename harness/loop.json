@@ -23,7 +23,7 @@
     }
   },
   "wrap_up": {
-    "about": "One more request with no tools and a user message saying which limit was reached: answer now — what is done, what is not, what would come next. The transcript says the prompt was stopped, so an answer given because the room ran out is never mistaken for one the model chose to give.",
+    "about": "One more request, with the session's tool list unchanged (context.md §10, rule 4) and a user message saying which limit was reached: answer now — what is done, what is not, what would come next. The transcript says the prompt was stopped, so an answer given because the room ran out is never mistaken for one the model chose to give. A tool call in that reply is not run.",
     "message": "The {{limit}} for this prompt has been reached and the tools have been withdrawn. Answer now from what you have: what is done, what is not, and what would come next."
   },
   "nudges": {
@@ -107,16 +107,21 @@
     },
     "reasoning": "Earlier turns' reasoning is left to the model's chat template: the harness sends the history as it does, neither stripping reasoning the template keeps nor adding what it drops.",
     "note": {
-      "about": "A note on the next user message (context.md §10, rule 3): what changed since the system prompt was made, after the person's words. Lines in this order, each only when it applies.",
+      "about": "A note on the next user message (context.md §10, rule 3): what changed since the system prompt was made, after the person's words. Lines in this order, each only when it applies. `plan_ended` is the mode block for a session that leaves plan mode for a mode with no text of its own (a chat). `plan_own` is the plan block for a session that does not resend earlier tool results (a chat): the model's own plan, as its tools left it. `personal` is the {{path}} of the instructions block for the person's own instructions.",
       "open": "<session-note>",
       "close": "</session-note>",
       "date": "Today is {{date}}.",
       "mode": "The permission mode is now {{mode}}:\n{{mode_text}}",
+      "plan_ended": "Plan mode has ended: make the changes the work needs; nothing is refused for planning any more.",
       "plan": "The person changed the plan; it is now:\n{{plan}}",
+      "plan_own": "Your plan, as your plan tools left it:\n{{plan}}",
       "memory": "The person changed what is remembered; it is now:\n{{memory}}",
       "instructions": "{{path}} changed; it now reads:\n{{text}}",
+      "personal": "the person's own instructions",
       "personality": "The person chose a different personality:\n{{personality}}",
-      "mcp": "Instructions from an MCP server that connected since the session began:\n{{instructions}}"
-    }
+      "mcp": "Instructions from an MCP server that connected since the session began:\n{{instructions}}",
+      "empty": "(none)"
+    },
+    "mcp_wait_ms": 3000
   }
 }

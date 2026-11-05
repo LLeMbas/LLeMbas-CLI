@@ -206,7 +206,7 @@ test("every {{variable}} in a description is declared, and none reaches a model"
   const plan = normalise({ title: "T", phases: [{ title: "P", tasks: ["a"] }] }) as Plan
   for (const mode of MODES) {
     for (const p of [undefined, plan]) {
-      const system = app.engine.o.system(mode, app.engine.model, p)
+      const system = app.engine.compose(mode, p)
       expect(system).not.toContain("{{")
       expect(system).toContain("Use the instructions below and the tools you have to help with software engineering and with running the project.")
       expect(system).toContain("- Your output is shown in a terminal and rendered as GitHub-flavoured markdown in a monospace font. Be concise")
@@ -221,7 +221,7 @@ test("every {{variable}} in a description is declared, and none reaches a model"
     }
   }
   app.setContext({ instructions: "Be brief.", prototypes: { offered: true, sources: "" } }, "example")
-  const withContext = app.engine.o.system("manual", app.engine.model, plan)
+  const withContext = app.engine.compose("manual", plan)
   expect(withContext).not.toContain("{{")
   expect(withContext).toContain("## Instructions from example\n\nBe brief.")
   expect(withContext).toContain("prototype-page")

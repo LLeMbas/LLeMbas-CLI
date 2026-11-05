@@ -7,6 +7,7 @@ import type { Asker, AskReply } from "../src/bus/index.ts"
 import { paths } from "../src/config/paths.ts"
 import type { PlanReply, PlanRequest } from "../src/tool/plan_submit.ts"
 import { delta, fakeProvider, toolCall, type Fake } from "./fake-provider.ts"
+import { TOOL_SPECS } from "../src/harness.ts"
 
 let fake: Fake | undefined
 afterEach(() => fake?.stop())
@@ -29,7 +30,7 @@ const exitPlan = () => toolCall(0, "x1", "plan_submit", JSON.stringify({ path: "
 const names = (r: any) => r.tools.map((t: any) => t.function.name)
 
 describe("plan mode", () => {
-  test("plan_write, plan_submit, approve → edit mode in the same turn, and plan_submit is no longer offered", async () => {
+  test("plan_write, plan_submit, approve → edit mode in the same turn; the prompt and tools stay as they were", async () => {
     const seen: PlanRequest[] = []
     const a = app([{ chunks: [writePlan()] }, { chunks: [exitPlan()] }, { chunks: [delta({ content: "Implementing." })] }], async (r) => {
       seen.push(r)
@@ -48,8 +49,11 @@ describe("plan mode", () => {
     expect(names(fake!.requests[0])).toContain("plan_submit")
     expect(names(fake!.requests[0])).toContain("plan_write")
     expect(fake!.requests[0].messages[0].content).toContain("Permission mode: plan")
-    expect(fake!.requests[2].messages[0].content).toContain("Permission mode: edit")
-    expect(names(fake!.requests[2])).not.toContain("plan_submit")
+    // Spec 3.1.0 (context.md §10): the system prompt and the tool list are the session's, byte for
+    // byte; the approval's own result tells the model the mode, so no note says it again.
+    expect(fake!.requests[2].messages[0]).toEqual(fake!.requests[0].messages[0])
+    expect(fake!.requests[2].tools).toEqual(fake!.requests[0].tools)
+    expect(names(fake!.requests[2])).toContain("plan_submit")
     // plan_write and plan_update are offered in every mode: the plan is kept current while implementing.
     expect(names(fake!.requests[2])).toContain("plan_update")
     expect(fake!.requests[2].messages.at(-1).content).toContain("The user approved the plan")
@@ -69,13 +73,20 @@ describe("plan mode", () => {
     expect(b.engine.mode).toBe("plan")
   })
 
-  test("plan_submit with no plan written is an error naming plan_write; edit mode does not offer it", async () => {
-    const a = app([{ chunks: [exitPlan()] }, { chunks: [delta({ content: "ok" })] }], async () => ({ kind: "approve", mode: "edit" }))
+  test("plan_submit with no plan written is an error naming plan_write; outside plan mode it is offered and answers unavailable", async () => {
+    const a = app([{ chunks: [exitPlan()] }, { chunks: [delta({ content: "ok" })] }, { chunks: [exitPlan()] }, { chunks: [delta({ content: "carrying on" })] }], async () => ({ kind: "approve", mode: "edit" }))
     await a.engine.prompt("go")
     expect(fake!.requests[1].messages.at(-1).content).toContain("Write it with plan_write")
     expect(a.engine.mode).toBe("plan")
     a.engine.mode = "edit"
-    await a.engine.prompt("again").catch(() => {})
-    expect(names(fake!.requests.at(-1))).not.toContain("plan_submit")
+    await a.engine.prompt("again")
+    const [again, after] = fake!.requests.slice(-2)
+    expect(names(again)).toContain("plan_submit")
+    expect(again.tools).toEqual(fake!.requests[0].tools)
+    expect(again.messages[0]).toEqual(fake!.requests[0].messages[0])
+    // The person's mode change comes as a note on their next message, the mode's own text with it.
+    expect(again.messages.at(-1).content).toStartWith("again\n<session-note>\nThe permission mode is now edit:\nPermission mode: edit.")
+    expect(after.messages.at(-1).content).toBe(`[#0002]\n${TOOL_SPECS.plan_submit!.unavailable}`)
+    expect(a.engine.mode).toBe("edit")
   })
 })

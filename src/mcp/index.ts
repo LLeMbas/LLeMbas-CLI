@@ -25,6 +25,7 @@ import type { ImagePart } from "../provider/types.ts"
 import { ToolError, truncate, type Tool, type ToolResult } from "../tool/tool.ts"
 import { match } from "../permission/wildcard.ts"
 import { codeFrom, forget, OAuthProvider, waitForCallback, CALLBACK_PORT } from "./oauth.ts"
+import { mcpBlock } from "../session/prefix.ts"
 
 export type ServerConfig = McpServer & { source: "global" | "project" }
 export type Status = "disabled" | "connecting" | "connected" | "failed" | "needs_auth"
@@ -480,8 +481,13 @@ export class McpManager {
 
   /** The system prompt's block of server instructions, or "". */
   instructions(): string {
-    const parts = [...this.servers.values()].filter((s) => s.status === "connected" && s.instructions).map((s) => `<server name="${s.name}">\n${s.instructions}\n</server>`)
-    return parts.length ? `Instructions from the MCP servers you have tools from (their tools are named mcp__<server>__…):\n<mcp_instructions>\n${parts.join("\n")}\n</mcp_instructions>` : ""
+    return mcpInstructions(this.serverInstructions())
+  }
+
+  /** Each connected server's own instructions, by server: what the prompt shows (mcpInstructions),
+   *  and what a session note compares (session/prefix.ts). */
+  serverInstructions(): Record<string, string> {
+    return Object.fromEntries([...this.servers.values()].filter((s) => s.status === "connected" && s.instructions).map((s) => [s.name, s.instructions!]))
   }
 
   /** Sign in to a remote server: show the page, catch the redirect (or take a pasted one). */
@@ -553,4 +559,10 @@ export class McpManager {
 function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
   let t: ReturnType<typeof setTimeout>
   return Promise.race([p, new Promise<T>((_, reject) => (t = setTimeout(() => reject(new Error(message)), ms)))]).finally(() => clearTimeout(t))
+}
+
+/** MCP servers' instructions as the system prompt carries them, "" for none. */
+export function mcpInstructions(by: Record<string, string>): string {
+  const parts = Object.entries(by).map(([name, text]) => mcpBlock(name, text))
+  return parts.length ? `Instructions from the MCP servers you have tools from (their tools are named mcp__<server>__…):\n<mcp_instructions>\n${parts.join("\n")}\n</mcp_instructions>` : ""
 }

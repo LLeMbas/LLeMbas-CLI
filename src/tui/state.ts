@@ -16,6 +16,7 @@ import type { JobInfo } from "../jobs/registry.ts"
 import { splitPrototypes, titleFor, type PrototypeKind } from "../prototype/fence.ts"
 import { savePrototype } from "../prototype/store.ts"
 import { CHARS_PER_TOKEN } from "../provider/tokens.ts"
+import { isNote } from "../session/prefix.ts"
 
 export type Item =
   /** `mid`: sent while the agent worked, and given to it at a step boundary. `machine`: the harness
@@ -121,7 +122,9 @@ export interface ViewState {
   jobs: TrackedJob[]
 }
 
-const ATTACHMENT = /^<(file|directory|shell|image) /
+// What the model was given beside the words typed — attachments, and a session note
+// (session/prefix.ts) — is not shown as typed.
+const ATTACHMENT = { test: (t: string) => /^<(file|directory|shell|image) /.test(t) || isNote(t) }
 /** Running first, then by start — the registry's order. */
 const byRunning = (a: JobInfo, b: JobInfo) => Number(b.state === "running") - Number(a.state === "running") || a.started - b.started
 let seq = 0

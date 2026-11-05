@@ -25,7 +25,7 @@ function app(limits: string, script: Parameters<typeof fakeProvider>[0], ask: ()
 
 const tools = (r: any) => (r.tools ?? []).map((t: any) => t.function.name)
 
-test("past the output budget the tools are withdrawn, the model is told, and it answers", async () => {
+test("past the output budget the model is told the tools are withdrawn, and it answers; the list stays the session's", async () => {
   const a = app("output_bytes: 1000", [
     { chunks: [toolCall(0, "r1", "read", '{"path":"big.txt"}')] },
     { chunks: [delta({ content: "It is a file of x." }, "stop")] },
@@ -34,7 +34,7 @@ test("past the output budget the tools are withdrawn, the model is told, and it 
   a.bus.on((e: Event) => e.type === "notice" && notices.push(e.message))
   expect(await a.engine.prompt("what is in big.txt?")).toBe("budget")
   expect(tools(fake!.requests[0])).toContain("read")
-  expect(tools(fake!.requests[1])).toEqual([])
+  expect(tools(fake!.requests[1])).toEqual(tools(fake!.requests[0]))
   expect(JSON.stringify(fake!.requests[1].messages.at(-1))).toContain("The tool output budget for this prompt has been reached")
   expect(notices.join("\n")).toContain("with too much tool output to read")
 })
@@ -44,8 +44,8 @@ test("the token budget counts what the model wrote this prompt", async () => {
     { chunks: [toolCall(0, "r1", "read", '{"path":"big.txt"}'), usage(10, 80)] },
     { chunks: [delta({ content: "done" }, "stop")] },
   ])
-  await a.engine.prompt("go")
-  expect(tools(fake!.requests[1])).toEqual([])
+  expect(await a.engine.prompt("go")).toBe("budget")
+  expect(JSON.stringify(fake!.requests[1].messages.at(-1))).toContain("The output budget for this prompt has been reached")
 })
 
 test("time spent waiting for an approval is not spent from the wall-clock budget", async () => {

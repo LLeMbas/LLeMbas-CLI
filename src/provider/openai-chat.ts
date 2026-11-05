@@ -207,6 +207,10 @@ export class OpenAIChatClient implements Client {
     const addText = (kind: "text" | "reasoning", text: string) => out.add(kind, text)
     let finish = "stop"
     let usage: StreamEvent | undefined
+    // llama.cpp's own count, in its last chunk: `timings` with `cache_n` (read from its cache) and
+    // `prompt_n` (read now). The cached part of a request when `usage` does not say it.
+    let timings: { cache: number; read: number; out?: number } | undefined
+    let progressCache: number | undefined
 
     for await (const { data } of sseJson(stream)) {
       const chunk = data as any
@@ -217,6 +221,9 @@ export class OpenAIChatClient implements Client {
         // string code; statusOf() still reads it as the server error it is.
         throw new ProviderError(`${m.ref}: ${String(msg).trim()}`, statusOf(err), undefined, !out.output)
       }
+      const tm = chunk?.timings
+      if (tm && typeof tm === "object" && Number.isFinite(tm.cache_n))
+        timings = { cache: Number(tm.cache_n), read: Number(tm.prompt_n) || 0, ...(Number.isFinite(tm.predicted_n) ? { out: Number(tm.predicted_n) } : {}) }
       if (chunk?.usage && typeof chunk.usage === "object") {
         const u = chunk.usage
         usage = {
@@ -232,8 +239,10 @@ export class OpenAIChatClient implements Client {
       // llama.cpp, while it reads the prompt: { total, cache, processed, time_ms }. Anything not
       // shaped like that is ignored, never an error.
       const pp = chunk?.prompt_progress
-      if (pp && typeof pp === "object" && Number.isFinite(pp.total) && pp.total > 0 && !out.output)
-        yield { type: "progress", total: Number(pp.total), cache: Number(pp.cache) || 0, processed: Number(pp.processed) || 0, ms: Number(pp.time_ms) || 0 }
+      if (pp && typeof pp === "object" && Number.isFinite(pp.total) && pp.total > 0 && !out.output) {
+        progressCache = Number(pp.cache) || 0
+        yield { type: "progress", total: Number(pp.total), cache: progressCache, processed: Number(pp.processed) || 0, ms: Number(pp.time_ms) || 0 }
+      }
       const choice = chunk?.choices?.[0]
       if (!choice) continue
       const delta = choice.delta ?? choice.message ?? {}
@@ -272,9 +281,16 @@ export class OpenAIChatClient implements Client {
     if (calls.length && finish !== "length") finish = "tool_calls"
     const message = out.message()
     const parts = message.parts
+    // The cached input tokens (harness context.md §10 rule 6): the usage's own field
+    // (`prompt_tokens_details.cached_tokens`, or `cache_read_input_tokens` where an Anthropic-shaped
+    // count comes through), else llama.cpp's timings, else its last progress report.
+    const cached = timings?.cache ?? progressCache
+    if (usage?.type === "usage" && usage.usage.cached === undefined && cached !== undefined) usage.usage.cached = cached
+    if (!usage && timings?.out !== undefined)
+      usage = { type: "usage", usage: { input: timings.cache + timings.read, output: timings.out, cached: timings.cache } }
     if (!usage) {
       const out = parts.reduce((n, p) => n + estimateTokens(p.type === "tool_call" ? p.name + p.args : p.text), 0)
-      usage = { type: "usage", usage: { input: estimateValue(body.messages), output: out, estimated: true } }
+      usage = { type: "usage", usage: { input: estimateValue(body.messages), output: out, estimated: true, ...(cached !== undefined ? { cached } : {}) } }
     }
     yield usage
     yield { type: "finish", reason: finish, message }

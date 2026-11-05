@@ -41,7 +41,7 @@ export function contextBreakdown(engine: Engine, system: string, instructions: {
   if (imageCount) rows.push({ label: `images (${imageCount}, rough)`, tokens: by.images })
   const estimated = rows.filter((r) => !r.indent).reduce((n, r) => n + r.tokens, 0)
   const reported = engine.usage ? engine.contextUsed() : undefined
-  return { rows, estimated, reported, window: contextWindow(engine.model), model: engine.model.ref }
+  return { rows, estimated, reported, window: contextWindow(engine.model), model: engine.model.ref, last: engine.lastRequest }
 }
 
 /** Plain text, for the transcript. */
@@ -58,5 +58,14 @@ export function renderBreakdown(b: ReturnType<typeof contextBreakdown>): string 
   const used = b.reported ?? b.estimated
   lines.push(`  ${"in use".padEnd(33)} ${fmt(used).padStart(7)}  ${bar(used)}${b.window ? `  ${Math.round((used / b.window) * 100)}%` : ""}`)
   lines.push(b.reported !== undefined ? "  (the server's own count from the last reply, plus an estimate since)" : "  (estimated: ≈4 characters a token — no reply yet to count from)")
+  // What the server reused of the last request (harness context.md §10 rule 6): a slow reply with
+  // little of it cached was a re-read.
+  const last = b.last?.usage
+  if (last && !last.estimated)
+    lines.push(
+      last.cached !== undefined
+        ? `  last request${b.last!.kind === "compaction" ? " (compaction)" : ""}: ${fmt(last.input)} in, ${fmt(last.cached)} of it cached${last.input ? ` (${Math.round((last.cached / last.input) * 100)}%)` : ""}`
+        : `  last request: ${fmt(last.input)} in — the server did not say how much was cached`,
+    )
   return lines.join("\n")
 }

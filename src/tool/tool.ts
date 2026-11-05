@@ -118,9 +118,11 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
   access: string
   /** Runs alone, never alongside other calls of the same step (it waits on the user). */
   exclusive?: boolean
-  /** Offered only when this holds: a model with vision, plan mode, a project directory, knowledge
-   *  bases with documents, or a display (a client over the link that shows files: the spec's
-   *  `requires: display`). */
+  /** What the tool needs: a model with vision, plan mode, a project directory, knowledge bases with
+   *  documents, or a display (a client over the link that shows files: the spec's `requires:
+   *  display`). The tool list is the session's (harness context.md §10): one the session could
+   *  never meet leaves the tool out; one that comes and goes (plan mode, a display) keeps it in, and
+   *  a call while it is unmet answers the spec's `unavailable` text. */
   requires?: "vision" | "plan" | "project" | "knowledge" | "display"
   description: string
   schema: S

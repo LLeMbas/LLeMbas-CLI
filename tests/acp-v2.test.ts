@@ -360,14 +360,21 @@ test("the context reaches the prompt: the instance's instructions, its personali
   // names nothing to the model — nothing unfilled reaches it either.
   expect(system()).not.toContain("Manuals")
   expect(system()).not.toContain("{{")
-  // A later prompt replaces the context: personalization back to the device's, nothing from the instance.
+  // A later prompt replaces the context: personalization back to the device's, nothing from the
+  // instance. The system prompt stays as it was made (harness context.md §10); the change goes as a
+  // note on that prompt's message.
+  const first = system()
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "again" }], _meta: { lembas: { turnId: "T2", system_prompt: "", personalization: null, prototypes: { offered: false, sources: "" } } } })
-  expect(system()).not.toContain("Instructions from example")
-  expect(system()).toContain("local words")
-  expect(system()).not.toContain("prototype-chat")
-  // A prompt that says only its turn id changes nothing.
+  expect(system()).toBe(first)
+  const said = () => fake!.requests.at(-1)!.messages.at(-1).content as string
+  expect(said()).toStartWith("again\n<session-note>\n")
+  expect(said()).toContain("the person's own instructions changed; it now reads:\nlocal words")
+  expect(said()).toContain("Instructions from example changed; it now reads:\n(none)")
+  expect(said()).toContain("The person chose a different personality:\nBe brief.")
+  // A prompt that says only its turn id changes nothing, and so says nothing.
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "more" }], _meta: { lembas: { turnId: "T3" } } })
-  expect(system()).toContain("local words")
+  expect(system()).toBe(first)
+  expect(said()).toBe("more")
 })
 
 test("the plan is sent after a session is opened from the store, and cleared with plan: null", async () => {

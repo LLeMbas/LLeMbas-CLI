@@ -104,7 +104,11 @@ test("/compact replaces the conversation with a summary", async () => {
   await t.input.typeText("/compact")
   t.input.pressEnter()
   expect(await t.until("compacted")).toBe(true)
-  expect(t.fake.requests[1].messages[0].content).toContain("## Transcript")
+  // Asked as the next turn of the same conversation: the same system prompt, the messages, then the
+  // compaction text (harness context.md §7).
+  expect(t.fake.requests[1].messages[0]).toEqual(t.fake.requests[0].messages[0])
+  expect(t.fake.requests[1].messages.at(-2).content).toBe("The answer is 42.")
+  expect(t.fake.requests[1].messages.at(-1).content).toStartWith("Summarise the conversation")
   expect(t.app.engine.messages[0]).toMatchObject({ role: "user" })
   expect(JSON.stringify(t.app.engine.messages[0])).toContain("It is 42.")
 })
@@ -429,8 +433,10 @@ test("/review sends the session's diff with the review brief in plan mode, then 
   t.input.pressEnter()
   expect(await t.until("No findings.")).toBe(true)
   const req = t.fake.requests.at(-1)
-  expect(req.messages[0].content).toContain("Permission mode: plan")
+  // The session's prompt as it was made; plan mode comes as a note on the review's message.
+  expect(req.messages[0]).toEqual(t.fake.requests[0].messages[0])
   const user = req.messages.at(-1).content as string
+  expect(user).toContain("<session-note>\nThe permission mode is now plan:\nPermission mode: plan.")
   expect(user).toContain("Findings first, ordered by severity")
   expect(user).toContain("+hello there")
   expect(t.frame()).toContain("┃ /review")

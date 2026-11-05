@@ -129,7 +129,8 @@ two results.
 Compaction is the one deliberate break of the cache, and it already exists. **From 3.1.0 the
 summary is asked for as the next turn of the same conversation**: the same system prompt, the same
 tools, every message as it was, and then one more user message — `prompts/tasks/compact.md`, whose
-`{{transcript}}` is empty in this form, since the model has the conversation itself. So the request
+`{{transcript}}` and `{{previous_summary}}` are empty in this form, since the model has the
+conversation, an earlier summary included, itself. So the request
 that makes the summary costs only that message; a separate request with a pasted transcript was a
 full re-read of everything, and a transcript capped to fit it lost the session's middle. A tool
 call in the summary's reply is not run; its text before the call is the summary, and a reply with
@@ -187,14 +188,25 @@ model): a date that changed at midnight sent a 16,912-token session from 99 % ca
    </session-note>
    ```
 
-   (`loop.json` `context.note`.) A note is part of that message from then on, like anything sent.
-   A request with no user message (a tool step) carries no note; it waits for the next one.
+   (`loop.json` `context.note`.) Each change is one block of the note, the blocks separated by a
+   blank line, in the order `context.note` lists them; a value that became empty reads
+   `context.note.empty`; the date is the person's own (their zone, else the machine's). A note is
+   part of that message from then on, like anything sent. A request with no user message (a tool
+   step), and words the person adds to a turn already running, carry no note; it waits for the next
+   message that starts a turn. A change the model made itself (its own `plan_write`, `memory`,
+   `settings`, a file it wrote) needs no note: its tool result already said it.
 4. **The tool list is the same for the whole session.** A tool whose `requires` can come and go
    during a session — `page`, `display`, `forge`, and plan mode for `plan_submit` — is offered from
    the start whenever the session could ever meet it, and a call made while it is not met answers
    the tool's `unavailable` text. Only what is fixed for the session may leave a tool out: the
    session kind (`sessions`), the model (`vision`), a subagent's narrowing, what the project's
-   configuration or the person switched off before the session began.
+   configuration or the person switched off before the session began. The tools stay listed in
+   the wrap-up request too (`loop.json` `wrap_up`): its message says they are withdrawn, and a call
+   in that reply is not run. A tool withdrawn after its final refusal stays in the list and answers
+   that refusal. **The one exception is an MCP server**: a session waits up to `mcp_wait_ms` for
+   the servers it is configured with before its first request, so their tools are in the first
+   list; a server that connects later adds its tools when it connects — one re-read, once — and its
+   instructions come as a note.
 5. **Nothing already sent is rewritten** — the one rule above, for results; old tool output is
    never pruned in place.
 6. **Every request's cache use is recorded** where the provider reports it (cached input tokens),

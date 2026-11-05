@@ -42,6 +42,7 @@ import type { Message } from "../provider/types.ts"
 import type { Hub } from "./hub.ts"
 import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
 import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs } from "./jobs.ts"
+import { isNote } from "../session/prefix.ts"
 
 export const ACP_VERSION = 1
 /** The link's version (LLeMbas `services/device_link.py:PROTOCOL`, harness/acp.md *Versions*). 3:
@@ -369,7 +370,9 @@ export function planReplyFrom(answer: any, maxMode?: Mode): PlanReply {
 }
 
 /** Text the expander added to a user message (an @file, an image, a listing, a `!` command's output). */
-const ATTACHMENT = /^<(file|directory|shell|image) /
+// What the model was given beside the words typed — attachments, and a session note
+// (session/prefix.ts) — is not shown as typed.
+const ATTACHMENT = { test: (t: string) => /^<(file|directory|shell|image) /.test(t) || isNote(t) }
 
 /** A stored session as turns the web UI can draw: each person's message, then what the
  *  model said, thought and ran in answer, up to the next one. A message's attachments are chips,
