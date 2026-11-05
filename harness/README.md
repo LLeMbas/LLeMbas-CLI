@@ -68,7 +68,7 @@ page *Harness-parity* in LLeMbas CLI's wiki.
 
 ## 3.1.0
 
-Written ahead of both implementations as `3.1.0-draft`. **The prefix stays still** (`context.md` §10). Found on 2026-11-05 by measuring a local model's
+Written ahead of both implementations as `3.1.0-draft`, and `3.1.0` once both carried it (LLeMbas CLI 8e06590, LLeMbas 48e905f). **The prefix stays still** (`context.md` §10). Found on 2026-11-05 by measuring a local model's
 prompt cache: a harness that rebuilds its system prompt for every request re-reads the whole session
 whenever any part of it changes — the date at midnight, a permission mode, a memory, the plan. So:
 the system prompt is made once per session and resent byte for byte; no clock is in it; what
