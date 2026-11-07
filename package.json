@@ -1,6 +1,6 @@
 {
   "name": "lembas-cli",
-  "version": "2.0.0-beta.1",
+  "version": "2.0.0-beta.2",
   "description": "LLeMbas CLI: a terminal coding agent and project manager for a LLeMbas server — OpenTUI, memory, skills, MCP, git-native.",
   "license": "MIT",
   "private": true,

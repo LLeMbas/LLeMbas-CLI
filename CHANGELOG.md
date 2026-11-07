@@ -4,9 +4,9 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.0.0-beta.2] — 2026-11-07
 
-Harness spec 3.1.0 (draft): what the model has already read stays exactly as it was, so its server
+Harness spec 3.1.0: what the model has already read stays exactly as it was, so its server
 can reuse it instead of reading the whole session again.
 
 ### Changed
