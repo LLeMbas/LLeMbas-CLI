@@ -541,7 +541,8 @@ export function createApp(o: AppOptions): App {
       store,
       sessionId: childRow?.id,
       // An agent's own mode can make it stricter than its parent, never looser.
-      mode: stricterMode(spec.mode, engine.mode),
+      // A team member's is no looser than its manager's (team.md §4): a sub-manager's own mode.
+      mode: stricterMode(spec.mode, (member?.manager && member.manager !== TEAM.names.lead ? teamRt.handle(member.manager)?.engine.mode : undefined) ?? engine.mode),
       effort: m.ref === engine.model.ref ? engine.effort : startEffort(m),
       maxSteps: loaded.config.limits?.subagent_steps ?? LOOP.jobs.subagent_steps.default,
       compaction,
