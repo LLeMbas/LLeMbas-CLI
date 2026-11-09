@@ -49,7 +49,7 @@ export const SHARED_BUILTINS: { name: string; description: string; hint?: string
   { name: "init", description: "make or update the project's AGENTS.md from what the repository says", hint: "what to focus on" },
   { name: "continue", description: "carry on — after esc stopped it, or when it should keep going (ctrl+g)" },
   { name: "agents", description: "subagents: list them, make one, or hand one a task", hint: "name" },
-  { name: "team", description: "subagents: the team and the room; how many; stop one", hint: "size <fewest> <most> | stop <name>" },
+  { name: "team", description: "subagents: the team and the room; how many; stop one", hint: "size <min> <max> | stop <name>" },
 ]
 
 /** The status bar's word for a team with members: its size of the most it may have, and how many
@@ -66,10 +66,11 @@ export function teamLabel(team: Team): string {
 export function teamText(app: App, arg: string): string {
   const rt = app.team
   const t = rt.team
+  const S = SUBAGENTS.setting
   const [verb, ...rest] = arg.trim().split(/\s+/).filter(Boolean)
   if (verb === "size") {
     const [min, max] = rest.map(Number)
-    if (min === undefined || max === undefined || Number.isNaN(min) || Number.isNaN(max)) return `/team size <fewest> <most> — now ${t.min} to ${t.max} (at most ${t.cap})`
+    if (min === undefined || max === undefined || Number.isNaN(min) || Number.isNaN(max)) return `/team size <min> <max> — now ${S.label}: ${S.min} ${t.min}, ${S.max} ${t.max} (Max at most ${t.cap}). ${S.hint}`
     // Checked whole before anything is set: a refused pair changes nothing (team.md §2).
     const no = Team.check(min, max, t.cap)
     if (no) return no
@@ -80,7 +81,7 @@ export function teamText(app: App, arg: string): string {
     } catch (e) {
       return (e as Error).message
     }
-    return `Subagents: ${t.min} to ${t.max} agents at work for this session, the lead included; it is told with your next message.`
+    return `${S.label}: ${S.min} ${t.min}, ${S.max} ${t.max} — ${S.short}. Set for this session; the agent is told with your next message.`
   }
   if (verb === "stop") {
     const name = rest[0]
@@ -93,8 +94,8 @@ export function teamText(app: App, arg: string): string {
       ? `No subagents in this session: ${app.engine.model.ref} serves one request at a time, and every other model is on its one-model server.`
       : "No subagents in this session: they are switched off (subagents: false)."
   const since = Math.max(0, t.room.length - TEAM.read_max)
-  const own = t.couldServe().own ? "" : `\n${SUBAGENTS.setting.own}`
-  return `${t.read("lead", since)}\n\nSubagents: ${SUBAGENTS.setting.min} ${t.min}, ${SUBAGENTS.setting.max} ${t.max} agents, the lead included (/team size <fewest> <most>); /team stop <name> stops a member.${own}`
+  const own = t.couldServe().own ? "" : `\n${S.own}`
+  return `${t.read("lead", since)}\n\n${S.label}: ${S.min} ${t.min}, ${S.max} ${t.max} — ${S.short} (/team size <min> <max>); /team stop <name> stops a member.${own}`
 }
 
 /** `/agents [name]`: the subagents the task tool offers, or one of them — the text both the TUI and

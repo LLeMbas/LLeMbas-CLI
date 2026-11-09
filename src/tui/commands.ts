@@ -16,7 +16,7 @@ import { changelogPrompt, initPrompt, reviewPrompt, teamText } from "../session/
 import { git } from "../git/run.ts"
 import { branches, deleteBranch, switchBranch } from "../git/branch.ts"
 import type { Ctx } from "./context.ts"
-import type { DialogSpec } from "./components/dialog.tsx"
+import type { DialogSpec, Option } from "./components/dialog.tsx"
 import { deleteEverywhere } from "../acp/share.ts"
 import { themeNames } from "./theme.ts"
 import { render } from "../plan/plan.ts"
@@ -96,26 +96,44 @@ report is all the session's model sees of your work.
 
 const TEAM_ROW = "\u0000team"
 
-/** The team's size for this session: a few usual pairs, or any typed as `<min> <max>`. */
+/** The Subagents setting as one range from 1 to the cap with two handles, Min and Max (harness
+ *  team.md §2): the numbers count this agent, so 1 is this agent alone. */
+function teamRange(c: CommandCtx): Option {
+  const t = c.app.team.team
+  const S = SUBAGENTS.setting
+  return {
+    label: S.label,
+    value: TEAM_ROW,
+    // The session's model cannot serve subagents itself: said where the size is set (subagents.md §4).
+    description: t.couldServe().own ? S.short : S.own,
+    range: { from: 1, to: t.cap, lo: t.min, hi: t.max, names: [S.min, S.max], onSubmit: (lo, hi) => applyTeamSize(c, `${lo} ${hi}`) },
+  }
+}
+
+const applyTeamSize = (c: CommandCtx, v: string) => (c.view.info(teamText(c.app, `size ${v}`)), c.refresh())
+
+/** The team's size for this session: the range, a few usual pairs, or any typed as `<min> <max>`. */
 function openTeamSize(c: CommandCtx) {
   const t = c.app.team.team
   const pairs = [
-    [1, 1, "one agent: no subagents"],
-    [1, 4, "the agent decides; up to three subagents"],
+    [1, 1, "this agent alone: no subagents"],
+    [1, 4, "this agent decides; up to three subagents"],
     [2, 4, "subagents from the start"],
-    [1, 8, "the agent decides; up to seven subagents"],
+    [1, 8, "this agent decides; up to seven subagents"],
     [3, 8, "at least two subagents"],
     [1, Math.min(16, t.cap), "many subagents, with sub-managers"],
   ] as const
+  const S = SUBAGENTS.setting
   const seen = new Set<string>()
   const options = pairs
     .filter(([min, max]) => max <= t.cap && !seen.has(`${min} ${max}`) && seen.add(`${min} ${max}`))
-    .map(([min, max, what]) => ({ label: `${min} to ${max}`, value: `${min} ${max}`, description: what, current: t.min === min && t.max === max }))
-  const apply = (v: string) => (c.view.info(teamText(c.app, `size ${v}`)), c.refresh())
-  const S = SUBAGENTS.setting
-  // The session's model cannot serve subagents itself: said where the size is set (subagents.md §4).
-  const own = t.couldServe().own ? "" : ` — ${S.own}`
-  c.openDialog({ title: `${S.label} — now ${S.min} ${t.min}, ${S.max} ${t.max} (agents at work, this one included; at most ${t.cap})${own}`, options, onSelect: apply, custom: { label: "set to <fewest> <most>", onSubmit: apply } })
+    .map(([min, max, what]) => ({ label: `${S.min} ${min}, ${S.max} ${max}`, value: `${min} ${max}`, description: what, current: t.min === min && t.max === max }))
+  c.openDialog({
+    title: `${S.label} — ${S.min} ${t.min}, ${S.max} ${t.max} (1 to ${t.cap}, this agent included)`,
+    options: [teamRange(c), ...options],
+    onSelect: (v) => applyTeamSize(c, v),
+    custom: { label: "set to <min> <max>", onSubmit: (v) => applyTeamSize(c, v) },
+  })
 }
 
 export const COMMANDS: Command[] = [
@@ -220,12 +238,8 @@ export const COMMANDS: Command[] = [
       }
       // The Subagents setting sits beside the effort (team.md §2, subagents.md §4: shown only where
       // subagents are offered).
-      const team = c.app.team.team
-      const S = SUBAGENTS.setting
-      const agentsRow = team.offered
-        ? [{ label: `${S.label}: ${S.min} ${team.min}, ${S.max} ${team.max}`, value: TEAM_ROW, description: team.couldServe().own ? "agents at work, this one included" : S.own }]
-        : []
-      const choose = (v: string) => (v === TEAM_ROW ? openTeamSize(c) : set(v))
+      const agentsRow = c.app.team.team.offered ? [teamRange(c)] : []
+      const choose = (v: string) => set(v)
       if (control === "none" && (arg || !agentsRow.length)) return c.view.info(`${m.ref} has one level (${levels[0]}): there is nothing to choose`)
       if (arg) return set(arg)
       if (control === "none") return c.openDialog({ title: `Chat settings — ${m.ref}`, options: agentsRow, onSelect: choose })
@@ -248,7 +262,7 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "team",
-    args: "[size [<fewest> <most>] | stop [<name>]]",
+    args: "[size [<min> <max>] | stop [<name>]]",
     description: "subagents: the team and the room; how many; stop one",
     run(c, arg) {
       // The tree and the room as the lead sees them — the person sees everything (team.md §5).
@@ -1013,7 +1027,7 @@ export const COMMANDS: Command[] = [
                       ? [...(e.def.values ?? [])]
                       : []
         c.openDialog({
-          title: `${key} — now ${show(e.value) || e.def.fallback || "unset"}${e.source === "default" ? "" : ` (${e.source})`}`,
+          title: `${key} — now ${show(e.value) || e.def.fallback || "unset"}${e.source === "default" ? "" : ` (${e.source})`}${e.def.hint ? ` · ${e.def.hint}` : ""}`,
           options: values.map((v) => ({ label: v, value: v, current: v === show(e.value) })),
           onSelect: (v) => askScope(key, v),
           custom: e.def.kind === "enum" || e.def.kind === "boolean" || e.def.kind === "effort" ? undefined : { label: "set to", onSubmit: (v) => askScope(key, v) },
@@ -1029,7 +1043,7 @@ export const COMMANDS: Command[] = [
         options: S.list().map((e) => ({
           label: e.def.key,
           value: e.def.key,
-          description: `${show(e.value) || e.def.fallback || "unset"}${e.source === "default" ? "" : ` · ${e.source}`}${e.def.reload ? " · after restart" : ""}`,
+          description: `${show(e.value) || e.def.fallback || "unset"}${e.source === "default" ? "" : ` · ${e.source}`}${e.def.reload ? " · after restart" : ""}${e.def.hint ? ` · ${e.def.hint}` : ""}`,
         })),
         onSelect: askValue,
       })

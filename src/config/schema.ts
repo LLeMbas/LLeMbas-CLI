@@ -298,12 +298,12 @@ export const Config = z.strictObject({
   effort: z.union([z.enum(EFFORTS), z.literal("off"), z.literal("default")]).optional().describe("The effort level a session starts with, when the model offers it: an effort, off (thinking switched off, on a model with the switch) or default; otherwise the model's own start level."),
   agents: z
     .strictObject({
-      min: z.number().int().min(1).optional().describe("Subagents, fewest: the fewest agents at work, the lead included (default 1). 2 or more: the lead works through subagents from the start."),
-      max: z.number().int().min(1).optional().describe("Subagents, most: the most agents at work, the lead included (default 4). 1: one agent, no subagents."),
+      min: z.number().int().min(1).optional().describe("Subagents, Min: the agents at work at least, this agent included (default 1 — 1 is this agent alone). 2 or more: it works through subagents from the start."),
+      max: z.number().int().min(1).optional().describe("Subagents, Max: the agents at work at most, this agent included (default 4 — this agent and up to 3 subagents). 1: this agent alone, no subagents."),
       cap: z.number().int().min(1).optional().describe("Global config only. The highest max a session may set (default 32)."),
     })
     .optional()
-    .describe("Subagents (harness team.md, subagents.md): how many agents a session may have at work. Offered where subagents are on and a model could serve one: the session's, when it serves two requests at once, or another model off its one-model server. /team size and /effort change it for the session."),
+    .describe("Subagents (harness team.md, subagents.md): how many agents a session may have at work, counting the session's own agent — Subagents: Min 1, Max 4 by default; 1 is this agent alone. Offered where subagents are on and a model could serve one: the session's, when it serves two requests at once, or another model off its one-model server. /team size and /effort (one range, Min and Max) change it for the session."),
   subagents: z.boolean().optional().describe("false: no subagents — no task tool and no team."),
   settings_tool: z.enum(["ask", "allow", "off"]).optional().describe("Global config only. The agent's settings tool: ask (default) — each change is approved like any tool call; allow — changes go through without asking (a less strict mode still asks); off — no settings tool."),
   update: Update.optional().describe("Global config only. Updating LLeMbas CLI itself."),

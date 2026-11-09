@@ -155,7 +155,7 @@ export class Team {
 
   /** Where it is set: a value outside 1 ≤ min ≤ max ≤ cap is refused with the bounds. */
   static check(min: number, max: number, cap: number): string | undefined {
-    if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || min > max || max > cap) return `agents: 1 ≤ min ≤ max ≤ ${cap} (the cap) — whole numbers; min ${min}, max ${max} is outside`
+    if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || min > max || max > cap) return `Subagents: 1 ≤ Min ≤ Max ≤ ${cap} (the cap), whole numbers, this agent included; Min ${min}, Max ${max} is outside`
     return undefined
   }
 

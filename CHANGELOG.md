@@ -28,9 +28,15 @@ and `/context` shows where the window goes the way the side panel of the other a
   server that is not on its one-model server. When the session's model cannot serve its own
   subagents, the agent is told so in its first note, and `/effort`, `/team size` and `/team` say it
   beside the setting.
-- **"Subagents" is the word** for the setting (fewest and most agents at work, the lead included):
-  the row beside the effort in `/effort`, `/team size`, `/settings`. "Helper" is gone. The status
-  bar reads `agents 3/4 · 2 subagents working` while there is a team.
+- **"Subagents" is the word** for the setting, with **Min** and **Max**: the row beside the effort
+  in `/effort`, `/team size`, `/settings`. "Helper" is gone. The status bar reads
+  `agents 3/4 · 2 subagents working` while there is a team.
+- **The numbers count this agent**: `Subagents: Min 1, Max 4 — 1 is this agent alone`. Max 1 is
+  the agent alone, with no subagents; Max 4 is the agent and up to three subagents.
+- **The setting is one range with two handles.** In `/effort` and `/team size` the Subagents row
+  shows `Min 1`, a track from 1 to the cap with a handle for each, and `Max 4`: ←→ move the handle in focus, tab switches to the other, enter
+  sets both for the session (Min never passes Max; Max goes up to `agents.cap`). `/team size` also
+  keeps the usual pairs and `<min> <max>` typed.
 - **`/context`** shows the window as used tokens of the window and a percentage, one bar split by
   category, every category with its tokens and its share of the window, what is free, and how far
   it is to automatic compaction (`N until auto-compact`, with `/compact` to do it now).

@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { parse, parseDocument } from "yaml"
 import { z } from "zod"
+import LOOP_JSON from "../../harness/loop.json"
 import { paths } from "./paths.ts"
 import { asMode, Config, EFFORTS, MODES, PERSONALITIES, UPDATE_CHANNELS } from "./schema.ts"
 
@@ -29,7 +30,12 @@ export interface SettingDef {
   reload?: boolean
   /** What it is when nothing sets it. */
   fallback?: string
+  /** What a person reads beside the key in /settings. */
+  hint?: string
 }
+
+// The Subagents setting's names and what its numbers count (harness loop.json subagents.setting).
+const SUB = LOOP_JSON.subagents.setting
 
 const ALL: Scope[] = ["session", "global", "project"]
 const USER: Scope[] = ["session", "global"]
@@ -38,8 +44,8 @@ export const SETTINGS: SettingDef[] = [
   { key: "model", kind: "model", agent: true, scopes: ALL },
   { key: "effort", kind: "effort", agent: true, scopes: ALL, fallback: "the model's start level" },
   // The team's size is the person's: the agent never sets how many agents it may have.
-  { key: "agents.min", kind: "number", agent: false, scopes: ALL, fallback: "1" },
-  { key: "agents.max", kind: "number", agent: false, scopes: ALL, fallback: "4" },
+  { key: "agents.min", kind: "number", agent: false, scopes: ALL, fallback: "1", hint: `${SUB.label}: ${SUB.min} — ${SUB.short}` },
+  { key: "agents.max", kind: "number", agent: false, scopes: ALL, fallback: "4", hint: `${SUB.label}: ${SUB.max} — this agent included; 4 is this agent and up to 3 subagents` },
   { key: "mode", kind: "enum", values: MODES, agent: true, scopes: ALL, fallback: "manual" },
   { key: "small_model", kind: "model", agent: true, scopes: ALL, fallback: "the session's model" },
   { key: "knowledge", kind: "list", agent: true, scopes: ALL, fallback: "every base" },

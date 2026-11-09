@@ -123,7 +123,7 @@ export const LOOP: {
   subagents: {
     texts: { not_named: string; same_group: string; one_request: string }
     named: { before: string; after: string }
-    setting: { label: string; min: string; max: string; own: string }
+    setting: { label: string; min: string; max: string; hint: string; short: string; own: string }
   }
   /** Teams (spec 3.2.0, harness/team.md): the size setting, names, marks, texts. */
   team: {

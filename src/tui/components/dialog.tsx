@@ -8,6 +8,31 @@ export interface Option {
   value: string
   description?: string
   current?: boolean
+  /** A two-handle range on this row (the Subagents setting, harness team.md §2: one range from 1
+   *  to the cap, Min and Max). While the row is highlighted ←→ move the handle in focus and tab
+   *  moves the focus; Min never passes Max. Enter calls `onSubmit` with both, not `onSelect`. */
+  range?: Range
+}
+
+export interface Range {
+  /** The bounds of the track. */
+  from: number
+  to: number
+  /** The handles' values. */
+  lo: number
+  hi: number
+  /** The handles' names (Min, Max). */
+  names: [string, string]
+  onSubmit: (lo: number, hi: number) => void
+}
+
+/** The track as text: `─` outside the range, `━` inside it, `●` for a handle. */
+export function rangeTrack(r: Pick<Range, "from" | "to">, lo: number, hi: number, width = 16): { before: string; lo: string; between: string; hi: string; after: string } {
+  const span = Math.max(1, r.to - r.from)
+  const at = (v: number) => Math.round(((v - r.from) / span) * (width - 1))
+  const a = at(lo)
+  const b = Math.max(at(hi), a + (hi > lo ? 1 : 0))
+  return { before: "─".repeat(a), lo: "●", between: "━".repeat(Math.max(0, b - a - 1)), hi: b > a ? "●" : "", after: "─".repeat(Math.max(0, width - 1 - b)) }
 }
 
 export interface DialogSpec {
@@ -45,6 +70,16 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
     const hits = q ? p.spec.options.filter((o) => (o.label + " " + (o.description ?? "")).toLowerCase().includes(q)) : p.spec.options
     return p.spec.custom && query().trim() ? [{ label: `${p.spec.custom.label} "${query().trim()}"`, value: CUSTOM }, ...hits] : hits
   })
+  // A range row's handles, moved while the dialog is open and handed over on enter; esc drops them.
+  const [ranges, setRanges] = createSignal<Record<string, [number, number]>>({})
+  const [focus, setFocus] = createSignal<0 | 1>(1)
+  const valuesOf = (o: Option): [number, number] => ranges()[o.value] ?? [o.range!.lo, o.range!.hi]
+  const move = (o: Option, by: number) => {
+    const r = o.range!
+    const [lo, hi] = valuesOf(o)
+    const next: [number, number] = focus() === 0 ? [Math.min(hi, Math.max(r.from, lo + by)), hi] : [lo, Math.min(r.to, Math.max(lo, hi + by))]
+    setRanges((m) => ({ ...m, [o.value]: next }))
+  }
   const start = Math.max(0, p.spec.options.findIndex((o) => o.current))
   const [sel, setSel] = createSignal(start)
   // The spec is live: a list that redraws itself with fewer rows keeps the cursor on a row.
@@ -70,6 +105,8 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
         run(o.value)
       }
     } else if (key.name === "escape") p.close()
+    else if (shown()[sel()]?.range && (key.name === "left" || key.name === "right")) move(shown()[sel()]!, key.name === "left" ? -1 : 1)
+    else if (shown()[sel()]?.range && key.name === "tab") setFocus((f) => (f === 0 ? 1 : 0))
     else if (key.name === "up" || (key.ctrl && key.name === "p")) setSel((i) => (i + n - 1) % Math.max(n, 1))
     else if (key.name === "down" || (key.ctrl && key.name === "n")) setSel((i) => (i + 1) % Math.max(n, 1))
     else if (key.name === "return") {
@@ -79,8 +116,10 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
         const onSelect = p.spec.onSelect
         const custom = p.spec.custom
         const typed = query().trim()
+        const range = o.range && { submit: o.range.onSubmit, values: valuesOf(o) }
         p.close()
         if (o.value === CUSTOM) custom?.onSubmit(typed)
+        else if (range) range.submit(...range.values)
         else onSelect(o.value)
       }
     } else if (filterable() && key.name === "backspace") {
@@ -104,6 +143,30 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
         <For each={shown().slice(offset(), offset() + visible())}>
           {(o, i) => {
             const active = () => i() + offset() === sel()
+            if (o.range) {
+              const values = () => valuesOf(o)
+              const track = () => rangeTrack(o.range!, values()[0], values()[1])
+              const handle = (n: 0 | 1) => (active() && focus() === n ? c().accent : active() ? c().title : c().text)
+              return (
+                <box flexDirection="row" backgroundColor={active() ? c().menuCurrent : undefined}>
+                  <text wrapMode="none" truncate fg={active() ? c().title : c().text} attributes={active() ? TextAttributes.BOLD : 0}>
+                    {"  "}
+                    {o.label}
+                    {"  "}
+                    <span style={{ fg: handle(0) }}>{`${o.range.names[0]} ${values()[0]}`}</span>
+                    {" "}
+                    <span style={{ fg: c().dim }}>{track().before}</span>
+                    <span style={{ fg: handle(0) }}>{track().lo}</span>
+                    <span style={{ fg: c().accent }}>{track().between}</span>
+                    <span style={{ fg: handle(1) }}>{track().hi}</span>
+                    <span style={{ fg: c().dim }}>{track().after}</span>
+                    {" "}
+                    <span style={{ fg: handle(1) }}>{`${o.range.names[1]} ${values()[1]}`}</span>
+                    <span style={{ fg: c().muted }}>{o.description ? `  ${o.description}` : ""}</span>
+                  </text>
+                </box>
+              )
+            }
             return (
               <box flexDirection="row" backgroundColor={active() ? c().menuCurrent : undefined}>
                 <text wrapMode="none" truncate fg={active() ? c().title : c().text} attributes={active() ? TextAttributes.BOLD : 0}>
@@ -118,7 +181,11 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
         <Show when={shown().length === 0}>
           <text fg={c().muted}>nothing matches</text>
         </Show>
-        <text fg={c().dim}>{p.spec.hint ?? "↑↓ move · enter choose · esc close"}</text>
+        <text fg={c().dim}>
+          {shown()[sel()]?.range
+            ? `←→ move ${shown()[sel()]!.range!.names[focus()]} · tab ${shown()[sel()]!.range!.names[focus() === 0 ? 1 : 0]} · enter set · esc close`
+            : (p.spec.hint ?? "↑↓ move · enter choose · esc close")}
+        </text>
       </box>
     </box>
   )
