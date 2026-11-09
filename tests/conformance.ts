@@ -272,7 +272,7 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
         case "finish":
           team.finish(by, st.reply ?? "", st.reason ?? "stop")
           return { delivered: delivered() }
-        case "helper_done":
+        case "task_done":
           team.helperDoneBy(by)
           return null
         case "set":
