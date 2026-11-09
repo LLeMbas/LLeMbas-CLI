@@ -4,7 +4,7 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.0.0-beta.3] — 2026-11-09
 
 Harness spec 3.2.0: teams, effort levels that mean what they say, the model's reasoning sent
 back while it works, and no absolute paths in the prompt.
