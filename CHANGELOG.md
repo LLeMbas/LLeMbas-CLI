@@ -33,6 +33,16 @@ and `/context` shows where the window goes the way the side panel of the other a
   category, every category with its tokens and its share of the window, what is free, and how far
   it is to automatic compaction (`N until auto-compact`, with `/compact` to do it now).
 
+## [2.0.0-beta.4] — 2026-11-09
+
+### Fixed
+
+- **`lembas login` no longer loops on a sign-in the server stopped accepting.** With an earlier login
+  for the same server kept here (from an older install, or LLeMbas Desktop), login only refreshed it;
+  when the server refused the old token it said “run login again”, and running it again did the same.
+  Now a refused sign-in starts a new one, which replaces the old.
+- The installer's last line says to run `lembas login`, not to edit `connections.yaml` (gone in 2.0).
+
 ## [2.0.0-beta.3] — 2026-11-09
 
 Harness spec 3.2.0: teams, effort levels that mean what they say, the model's reasoning sent
