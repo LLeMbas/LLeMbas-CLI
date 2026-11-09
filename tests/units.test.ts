@@ -122,7 +122,7 @@ describe("the project's AGENTS.md", () => {
     const base = { modelRef: "x/y", family: "local", cwd: root, root, isGit: true, mode: "edit" as const, planDir: join(root, ".agent/plans"), toolNames: [] }
     const missing = assembleSystem(base)
     expect(missing).toContain(`This project has no AGENTS.md yet`)
-    expect(missing).toContain(`${root}/AGENTS.md`)
+    expect(missing).toContain("It goes at the project root: `AGENTS.md`.")
     expect(missing).toContain("which branch the work goes on")
     expect(assembleSystem({ ...base, isGit: false })).toContain("not a git repository yet")
     expect(assembleSystem({ ...base, subagent: { name: "explore", instructions: "look" } })).not.toContain("AGENTS.md yet")

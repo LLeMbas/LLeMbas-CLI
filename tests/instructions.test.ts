@@ -76,5 +76,6 @@ test("no instruction file anywhere on the way: the project is told to make one",
   mkdirSync(join(root, "a"))
   writeFileSync(join(paths.config, "config.yaml"), "")
   const system = assembleSystem({ modelRef: "s/m", family: "local", cwd: join(root, "a"), root, isGit: false, mode: "manual", planDir: join(root, ".agent", "plans"), toolNames: [] })
-  expect(system).toContain(`It goes at the project root: ${root}/AGENTS.md.`)
+  // Spec 3.2.0 (context.md §11): the block names no absolute path.
+  expect(system).toContain("It goes at the project root: `AGENTS.md`.")
 })
