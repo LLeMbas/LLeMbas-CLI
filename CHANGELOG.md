@@ -6,6 +6,8 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [2.0.0-beta.5] — 2026-11-09
+
 Harness spec 3.3.0 (spec commit 02c7282): subagents run on your model unless you name another,
 and `/context` shows where the window goes the way the side panel of the other apps does.
 
