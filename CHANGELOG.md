@@ -6,7 +6,32 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
-Harness spec 3.3.0 (spec commit 02c7282): subagents.
+Harness spec 3.3.0 (spec commit 02c7282): subagents run on your model unless you name another,
+and `/context` shows where the window goes the way the side panel of the other apps does.
+
+### Changed
+
+- **Subagents run on the session's model**, unless you named another model in this session's own
+  messages — its id, the part after its provider, or its display name, as a whole word, in any
+  letter case. A `task` or `team_add` that asks for any other model is refused ("Use another
+  model for subagents only when the person names it."), and an agent file's own `model:` is no
+  longer used. Nothing in the settings chooses a subagent's model.
+- **Only the logical capacity limits remain.** A named model on the same one-model server as the
+  session's model is refused ("That model is on the same one-model server as this chat's model;
+  name a model on another server."). On a model that serves one request at a time, a subagent on
+  that same model is refused ("This model serves one request at a time: name another model, on
+  another server, for subagents.") and nothing else is picked instead.
+- **Subagents are offered** — the size setting, the team tools — when subagents are on and some
+  model could serve one: the session's, when it serves two requests at once, or any model of the
+  server that is not on its one-model server. When the session's model cannot serve its own
+  subagents, the agent is told so in its first note, and `/effort`, `/team size` and `/team` say it
+  beside the setting.
+- **"Subagents" is the word** for the setting (fewest and most agents at work, the lead included):
+  the row beside the effort in `/effort`, `/team size`, `/settings`. "Helper" is gone. The status
+  bar reads `agents 3/4 · 2 subagents working` while there is a team.
+- **`/context`** shows the window as used tokens of the window and a percentage, one bar split by
+  category, every category with its tokens and its share of the window, what is free, and how far
+  it is to automatic compaction (`N until auto-compact`, with `/compact` to do it now).
 
 ## [2.0.0-beta.3] — 2026-11-09
 

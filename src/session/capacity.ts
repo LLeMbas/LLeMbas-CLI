@@ -20,21 +20,21 @@ export function parallelOf(m: Pick<ResolvedModel, "spec">): number {
   return m.spec.single_session ? 1 : Infinity
 }
 
-/** `busy`: this session's requests the helper's model already serves besides the main prompt's
+/** `busy`: this session's requests the sub's model already serves besides the main prompt's
  *  (subagents running on it). */
-export function capacityRefusal(main: ResolvedModel, helper: ResolvedModel, busy = 0): string {
-  if (helper.ref === main.ref) {
-    const n = parallelOf(helper)
+export function capacityRefusal(main: ResolvedModel, sub: ResolvedModel, busy = 0): string {
+  if (sub.ref === main.ref) {
+    const n = parallelOf(sub)
     if (n === 1)
-      return `${helper.ref} serves one request at a time, so it cannot be its own subagent: the subagent would take the server's only slot and push this session's cached prompt out of it.`
+      return `${sub.ref} serves one request at a time, so it cannot be its own subagent: the subagent would take the server's only slot and push this session's cached prompt out of it.`
     if (1 + busy >= n)
-      return `${helper.ref} serves ${n} requests at once, and this session already has ${n} on it; another subagent would wait, or push this session's cached prompt out.`
+      return `${sub.ref} serves ${n} requests at once, and this session already has ${n} on it; another subagent would wait, or push this session's cached prompt out.`
     return ""
   }
   const shared = groupOf(main)
-  if (shared !== undefined && shared === groupOf(helper)) {
+  if (shared !== undefined && shared === groupOf(sub)) {
     const where = `${main.ref}'s server (group ${main.spec.group})`
-    return `${where} holds one model at a time, so a subagent on ${helper.ref} would unload ${main.ref}, and this session's cached prompt with it, while its turn waits.`
+    return `${where} holds one model at a time, so a subagent on ${sub.ref} would unload ${main.ref}, and this session's cached prompt with it, while its turn waits.`
   }
   return ""
 }
@@ -42,17 +42,17 @@ export function capacityRefusal(main: ResolvedModel, helper: ResolvedModel, busy
 /** The same rule between two subagents: a new one is not started where its model would unload, or
  *  take the only slot of, a subagent already running (the spec's "beside the model of a subagent
  *  already running"). */
-export function capacityBeside(running: ResolvedModel, helper: ResolvedModel, busy = 1): string {
-  if (helper.ref === running.ref) {
-    const n = parallelOf(helper)
-    if (n === 1) return `${helper.ref} serves one request at a time, and a subagent is already running on it; a second would wait for the first, or push it out.`
-    if (busy >= n) return `${helper.ref} serves ${n} requests at once, and as many subagents already run on it; another would wait, or push one out.`
+export function capacityBeside(running: ResolvedModel, sub: ResolvedModel, busy = 1): string {
+  if (sub.ref === running.ref) {
+    const n = parallelOf(sub)
+    if (n === 1) return `${sub.ref} serves one request at a time, and a subagent is already running on it; a second would wait for the first, or push it out.`
+    if (busy >= n) return `${sub.ref} serves ${n} requests at once, and as many subagents already run on it; another would wait, or push one out.`
     return ""
   }
   const shared = groupOf(running)
-  if (shared !== undefined && shared === groupOf(helper)) {
+  if (shared !== undefined && shared === groupOf(sub)) {
     const where = `${running.ref}'s server (group ${running.spec.group})`
-    return `${where} holds one model at a time, and a subagent is already running on ${running.ref} there; one on ${helper.ref} would unload it.`
+    return `${where} holds one model at a time, and a subagent is already running on ${running.ref} there; one on ${sub.ref} would unload it.`
   }
   return ""
 }

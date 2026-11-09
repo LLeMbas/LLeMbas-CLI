@@ -13,6 +13,7 @@ export interface AgentSpec {
   name: string
   description: string
   instructions: string
+  /** Read, and not used for a subagent (spec 3.3.0, subagents.md §2): shown so a file that sets it says so. */
   model?: string
   /** A fixed permission mode; absent = the parent's. */
   mode?: Mode

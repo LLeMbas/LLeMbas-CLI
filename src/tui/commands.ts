@@ -11,6 +11,7 @@ import { doRelease, planRelease } from "../git/release.ts"
 import { instructionFiles } from "../prompt/assemble.ts"
 import { addDecision, readBoard, readDecisions, renderBoard } from "../project/board.ts"
 import { contextBreakdown, renderBreakdown } from "../session/context.ts"
+import { SUBAGENTS } from "../team/subagents.ts"
 import { changelogPrompt, initPrompt, reviewPrompt, teamText } from "../session/commands.ts"
 import { git } from "../git/run.ts"
 import { branches, deleteBranch, switchBranch } from "../git/branch.ts"
@@ -85,7 +86,6 @@ const pendingCodes = new Map<string, (text: string) => void>()
 
 const AGENT_TEMPLATE = (name: string) => `---
 description: what ${name} is for — the model reads this when it picks a subagent
-# model: provider/model        # run it on another of the server's models (default: the session's)
 # mode: plan                   # plan: read-only; edit; manual (asks you) — never looser than yours
 # tools: [read, glob, grep, list, bash, web_search, web_fetch]   # default: every tool a subagent may have
 # isolation: worktree          # work in a git checkout and branch of its own
@@ -100,19 +100,22 @@ const TEAM_ROW = "\u0000team"
 function openTeamSize(c: CommandCtx) {
   const t = c.app.team.team
   const pairs = [
-    [1, 1, "one agent: no team, no helper"],
-    [1, 4, "you decide; up to three members"],
-    [2, 4, "a team from the start"],
-    [1, 8, "you decide; up to seven members"],
-    [3, 8, "a team of at least three"],
-    [1, Math.min(16, t.cap), "a bigger team, with sub-managers"],
+    [1, 1, "one agent: no subagents"],
+    [1, 4, "the agent decides; up to three subagents"],
+    [2, 4, "subagents from the start"],
+    [1, 8, "the agent decides; up to seven subagents"],
+    [3, 8, "at least two subagents"],
+    [1, Math.min(16, t.cap), "many subagents, with sub-managers"],
   ] as const
   const seen = new Set<string>()
   const options = pairs
     .filter(([min, max]) => max <= t.cap && !seen.has(`${min} ${max}`) && seen.add(`${min} ${max}`))
     .map(([min, max, what]) => ({ label: `${min} to ${max}`, value: `${min} ${max}`, description: what, current: t.min === min && t.max === max }))
   const apply = (v: string) => (c.view.info(teamText(c.app, `size ${v}`)), c.refresh())
-  c.openDialog({ title: `Agents — now ${t.min} to ${t.max} (at most ${t.cap})`, options, onSelect: apply, custom: { label: "set to", onSubmit: apply } })
+  const S = SUBAGENTS.setting
+  // The session's model cannot serve subagents itself: said where the size is set (subagents.md §4).
+  const own = t.couldServe().own ? "" : ` — ${S.own}`
+  c.openDialog({ title: `${S.label} — now ${S.min} ${t.min}, ${S.max} ${t.max} (agents at work, this one included; at most ${t.cap})${own}`, options, onSelect: apply, custom: { label: "set to <fewest> <most>", onSubmit: apply } })
 }
 
 export const COMMANDS: Command[] = [
@@ -146,7 +149,7 @@ export const COMMANDS: Command[] = [
       const describe = (a: (typeof list)[number]) =>
         [
           `${a.name} (${a.source}) — ${a.description}`,
-          `  model ${a.model ?? "the session's"} · mode ${a.mode ?? "the session's"} · tools ${a.tools?.join(", ") ?? "all a subagent may have"}${a.isolation ? " · own worktree" : ""}`,
+          `  model the session's, or one you name${a.model ? ` (its own model: ${a.model} is not used)` : ""} · mode ${a.mode ?? "the session's"} · tools ${a.tools?.join(", ") ?? "all a subagent may have"}${a.isolation ? " · own worktree" : ""}`,
         ].join("\n")
       if (named) return c.view.info(describe(named))
       c.view.info(
@@ -215,9 +218,13 @@ export const COMMANDS: Command[] = [
         c.setEffort(v as Level)
         c.view.info(control === "switch" ? `thinking ${v === "off" ? "off" : `on (${v})`}` : `effort: ${v}`)
       }
-      // The team's size sits beside the effort (team.md §2: shown only where a team is offered).
+      // The Subagents setting sits beside the effort (team.md §2, subagents.md §4: shown only where
+      // subagents are offered).
       const team = c.app.team.team
-      const agentsRow = team.offered ? [{ label: `agents: ${team.min} to ${team.max}`, value: TEAM_ROW, description: "how many agents the team may have, you included" }] : []
+      const S = SUBAGENTS.setting
+      const agentsRow = team.offered
+        ? [{ label: `${S.label}: ${S.min} ${team.min}, ${S.max} ${team.max}`, value: TEAM_ROW, description: team.couldServe().own ? "agents at work, this one included" : S.own }]
+        : []
       const choose = (v: string) => (v === TEAM_ROW ? openTeamSize(c) : set(v))
       if (control === "none" && (arg || !agentsRow.length)) return c.view.info(`${m.ref} has one level (${levels[0]}): there is nothing to choose`)
       if (arg) return set(arg)
@@ -241,8 +248,8 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "team",
-    args: "[size [<min> <max>] | stop [<name>]]",
-    description: "the team: its agents and the room; its size; stop a member",
+    args: "[size [<fewest> <most>] | stop [<name>]]",
+    description: "subagents: the team and the room; how many; stop one",
     run(c, arg) {
       // The tree and the room as the lead sees them — the person sees everything (team.md §5).
       const words = arg.trim().split(/\s+/).filter(Boolean)

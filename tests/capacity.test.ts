@@ -51,10 +51,37 @@ test("task on a model the server cannot hold beside the session's is refused, an
   )
   writeFileSync(join(paths.config, "config.yaml"), "model: f/m\n")
   const a = createApp({ cwd: mkdtempSync(join(tmpdir(), "ph-cap-")), mode: "edit", store: false, asker: { ask: async (): Promise<AskReply> => ({ kind: "once" }) } })
-  await a.engine.prompt("get a second opinion")
+  await a.engine.prompt("get a second opinion from f/other")
   // Two requests: the session's, then its next step — never one for f/other.
   expect(fake.requests.map((r: any) => r.model)).toEqual(["f/m", "f/m"])
   const result = fake.requests[1].messages.at(-1).content as string
-  expect(result).toContain("holds one model at a time")
-  expect(result).toContain("Do this part yourself")
+  expect(result).toContain("That model is on the same one-model server as this chat's model; name a model on another server.")
+})
+
+test("spec 3.3.0: task on another model the person did not name is refused, and nothing runs", async () => {
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "t1", "task", JSON.stringify({ description: "second opinion", prompt: "look at it", model: "f/other" }))] },
+    { chunks: [delta({ content: "I will do it myself." })] },
+  ])
+  mkdirSync(paths.config, { recursive: true })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: {}, f/other: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "config.yaml"), "model: f/m\n")
+  const a = createApp({ cwd: mkdtempSync(join(tmpdir(), "ph-cap-")), mode: "edit", store: false, asker: { ask: async (): Promise<AskReply> => ({ kind: "once" }) } })
+  await a.engine.prompt("get a second opinion")
+  expect(fake.requests.map((r: any) => r.model)).toEqual(["f/m", "f/m"])
+  expect(fake.requests[1].messages.at(-1).content as string).toContain("Use another model for subagents only when the person names it.")
+})
+
+test("spec 3.3.0: a one-request session model is not its own subagent, and nothing else is picked", async () => {
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "t1", "task", JSON.stringify({ description: "look", prompt: "look at it" }))] },
+    { chunks: [delta({ content: "I will do it myself." })] },
+  ])
+  mkdirSync(paths.config, { recursive: true })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${fake.url}\n    models: { f/m: { parallel: 1 }, f/other: {} }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "config.yaml"), "model: f/m\n")
+  const a = createApp({ cwd: mkdtempSync(join(tmpdir(), "ph-cap-")), mode: "edit", store: false, asker: { ask: async (): Promise<AskReply> => ({ kind: "once" }) } })
+  await a.engine.prompt("look into it")
+  expect(fake.requests.map((r: any) => r.model)).toEqual(["f/m", "f/m"])
+  expect(fake.requests[1].messages.at(-1).content as string).toContain("This model serves one request at a time: name another model, on another server, for subagents.")
 })

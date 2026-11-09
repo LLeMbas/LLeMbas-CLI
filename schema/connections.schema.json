@@ -210,11 +210,11 @@
                   "maxLength": 300
                 },
                 "single_session": {
-                  "description": "The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused. The same as parallel: 1.",
+                  "description": "The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused (name a model on another server instead). The same as parallel: 1.",
                   "type": "boolean"
                 },
                 "parallel": {
-                  "description": "How many requests the model's server serves at once (capacity.parallel); wins over single_session. Absent with no single_session: no limit (a hosted API). A team is offered only on a model that serves at least 2.",
+                  "description": "How many requests the model's server serves at once (capacity.parallel); wins over single_session. Absent with no single_session: no limit (a hosted API). The session's model is its own subagents' model only when it serves at least 2.",
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991

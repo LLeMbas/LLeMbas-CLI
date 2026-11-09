@@ -197,7 +197,7 @@ describe("background subagents (spec 2.0.0)", () => {
       ],
       [{ chunks: [toolCall(0, "r1", "read", '{"path":"calc.py"}')] }, { chunks: [delta({ content: "calc.py:2 divides by len(v) - 1." })] }],
     )
-    await a.turns.prompt("look into it in the background")
+    await a.turns.prompt("look into it in the background (subagents on g/m or g/n)")
     const started = fake!.requests[1].messages.at(-1).content as string
     expect(started).toStartWith("[#0001]\nStarted subagent explore as job1 (find the bug).")
     await settled(a, 3)
@@ -233,7 +233,7 @@ describe("background subagents (spec 2.0.0)", () => {
         { chunks: [delta({ content: "Second report." })] },
       ],
     )
-    await a.turns.prompt("go")
+    await a.turns.prompt("go (subagents on g/m or g/n)")
     expect(fake!.requests[2].messages.at(-1).content).toContain("Sent to job1")
     await settled(a, 6)
     const child = other!.requests
@@ -252,7 +252,7 @@ describe("background subagents (spec 2.0.0)", () => {
       [{ chunks: [toolCall(0, "t1", "task", JSON.stringify({ description: "find loaders", prompt: "Find the loaders", model: "g/m" }))] }, { chunks: [delta({ content: "Thanks." })] }],
       [{ chunks: [toolCall(0, "p1", "report", JSON.stringify({ text: "There are two loaders; which one?" }))] }, { chunks: [delta({ content: "Final: the YAML one." })] }],
     )
-    await a.turns.prompt("go")
+    await a.turns.prompt("go (subagents on g/m or g/n)")
     const msgs = fake!.requests[1].messages
     const note = msgs.find((m: any) => m.role === "user" && String(m.content).startsWith(MARKS.message))
     expect(note?.content).toContain("job1 (explore: find loaders):\nThere are two loaders; which one?")
@@ -278,7 +278,7 @@ describe("background subagents (spec 2.0.0)", () => {
       [{ chunks: [toolCall(0, "b1", "bash", JSON.stringify({ command: "true", description: "nothing" }))] }, { chunks: [delta({ content: "ran" })] }],
       { asker },
     )
-    await a.turns.prompt("go")
+    await a.turns.prompt("go (subagents on g/m or g/n)")
     expect(seen).toEqual([{ jobId: "job1", agent: "general", description: "run it" }])
   })
 
@@ -297,7 +297,7 @@ describe("background subagents (spec 2.0.0)", () => {
       [{ chunks: [delta({ content: "slow" })], gapMs: 400 }],
       { oneAtATime: true },
     )
-    await a.turns.prompt("go")
+    await a.turns.prompt("go (subagents on g/m or g/n)")
     const results = fake!.requests[1].messages.filter((m: any) => m.role === "tool").map((m: any) => m.content as string)
     expect(results[0]).toStartWith("[#0001]\nStarted subagent explore as job1")
     expect(results[1]).toContain("holds one model at a time, and a subagent is already running on g/m there")
@@ -330,7 +330,7 @@ test("a cancelled worktree subagent keeps its branch, and the result names it", 
   const root = a.project.root
   for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "t@e"], ["config", "user.name", "T"], ["config", "commit.gpgsign", "false"], ["add", "calc.py"], ["commit", "-q", "-m", "init"]]) git(root, args)
   ;(a.project as any).gitRoot = root
-  const turn = a.turns.prompt("fix it in a worktree")
+  const turn = a.turns.prompt("fix it in a worktree (subagents on g/m or g/n)")
   const until = Date.now() + 8000
   while (Date.now() < until && !events.some((e) => e.type === "sub_tool" && e.name === "write")) await Bun.sleep(20)
   const write = events.find((e) => e.type === "sub_tool" && e.name === "write")

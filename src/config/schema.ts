@@ -60,8 +60,8 @@ export const ModelSpec = z.strictObject({
   headers: z.record(z.string(), z.string()).optional().describe("Extra HTTP headers for this model's requests."),
   body: z.record(z.string(), z.unknown()).optional().describe("Merged into every request body for this model."),
   notes: z.string().max(300).optional().describe("What this model is good at, in a line: the model in use is told which others there are, for handing work over (task) or switching."),
-  single_session: z.boolean().optional().describe("The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused. The same as parallel: 1."),
-  parallel: z.number().int().positive().optional().describe("How many requests the model's server serves at once (capacity.parallel); wins over single_session. Absent with no single_session: no limit (a hosted API). A team is offered only on a model that serves at least 2."),
+  single_session: z.boolean().optional().describe("The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused (name a model on another server instead). The same as parallel: 1."),
+  parallel: z.number().int().positive().optional().describe("How many requests the model's server serves at once (capacity.parallel); wins over single_session. Absent with no single_session: no limit (a hosted API). The session's model is its own subagents' model only when it serves at least 2."),
   group: z.string().optional().describe("Models sharing one GPU server that holds one model at a time (llama-swap), as the LLeMbas server says (capacity.group): a subagent on another model of the same group would unload this one, so it is refused."),
 })
 export type ModelSpec = z.infer<typeof ModelSpec>
@@ -298,12 +298,12 @@ export const Config = z.strictObject({
   effort: z.union([z.enum(EFFORTS), z.literal("off"), z.literal("default")]).optional().describe("The effort level a session starts with, when the model offers it: an effort, off (thinking switched off, on a model with the switch) or default; otherwise the model's own start level."),
   agents: z
     .strictObject({
-      min: z.number().int().min(1).optional().describe("The fewest agents a team works with, the lead included (default 1). 2 or more: the lead works through a team from the start."),
-      max: z.number().int().min(1).optional().describe("The most agents a team may have, the lead included (default 4). 1: one agent, no team and no helper."),
+      min: z.number().int().min(1).optional().describe("Subagents, fewest: the fewest agents at work, the lead included (default 1). 2 or more: the lead works through subagents from the start."),
+      max: z.number().int().min(1).optional().describe("Subagents, most: the most agents at work, the lead included (default 4). 1: one agent, no subagents."),
       cap: z.number().int().min(1).optional().describe("Global config only. The highest max a session may set (default 32)."),
     })
     .optional()
-    .describe("Teams (harness team.md): how many agents a session's team may have. Offered only where subagents are on and the model serves two requests at once. /agents changes it for the session."),
+    .describe("Subagents (harness team.md, subagents.md): how many agents a session may have at work. Offered where subagents are on and a model could serve one: the session's, when it serves two requests at once, or another model off its one-model server. /team size and /effort change it for the session."),
   subagents: z.boolean().optional().describe("false: no subagents — no task tool and no team."),
   settings_tool: z.enum(["ask", "allow", "off"]).optional().describe("Global config only. The agent's settings tool: ask (default) — each change is approved like any tool call; allow — changes go through without asking (a less strict mode still asks); off — no settings tool."),
   update: Update.optional().describe("Global config only. Updating LLeMbas CLI itself."),

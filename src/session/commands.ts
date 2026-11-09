@@ -17,6 +17,7 @@ import { fill, promptText } from "../prompt/assemble.ts"
 import { skillMessage, slug, type Skill } from "../skill/index.ts"
 import { CONTINUE_PROMPT } from "./engine.ts"
 import { TEAM, Team } from "../team/team.ts"
+import { SUBAGENTS } from "../team/subagents.ts"
 
 export type CommandKind = "custom" | "skill" | "builtin"
 
@@ -48,7 +49,7 @@ export const SHARED_BUILTINS: { name: string; description: string; hint?: string
   { name: "init", description: "make or update the project's AGENTS.md from what the repository says", hint: "what to focus on" },
   { name: "continue", description: "carry on — after esc stopped it, or when it should keep going (ctrl+g)" },
   { name: "agents", description: "subagents: list them, make one, or hand one a task", hint: "name" },
-  { name: "team", description: "the team: its agents and the room; its size; stop a member", hint: "size <min> <max> | stop <name>" },
+  { name: "team", description: "subagents: the team and the room; how many; stop one", hint: "size <fewest> <most> | stop <name>" },
 ]
 
 /** The status bar's word for a team with members: its size of the most it may have, and how many
@@ -56,7 +57,7 @@ export const SHARED_BUILTINS: { name: string; description: string; hint?: string
 export function teamLabel(team: Team): string {
   if (!team.hasMembers()) return ""
   const n = team.active()
-  return `team ${team.size()}/${team.max}${n ? ` · ${n} working` : ""}`
+  return `agents ${team.size()}/${team.max}${n ? ` · ${n} subagent${n === 1 ? "" : "s"} working` : ""}`
 }
 
 /** `/team [size <min> <max> | stop <name>]`: the team's tree and room, as the lead sees them (the
@@ -68,7 +69,7 @@ export function teamText(app: App, arg: string): string {
   const [verb, ...rest] = arg.trim().split(/\s+/).filter(Boolean)
   if (verb === "size") {
     const [min, max] = rest.map(Number)
-    if (min === undefined || max === undefined || Number.isNaN(min) || Number.isNaN(max)) return `/team size <min> <max> — now ${t.min} to ${t.max} (at most ${t.cap})`
+    if (min === undefined || max === undefined || Number.isNaN(min) || Number.isNaN(max)) return `/team size <fewest> <most> — now ${t.min} to ${t.max} (at most ${t.cap})`
     // Checked whole before anything is set: a refused pair changes nothing (team.md §2).
     const no = Team.check(min, max, t.cap)
     if (no) return no
@@ -79,7 +80,7 @@ export function teamText(app: App, arg: string): string {
     } catch (e) {
       return (e as Error).message
     }
-    return `The team may have ${t.min} to ${t.max} agents for this session; the lead is told with your next message.`
+    return `Subagents: ${t.min} to ${t.max} agents at work for this session, the lead included; it is told with your next message.`
   }
   if (verb === "stop") {
     const name = rest[0]
@@ -88,9 +89,12 @@ export function teamText(app: App, arg: string): string {
     return gone.length ? `Stopped ${gone.join(", ")}; the lead is told with your next message.` : `No member called ${name} on the team.`
   }
   if (!t.offered)
-    return t.subagents ? `No team in this session: ${app.engine.model.ref} serves one request at a time, and a team needs two at once.` : "No team in this session: subagents are switched off (subagents: false)."
+    return t.subagents
+      ? `No subagents in this session: ${app.engine.model.ref} serves one request at a time, and every other model is on its one-model server.`
+      : "No subagents in this session: they are switched off (subagents: false)."
   const since = Math.max(0, t.room.length - TEAM.read_max)
-  return `${t.read("lead", since)}\n\nSize ${t.min} to ${t.max} agents (/team size <min> <max>); /team stop <name> stops a member.`
+  const own = t.couldServe().own ? "" : `\n${SUBAGENTS.setting.own}`
+  return `${t.read("lead", since)}\n\nSubagents: ${SUBAGENTS.setting.min} ${t.min}, ${SUBAGENTS.setting.max} ${t.max} agents, the lead included (/team size <fewest> <most>); /team stop <name> stops a member.${own}`
 }
 
 /** `/agents [name]`: the subagents the task tool offers, or one of them — the text both the TUI and
@@ -100,7 +104,7 @@ export function agentsText(app: App, arg: string): string {
   const describe = (a: (typeof list)[number]) =>
     [
       `${a.name} (${a.source}) — ${a.description}`,
-      `  model ${a.model ?? "the session's"} · mode ${a.mode ?? "the session's"} · tools ${a.tools?.join(", ") ?? "all a subagent may have"}${a.isolation ? " · own worktree" : ""}`,
+      `  model the session's, or one you name${a.model ? ` (its own model: ${a.model} is not used)` : ""} · mode ${a.mode ?? "the session's"} · tools ${a.tools?.join(", ") ?? "all a subagent may have"}${a.isolation ? " · own worktree" : ""}`,
     ].join("\n")
   const name = arg.trim().split(/\s+/)[0]
   if (name) {

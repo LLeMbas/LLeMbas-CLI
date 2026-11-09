@@ -16,6 +16,7 @@ import type { Mode } from "./config/schema.ts"
 import { DEFAULT_RULES, toRules } from "./permission/evaluate.ts"
 import { hardlineRules } from "./permission/hardline.ts"
 import { clientFor, familyOf, resolveModel } from "./provider/index.ts"
+import { subagentModel, type ModelInfo } from "./team/subagents.ts"
 import { assembleSystem, instructionFiles, knowledgeScope, modeText } from "./prompt/assemble.ts"
 import type { Changing } from "./session/prefix.ts"
 import { describeRepo, repoState } from "./git/repo.ts"
@@ -200,6 +201,11 @@ function openInBrowser(url: string): boolean {
   } catch {
     return false
   }
+}
+
+/** A model as the subagent rules see it (subagents.md): its names and what its server can do at once. */
+function modelInfo(m: ResolvedModel): ModelInfo {
+  return { ref: m.ref, id: m.id, name: m.spec.name, capacity: { parallel: m.spec.parallel, single_session: m.spec.single_session, group: m.spec.group } }
 }
 
 /** Tools the spec offers to subagents only (`offered: subagent`): never a session's own model's. */
@@ -473,13 +479,22 @@ export function createApp(o: AppOptions): App {
     // its server can take it beside the session's and beside every subagent already running
     // (src/session/capacity.ts), before anything is made.
     const member = opts.member
-    const m = opts.model ? resolveModel(loaded, opts.model) : spec.model ? resolveModel(loaded, spec.model) : engine.model
+    // Spec 3.3.0 (subagents.md): the session's model, unless the person named another; an agent
+    // file's own `model` is not used. A member's model was judged by team_add.
+    let m: ResolvedModel
+    if (member) m = opts.model ? resolveModel(loaded, opts.model) : engine.model
+    else {
+      const wanted = opts.model ? resolveModel(loaded, opts.model) : undefined
+      const r = subagentModel(modelInfo(engine.model), wanted && modelInfo(wanted), engine.personSaid())
+      if ("refused" in r) throw new ToolError(r.refused)
+      m = wanted && wanted.ref === r.model ? wanted : engine.model
+    }
     // A team's member is not refused for capacity: the team gave it its slot (team.md §8).
     if (!member) {
       const running = registry.running(jobsSessionId()).filter((j) => j.kind === "subagent" && j.subagent && !j.team)
       const onIt = running.filter((j) => j.subagent!.engine.model.ref === m.ref).length
       const refused = capacityRefusal(engine.model, m, onIt) || running.map((j) => capacityBeside(j.subagent!.engine.model, m, onIt)).find(Boolean)
-      if (refused) throw new ToolError(`${refused} Do this part yourself, or hand it to a model on another connection.`)
+      if (refused) throw new ToolError(`${refused} Wait for one to finish, or do this part yourself.`)
     }
     // A checkout and branch of its own, when asked for (the task's worktree, the agent's isolation).
     let wt: Worktree | undefined
@@ -509,7 +524,7 @@ export function createApp(o: AppOptions): App {
       : perm
     // `report` is every subagent's: its way of speaking to the main agent before its final reply.
     // A team member also has team_send and team_read, and one that may lead team_add and team_stop
-    // (team.md §4); a task helper has none of them.
+    // (team.md §4); a task subagent has none of them.
     const memberTools = member ? (member.leads ? [...TEAM_TOOLS] : ["team_read", "team_send"]) : []
     const childTools = [
       ...tools.filter((t) => !NOT_FOR_SUBAGENTS.has(t.name) && (!(TEAM_TOOLS as readonly string[]).includes(t.name) || memberTools.includes(t.name)) && (!spec.tools || spec.tools.includes(t.name) || memberTools.includes(t.name))),
@@ -597,12 +612,12 @@ export function createApp(o: AppOptions): App {
       const end = registry.finishSubagent(job, { reason, report: text, ...(error ? { error } : {}), ...(worktree ? { worktree } : {}) })
       return { text: worktree ? `${text}\n\n[worktree] ${worktree}` : text, steps: job.steps ?? 0, tools: job.tools ?? 0, reason, ...(error ? { error } : {}), ...(end.stopped ? { stopped: end.stopped } : {}) }
     }
-    // A task helper started inside a team counts toward its size and holds a slot while it runs
+    // A task subagent started inside a team counts toward its size and holds a slot while it runs
     // (team.md §3, §8).
     const counted = (p: Promise<SubagentResult>) => {
       if (member || !teamRt.team.offered) return p
-      const id = teamRt.team.helperStart(TEAM.names.lead, m.ref)
-      return p.finally(() => teamRt.team.helperDone(id))
+      const id = teamRt.team.taskStart(TEAM.names.lead, m.ref)
+      return p.finally(() => teamRt.team.taskDone(id))
     }
     const run = (text: string, machine = false) => counted(child.prompt(text, [], text, machine ? { machine: true } : {}).then(finish, (e) => (job.lastError = (e as Error).message, finish("error"))))
     const handle: SubagentHandle = {
@@ -683,6 +698,8 @@ export function createApp(o: AppOptions): App {
       return {}
     }
   }
+  // Every model the person may use: the server's, as the login read them (subagents.md §4).
+  const usableModels = () => loaded.refs.map((r) => r.ref)
   // The size as set while the process runs (any scope): a new or resumed session keeps it.
   const teamSize: { min?: number; max?: number } = {}
   const newTeam = () =>
@@ -693,6 +710,7 @@ export function createApp(o: AppOptions): App {
       subagents: loaded.config.subagents !== false,
       model: engine.model.ref,
       capacity: capacityOf,
+      models: usableModels,
       leadState: "idle",
       readingBash: (command) => readingBashByDefault(command, project.root),
     })
@@ -711,7 +729,10 @@ export function createApp(o: AppOptions): App {
     resolve: (agent, model) => {
       if (!agentList.some((a) => a.name === agent)) return { error: `There is no agent "${agent}". The agents are: ${agentList.map((a) => a.name).join(", ")}.` }
       try {
-        return { model: model ? resolveModel(loaded, model).ref : engine.model.ref }
+          // Spec 3.3.0 (subagents.md): the session's model, unless the person named another.
+        const wanted = model ? resolveModel(loaded, model) : undefined
+        const r = subagentModel(modelInfo(engine.model), wanted && modelInfo(wanted), engine.personSaid())
+        return "refused" in r ? { error: r.refused } : { model: r.model }
       } catch (e) {
         return { error: (e as Error).message }
       }

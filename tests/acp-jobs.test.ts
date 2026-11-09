@@ -151,7 +151,7 @@ test("a background subagent: its transcript as history turns; send to a finished
   ], { route: (model) => (model.startsWith("g/") ? child : undefined) })
   config(fake.url, true)
   const { c, events, sid } = await client()
-  await c.request("session/prompt", { sessionId: sid, prompt: [{ type: "text", text: "go" }] })
+  await c.request("session/prompt", { sessionId: sid, prompt: [{ type: "text", text: "go (a subagent on g/m)" }] })
   expect(await until(() => events.some((e) => e.type === "job" && e.state === "end"))).toBe(true)
   const listed: any = await c.request("_lembas/jobs", { sessionId: sid })
   expect(listed.jobs[0]).toMatchObject({ id: "job1", kind: "subagent", state: "done", agent: "explore", description: "find the bug", model: "g/m" })

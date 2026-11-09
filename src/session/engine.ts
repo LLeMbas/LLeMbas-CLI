@@ -22,6 +22,7 @@ import { estimateTokens, estimateValue } from "../provider/tokens.ts"
 import { duration } from "../duration.ts"
 import { memoryResults, presentIds, ResultContext } from "./results.ts"
 import { render } from "../plan/plan.ts"
+import { personTexts } from "../team/subagents.ts"
 import { compactAsk, isNote, NO_CHANGING, noteFor, offeredFor, PREFIX_META, summaryOf, today, toldAt, unavailable, type Changing, type Kept, type Now, type Requirement, type Told } from "./prefix.ts"
 
 export interface EngineOptions {
@@ -609,6 +610,13 @@ export class Engine {
   private push(m: Message) {
     this.messages.push(m)
     if (this.o.store && this.sessionId) this.lastRowId = this.o.store.append(this.sessionId, m)
+  }
+
+  /** What the person typed in this session, oldest first (subagents.md §2) — compacted messages
+   *  included, as the store keeps them; never a note, a marked message or a machine turn. */
+  personSaid(): string[] {
+    const all = this.o.store && this.sessionId ? this.o.store.messages(this.sessionId) : this.messages
+    return personTexts(all, this.o.steerMark ?? STEER_MARK)
   }
 
   /** `extra`: attachments (@files, images) and the like — sent to the model after the text, never shown as typed.

@@ -94,7 +94,7 @@ describe("a team at work (team.md)", () => {
     expect(t.room.map((m) => ({ from: m.from, to: m.to, report: m.report }))).toEqual([{ from: "parser", to: ["lead"], report: true }])
     expect(t.get("parser")!.state).toBe("finished")
     expect(t.isManager("lead")).toBe(true)
-    expect(teamLabel(t)).toBe("team 2/4")
+    expect(teamLabel(t)).toBe("agents 2/4")
     expect(teamText(app, "")).toContain("- parser — the parser · finished")
     expect(await Bun.file(join(dir, "x.txt")).exists()).toBe(false)
     // A member is not a job to the model.

@@ -118,6 +118,13 @@ export const LOOP: {
     running_max: { default: number }
     subagent_steps: { default: number }
   }
+  /** Subagents (spec 3.3.0, harness/subagents.md): the model refusals, what names a model, and how
+   *  the size setting is shown. */
+  subagents: {
+    texts: { not_named: string; same_group: string; one_request: string }
+    named: { before: string; after: string }
+    setting: { label: string; min: string; max: string; own: string }
+  }
   /** Teams (spec 3.2.0, harness/team.md): the size setting, names, marks, texts. */
   team: {
     agents: { min: number; max: number; cap: number }
@@ -165,6 +172,8 @@ export const LOOP: {
       team_lead: string
       team_one: string
       team_stopped: string
+      /** Spec 3.3.0 (subagents.md §4): the session's model cannot serve subagents itself. */
+      team_own: string
     }
     /** How long a session waits for its configured MCP servers before its first request. */
     mcp_wait_ms: number

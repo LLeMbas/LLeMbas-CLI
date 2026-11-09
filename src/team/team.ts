@@ -86,6 +86,9 @@ export interface TeamOptions {
   /** The lead's model (the chat's), and every model's capacity. */
   model: string
   capacity: (model: string) => Capacity
+  /** Spec 3.3.0 (subagents.md §4): every model the person may use, by ref — a model off the lead's
+   *  one-model server can serve as a subagent where the lead's model cannot. None: only the lead's. */
+  models?: () => readonly string[]
   effects?: TeamEffects
   /** A bash command a manager may still run: one the default rules alone allow in manual mode. */
   readingBash?: (command: string) => boolean
@@ -111,10 +114,10 @@ export class Team {
   model: string
   private agents = new Map<string, TeamAgent>()
   room: RoomMessage[] = []
-  /** `task` helpers running in the team: who started each, and on which model. */
-  private helpers: { id: number; by: string; model: string }[] = []
+  /** `task` subagents running in the team: who started each, and on which model. */
+  private tasks: { id: number; by: string; model: string }[] = []
   private seq = 0
-  private helperSeq = 0
+  private taskSeq = 0
   /** Whether the team is offered, fixed as the prompt is made (§2). */
   offered = false
   /** The setting as the lead was last told it. */
@@ -165,13 +168,22 @@ export class Team {
     return parallelFrom(this.o.capacity(this.model))
   }
 
-  /** §2: offered when subagents are on and the chat's model serves two at once — fixed as the
-   *  prompt is made (and made again on a model switch); `offered` is a kept prompt's decision. */
+  /** Spec 3.3.0 (subagents.md §4): whether a model could serve as a subagent now — the lead's own,
+   *  with two slots or more, or another model off its one-model server — and whether it is the own. */
+  couldServe(): { any: boolean; own: boolean } {
+    const own = this.parallelNow() >= 2
+    const group = this.o.capacity(this.model).group
+    const other = (this.o.models?.() ?? []).some((r) => r !== this.model && (group === undefined || this.o.capacity(r).group !== group))
+    return { any: own || other, own }
+  }
+
+  /** §2: offered when subagents are on and a model could serve as a subagent — fixed as the prompt
+   *  is made (and made again on a model switch); `offered` is a kept prompt's decision. */
   fix(model = this.model, offered?: boolean): boolean {
     this.model = model
     const lead = this.agents.get(LEAD)
     if (lead) lead.model = model
-    this.offered = offered ?? (this.subagents && this.parallelNow() >= 2)
+    this.offered = offered ?? (this.subagents && this.couldServe().any)
     return this.offered
   }
 
@@ -207,9 +219,9 @@ export class Team {
     return this.agents.size > 1
   }
 
-  /** §3: the lead, every member, and every running `task` helper. */
+  /** §3: the lead, every member, and every running `task` subagent. */
   size(): number {
-    return this.agents.size + this.helpers.length
+    return this.agents.size + this.tasks.length
   }
 
   /** §6: an agent with a member, or the lead from the start when min ≥ 2 and the team is offered. */
@@ -222,8 +234,9 @@ export class Team {
 
   /** §2: the team tools' requirement `team`; the text a call answers while it is not met. */
   unavailable(): string | undefined {
-    if ((this.max >= 2 && this.parallelNow() >= 2) || this.hasMembers()) return undefined
-    return this.parallelNow() < 2 ? TEAM.unavailable.one_request : TEAM.unavailable.one_agent
+    const could = this.couldServe().any
+    if ((this.max >= 2 && could) || this.hasMembers()) return undefined
+    return !could ? TEAM.unavailable.one_request : TEAM.unavailable.one_agent
   }
 
   /** §3: what `task` answers in a team, or undefined when it may run (and then counts). */
@@ -259,14 +272,14 @@ export class Team {
   // ── slots ───────────────────────────────────────────────────────────────────
 
   private busyOn(model: string): number {
-    return [...this.agents.values()].filter((a) => a.state === "working" && a.model === model).length + this.helpers.filter((h) => h.model === model).length
+    return [...this.agents.values()].filter((a) => a.state === "working" && a.model === model).length + this.tasks.filter((h) => h.model === model).length
   }
 
   private free(model: string): boolean {
     const group = this.o.capacity(model).group
     if (group !== undefined) {
       for (const a of this.agents.values()) if (a.state === "working" && a.model !== model && this.o.capacity(a.model).group === group) return false
-      for (const h of this.helpers) if (h.model !== model && this.o.capacity(h.model).group === group) return false
+      for (const h of this.tasks) if (h.model !== model && this.o.capacity(h.model).group === group) return false
     }
     return this.busyOn(model) < parallelFrom(this.o.capacity(model))
   }
@@ -299,22 +312,22 @@ export class Team {
     return lead.state === "working"
   }
 
-  /** A `task` helper started by `by` (it counts and holds a slot until helperDone). */
-  helperStart(by: string, model = this.model): number {
-    const id = ++this.helperSeq
-    this.helpers.push({ id, by, model })
+  /** A `task` subagent started by `by` (it counts and holds a slot until taskDone). */
+  taskStart(by: string, model = this.model): number {
+    const id = ++this.taskSeq
+    this.tasks.push({ id, by, model })
     return id
   }
 
-  helperDone(id: number) {
-    this.helpers = this.helpers.filter((h) => h.id !== id)
+  taskDone(id: number) {
+    this.tasks = this.tasks.filter((h) => h.id !== id)
     this.fillSlots()
   }
 
-  /** The first helper `by` started, done (the conformance area's `helper_done`). */
-  helperDoneBy(by: string) {
-    const h = this.helpers.find((x) => x.by === by)
-    if (h) this.helperDone(h.id)
+  /** The first task subagent `by` started, done (the conformance area's `task_done`). */
+  taskDoneBy(by: string) {
+    const h = this.tasks.find((x) => x.by === by)
+    if (h) this.taskDone(h.id)
   }
 
   // ── delivery ────────────────────────────────────────────────────────────────
@@ -545,7 +558,7 @@ export class Team {
     if (!this.told || this.told.min !== this.min || this.told.max !== this.max) {
       this.told = { min: this.min, max: this.max }
       if (this.max === 1) out.push(N.team_one)
-      else out.push([fill(N.team, { min: this.min, max: this.max }), ...(this.min >= 2 ? [fill(N.team_lead, { members: this.min - 1 })] : [])].join("\n"))
+      else out.push([fill(N.team, { min: this.min, max: this.max }), ...(this.min >= 2 ? [fill(N.team_lead, { members: this.min - 1 })] : []), ...(this.couldServe().own ? [] : [N.team_own])].join("\n"))
     }
     if (this.stoppedByPerson.length) out.push(fill(N.team_stopped, { names: this.stoppedByPerson.splice(0).join(", ") }))
     return out

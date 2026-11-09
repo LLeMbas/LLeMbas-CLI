@@ -27,9 +27,10 @@ import { jobNote, type NoteCase } from "../src/jobs/note.ts"
 import { compactAsk, noteFor, offeredFor, toldAt, unavailable, type Now, type Requirement, type Told } from "../src/session/prefix.ts"
 import { envLines, promptText } from "../src/prompt/assemble.ts"
 import { absPath, type ToolContext } from "../src/tool/tool.ts"
-import { TOOL_SPECS } from "../src/harness.ts"
+import { LOOP, TOOL_SPECS } from "../src/harness.ts"
 import { Team, TEAM_TOOLS, type Capacity } from "../src/team/team.ts"
 import { noteBlock } from "../src/session/prefix.ts"
+import { offer, subagentModel, type ModelInfo } from "../src/team/subagents.ts"
 
 type Case = Record<string, unknown>
 
@@ -233,6 +234,26 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
     if (c.op === "resolve") return absPath(c.path as string, { root: (c.root as string).replace(/\/+$/, ""), cwd: c.started as string } as ToolContext)
     throw new Error(`paths: unknown op ${String(c.op)}`)
   },
+  // Subagents (subagents.md, spec 3.3.0): the model a subagent runs on, through the rules spawn and
+  // team_add ask; the offer through the Team the app makes (its tools, setting and note).
+  subagents: (c) => {
+    const models = Object.entries(c.models as Record<string, Omit<ModelInfo, "ref">>).map(([ref, m]) => ({ ref, ...m }))
+    const byRef = (ref: string) => models.find((m) => m.ref === ref)!
+    const session = byRef(c.session as string)
+    if (c.op === "model") {
+      const r = subagentModel(session, c.model === undefined ? undefined : byRef(c.model as string), (c.said as string[] | undefined) ?? [])
+      return "refused" in r ? { refused: r.refused } : { model: r.model }
+    }
+    if (c.op === "offer") {
+      const subagents = c.subagents !== false
+      const pure = offer(session, models, subagents)
+      const team = new Team({ min: 1, max: 4, subagents, model: session.ref, capacity: (ref) => byRef(ref).capacity, models: () => models.map((m) => m.ref) })
+      if (team.offered !== pure.offered) throw new Error("subagents: the Team and the rule disagree on the offer")
+      const noted = team.offered && team.noteLines()[0]!.split("\n").includes(LOOP.context.note.team_own)
+      return { offered: team.offered, own: pure.own, note: noted ? LOOP.context.note.team_own : null }
+    }
+    throw new Error(`subagents: unknown op ${String(c.op)}`)
+  },
   // Teams (team.md): one lead session's team, step by step, through the CLI's own rules
   // (team/team.ts); the app drives the same class from real turns.
   team: (c) => {
@@ -265,7 +286,7 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
           else if (st.tool === "team_stop") result = team.stopCmd(by, args.name)
           else {
             result = team.refusal(by, st.tool, args) ?? null
-            if (st.tool === "task" && result === null && team.offered) team.helperStart(by)
+            if (st.tool === "task" && result === null && team.offered) team.taskStart(by)
           }
           return { result, delivered: delivered() }
         }
@@ -273,7 +294,7 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
           team.finish(by, st.reply ?? "", st.reason ?? "stop")
           return { delivered: delivered() }
         case "task_done":
-          team.helperDoneBy(by)
+          team.taskDoneBy(by)
           return null
         case "set":
           if (st.capacity) capacity = st.capacity

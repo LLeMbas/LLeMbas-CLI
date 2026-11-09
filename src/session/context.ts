@@ -41,23 +41,49 @@ export function contextBreakdown(engine: Engine, system: string, instructions: {
   if (imageCount) rows.push({ label: `images (${imageCount}, rough)`, tokens: by.images })
   const estimated = rows.filter((r) => !r.indent).reduce((n, r) => n + r.tokens, 0)
   const reported = engine.usage ? engine.contextUsed() : undefined
-  return { rows, estimated, reported, window: contextWindow(engine.model), model: engine.model.ref, last: engine.lastRequest }
+  // Where automatic compaction starts (EngineOptions compaction.autoAt): the reference's "N until
+  // auto-compact". None without a window, or when it is switched off (1 or more).
+  const autoAt = engine.o.compaction?.autoAt ?? 0.85
+  return { rows, estimated, reported, window: contextWindow(engine.model), autoAt: autoAt < 1 ? autoAt : undefined, model: engine.model.ref, last: engine.lastRequest }
 }
 
-/** Plain text, for the transcript. */
+/** One glyph per category in the segmented bar, in the order the categories are listed. */
+const SEGMENTS = ["█", "▓", "▒", "░", "▞", "▚", "▙", "▟"]
+
+/** Plain text, for the transcript: what is used of the window and how much, one segmented bar of
+ *  every category, each category with its tokens and its share of the window, and how far it is to
+ *  automatic compaction (/compact compacts now). */
 export function renderBreakdown(b: ReturnType<typeof contextBreakdown>): string {
-  const width = 24
-  const total = b.window ?? Math.max(b.estimated, b.reported ?? 0)
-  const bar = (n: number) => {
-    const cells = total ? Math.max(n > 0 ? 1 : 0, Math.round((n / total) * width)) : 0
-    return "█".repeat(Math.min(width, cells)).padEnd(width, "·")
-  }
-  const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
-  const lines = [`context — ${b.model}${b.window ? `, window ${fmt(b.window)}` : ", window unknown"}`]
-  for (const r of b.rows) lines.push(`${r.indent ? "   ↳ " : "  "}${r.label.padEnd(r.indent ? 30 : 33)} ${fmt(r.tokens).padStart(7)}  ${r.indent ? "" : bar(r.tokens)}`)
+  const width = 40
   const used = b.reported ?? b.estimated
-  lines.push(`  ${"in use".padEnd(33)} ${fmt(used).padStart(7)}  ${bar(used)}${b.window ? `  ${Math.round((used / b.window) * 100)}%` : ""}`)
-  lines.push(b.reported !== undefined ? "  (the server's own count from the last reply, plus an estimate since)" : "  (estimated: ≈4 characters a token — no reply yet to count from)")
+  const total = b.window ?? Math.max(b.estimated, used)
+  const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+  const pct = (n: number) => (b.window ? `${Math.round((n / b.window) * 100)}%` : "")
+  const cats = b.rows.filter((r) => !r.indent)
+  // The categories' shares of the bar, scaled to what is in use (the server's count when it gave one).
+  const scale = b.estimated ? used / b.estimated : 1
+  let bar = ""
+  cats.forEach((r, i) => {
+    const cells = total && r.tokens > 0 ? Math.max(1, Math.round(((r.tokens * scale) / total) * width)) : 0
+    bar += SEGMENTS[i % SEGMENTS.length]!.repeat(cells)
+  })
+  bar = bar.slice(0, width).padEnd(width, "·")
+  const lines = [
+    `context — ${b.model}: ${fmt(used)}${b.window ? ` / ${fmt(b.window)} tokens · ${pct(used)} used` : " tokens, window unknown"}`,
+    `  ${bar}`,
+  ]
+  let i = 0
+  for (const r of b.rows) {
+    const mark = r.indent ? "   ↳" : ` ${SEGMENTS[i++ % SEGMENTS.length]} `
+    lines.push(`${mark} ${r.label.padEnd(r.indent ? 30 : 31)} ${fmt(r.tokens).padStart(7)}  ${r.indent ? "" : pct(r.tokens * scale).padStart(4)}`.trimEnd())
+  }
+  if (b.window) lines.push(`  · ${"free".padEnd(31)} ${fmt(Math.max(0, b.window - used)).padStart(7)}  ${pct(Math.max(0, b.window - used)).padStart(4)}`)
+  lines.push(`  ${"in use".padEnd(33)} ${fmt(used).padStart(7)}  ${pct(used).padStart(4)}`.trimEnd())
+  if (b.window && b.autoAt !== undefined) {
+    const until = Math.round(b.window * b.autoAt) - used
+    lines.push(until > 0 ? `  ${fmt(until)} until auto-compact (at ${Math.round(b.autoAt * 100)}%) — /compact to compact now` : `  past auto-compact (${Math.round(b.autoAt * 100)}%): the next step compacts — /compact to compact now`)
+  } else lines.push(b.window ? "  automatic compaction is off — /compact to compact now" : "  no automatic compaction without a window — /compact to compact now")
+  lines.push(b.reported !== undefined ? "  (the server's own count from the last reply, plus an estimate since; the categories are estimates scaled to it)" : "  (estimated: ≈4 characters a token — no reply yet to count from)")
   // What the server reused of the last request (harness context.md §10 rule 6): a slow reply with
   // little of it cached was a re-read.
   const last = b.last?.usage

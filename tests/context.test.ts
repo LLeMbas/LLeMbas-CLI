@@ -87,7 +87,8 @@ describe("context", () => {
     await a.engine.prompt("read it")
     const system = a.engine.compose(a.engine.mode)
     const text = renderBreakdown(contextBreakdown(a.engine, system, [], undefined, a.engine.o.tools))
-    expect(text).toContain("window 32.8k")
+    expect(text).toContain("/ 32.8k tokens")
+    expect(text).toMatch(/until auto-compact \(at 85%\) — \/compact to compact now/)
     expect(text).toContain("system prompt")
     expect(text).toMatch(/tool definitions \(\d+\)/)
     expect(text).toMatch(/tool results\s+514/) // one 6000-character line, cut at 2000 by read, under its header

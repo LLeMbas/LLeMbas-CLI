@@ -894,17 +894,17 @@
       ]
     },
     "agents": {
-      "description": "Teams (harness team.md): how many agents a session's team may have. Offered only where subagents are on and the model serves two requests at once. /agents changes it for the session.",
+      "description": "Subagents (harness team.md, subagents.md): how many agents a session may have at work. Offered where subagents are on and a model could serve one: the session's, when it serves two requests at once, or another model off its one-model server. /team size and /effort change it for the session.",
       "type": "object",
       "properties": {
         "min": {
-          "description": "The fewest agents a team works with, the lead included (default 1). 2 or more: the lead works through a team from the start.",
+          "description": "Subagents, fewest: the fewest agents at work, the lead included (default 1). 2 or more: the lead works through subagents from the start.",
           "type": "integer",
           "minimum": 1,
           "maximum": 9007199254740991
         },
         "max": {
-          "description": "The most agents a team may have, the lead included (default 4). 1: one agent, no team and no helper.",
+          "description": "Subagents, most: the most agents at work, the lead included (default 4). 1: one agent, no subagents.",
           "type": "integer",
           "minimum": 1,
           "maximum": 9007199254740991
