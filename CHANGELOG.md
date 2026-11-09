@@ -6,17 +6,41 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
-Harness spec 3.2.0, written ahead of its implementation in this CLI and in the server.
+Harness spec 3.2.0: teams, effort levels that mean what they say, the model's reasoning sent
+back while it works, and no absolute paths in the prompt.
 
 ### Added
 
-- **Harness spec 3.2.0.** Teams (`harness/team.md`): the agent may add members that work on their
-  own parts in the background and talk in the team's room, and then leads them rather than doing
-  the work; the tools `team_add`, `team_send`, `team_read` and `team_stop`, the size setting
-  (1 to 4 agents by default), reports, waiting for a free slot on a busy model. Effort levels: a
-  real `off` for models that can switch thinking off, and a Thinking switch where a model has only
-  that choice. Reasoning is sent back to the model during its turn. No absolute paths in the
-  prompt: paths are relative to the project root. The CLI's own implementation follows.
+- **Teams.** Where the model serves at least two requests at once, the agent can add **members**
+  (`team_add`): background agents that each own a part of the work, briefed on their own and told
+  the team's goal. Once it has a member the agent **leads**: tools that change things answer that
+  it should give the work to a member, while reading, reviewing and managing stay. Members and the
+  lead talk in the team's **room** (`team_send`, to a name or to `all`); a member's final reply
+  comes back as its report and wakes the lead if it was idle, and a message wakes a member that
+  had finished. A member made with `lead: true` leads an area with members of its own.
+  `team_read` shows the team and the room, `team_stop` stops a member and everything under it.
+- **How many agents a team may have**: the `agents` setting (`min` 1 and `max` 4 by default, at
+  most `agents.cap`, 32), changed with `/team size <min> <max>`, from the **agents** row beside the
+  effort in `/effort`, or in `/settings`; the agent is told the size and every change in a note.
+  `max: 1` means one agent and no helpers; `min: 2` or more makes the agent lead from the start.
+  `subagents: false` switches teams off together with `task`.
+- **`/team`** shows the team as a tree and the room, and stops a member (`/team stop <name>`); the
+  agent is told who you stopped. The status bar shows `team 3/4 · 2 working` while there is a team.
+- When every slot of the model is busy, a member (or the agent itself) **waits for a free slot**
+  and starts when one frees, instead of being refused; one-off `task` helpers count toward the
+  team's size.
+- **A Thinking switch.** A model that can switch thinking off offers `off` as a real level: no
+  thinking at all, not the model's default. `/effort` shows a list for several levels, an on/off
+  switch where that is the only choice, and nothing where there is nothing to choose.
+
+### Changed
+
+- **The model's reasoning goes back to it during its turn**, so it carries on from what it thought
+  instead of working it out again at every step; earlier turns are sent without it, as before.
+- **No absolute paths in the prompt.** The agent is told the project's name and, when you started
+  below its root, that directory relative to it. Relative paths in every file tool and the
+  directory `bash` starts in are taken from the project root; absolute paths still work.
+  Instruction files are named from the project root or as `~/…`.
 
 ## [2.0.0-beta.2] — 2026-11-07
 
