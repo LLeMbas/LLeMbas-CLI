@@ -153,8 +153,20 @@ test("spec 3.0.0: every tool says where it is offered; the CLI's are the agent's
   // plan_write's former name rather than a tool.
   expect(TOOL_SPECS.todo).toBeUndefined()
   expect(TOOL_SPECS.plan_write!.aliases.cli).toEqual(["todo"])
-  const shared = ["ask_user", "edit", "glob", "grep", "job_list", "job_output", "job_send", "job_stop", "list", "memory", "plan_submit", "plan_update", "plan_write", "read", "recall", "report", "session_search", "show", "skill_manage", "skill_view", "skills_list", "task", "web_fetch", "web_search", "write"]
+  const shared = ["ask_user", "edit", "glob", "grep", "job_list", "job_output", "job_send", "job_stop", "list", "memory", "plan_submit", "plan_update", "plan_write", "read", "recall", "report", "session_search", "show", "skill_manage", "skill_view", "skills_list", "task", "team_add", "team_read", "team_send", "team_stop", "web_fetch", "web_search", "write"]
   expect(Object.values(TOOL_SPECS).filter((t) => t.scope === "shared").map((t) => t.name).sort()).toEqual(shared.sort())
+})
+
+test("spec 3.2.0: the team tools need `team` and answer one_agent; a manager's refused tools are exactly the writers and executors", () => {
+  const loop = JSON.parse(readFileSync(join(HARNESS, "loop.json"), "utf8")) as { team: { unavailable: { one_agent: string }; work: { write: string[]; execute: string[]; kept: string[] } } }
+  for (const n of ["team_add", "team_read", "team_send", "team_stop"]) {
+    const t = TOOL_SPECS[n]!
+    expect([t.scope, t.sessions, t.requires, t.unavailable]).toEqual(["shared", "both", ["team"], loop.team.unavailable.one_agent])
+  }
+  // team.work names every tool by its risk class, and nothing else: a new tool is placed by its class.
+  const byRisk = (r: string) => Object.values(TOOL_SPECS).filter((t) => t.risk === r).map((t) => t.name).sort()
+  expect([...loop.team.work.write].sort()).toEqual(byRisk("write"))
+  expect([...loop.team.work.execute, ...loop.team.work.kept].sort()).toEqual(byRisk("execute"))
 })
 
 test("the personality presets are shared prompt texts, one paragraph each", () => {

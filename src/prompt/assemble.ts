@@ -17,6 +17,8 @@ import blockLibrary from "../../harness/prompts/blocks/library.md" with { type: 
 import blockPrototypes from "../../harness/prompts/blocks/prototypes.md" with { type: "text" }
 import blockSubagent from "../../harness/prompts/blocks/subagent.md" with { type: "text" }
 import blockContext from "../../harness/prompts/blocks/context.md" with { type: "text" }
+import blockTeamLead from "../../harness/prompts/blocks/team_lead.md" with { type: "text" }
+import blockTeamMember from "../../harness/prompts/blocks/team_member.md" with { type: "text" }
 import agentExplore from "../../harness/prompts/agents/explore.md" with { type: "text" }
 import agentGeneral from "../../harness/prompts/agents/general.md" with { type: "text" }
 import modeManual from "../../harness/prompts/modes/manual.md" with { type: "text" }
@@ -56,6 +58,8 @@ const BUILTIN: Record<string, string> = {
   "blocks/prototypes.md": blockPrototypes,
   "blocks/subagent.md": blockSubagent,
   "blocks/context.md": blockContext,
+  "blocks/team_lead.md": blockTeamLead,
+  "blocks/team_member.md": blockTeamMember,
   "agents/explore.md": agentExplore,
   "agents/general.md": agentGeneral,
   "modes/manual.md": modeManual,
