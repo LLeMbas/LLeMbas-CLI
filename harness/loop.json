@@ -105,7 +105,12 @@
       "line": "Read a file again for its content; recall shows a result by its id.",
       "rows": 50
     },
-    "reasoning": "Earlier turns' reasoning is left to the model's chat template: the harness sends the history as it does, neither stripping reasoning the template keeps nor adding what it drops.",
+    "reasoning": "Spec 3.2.0 (context.md §8): every assistant message of the current turn — the messages after the last one that started a turn (the person's, or a machine message that starts a turn of its own; a delivery at a step boundary does not) — carries the reasoning it came with (OpenAI chat: `reasoning_content`; Anthropic: its thinking blocks, unchanged); assistant messages of earlier turns carry none. What is stored keeps it. conformance/reasoning.json.",
+    "env": {
+      "about": "Spec 3.2.0 (context.md §11): the environment block's lines about where the session works, in an agent session. `project` always, `name` being the project root's last path component; `started` only when the session started in a directory below the root, `path` being that directory relative to the root. No absolute path. conformance/paths.json.",
+      "project": "Project: {{name}} (paths are relative to its root)",
+      "started": "Started in: {{path}} (relative to the project root)"
+    },
     "note": {
       "about": "A note on the next user message (context.md §10, rule 3): what changed since the system prompt was made, after the person's words. Lines in this order, each only when it applies. `plan_ended` is the mode block for a session that leaves plan mode for a mode with no text of its own (a chat). `plan_own` is the plan block for a session that does not resend earlier tool results (a chat): the model's own plan, as its tools left it. `personal` is the {{path}} of the instructions block for the person's own instructions.",
       "open": "<session-note>",
