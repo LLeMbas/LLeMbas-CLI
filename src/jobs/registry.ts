@@ -88,6 +88,9 @@ export interface Job {
   /** Set when the note's wake should not happen: a synchronous subagent whose result goes back
    *  as the task call's output. */
   silent?: boolean
+  /** A team member's name (spec 3.2.0): not a job to the model — the job tools do not take it —
+   *  but a subagent job to a client over the link (team.md §4, §11). */
+  team?: string
 }
 
 /** A front end holding a session: where its jobs' events go, and how a note wakes it. The

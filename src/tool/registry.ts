@@ -11,6 +11,7 @@ import { planSubmitTool } from "./plan_submit.ts"
 import { planUpdateTool } from "./plan_update.ts"
 import { planWriteTool } from "./plan_write.ts"
 import { taskTool } from "./task.ts"
+import { teamAddTool, teamReadTool, teamSendTool, teamStopTool } from "./team_tools.ts"
 import { decisionsTool, tasksTool } from "./project_tools.ts"
 import { webFetchTool, webSearchTool } from "./web.ts"
 import { memoryTool } from "./memory.ts"
@@ -40,6 +41,11 @@ export const BUILTIN_TOOLS: Tool[] = [
   webSearchTool,
   webFetchTool,
   taskTool,
+  // Spec 3.2.0: a team (team.md), offered where the model serves two requests at once.
+  teamAddTool,
+  teamSendTool,
+  teamReadTool,
+  teamStopTool,
   planWriteTool,
   planUpdateTool,
   tasksTool,

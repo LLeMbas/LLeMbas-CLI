@@ -36,6 +36,9 @@ export interface ToolContext {
    *  (the TUI's ctrl+b): bash hands it to the registry as it would at its timeout. Set by the
    *  engine for the step's calls. */
   backgroundNow?: AbortSignal
+  /** The team this agent is on (spec 3.2.0, team/runtime.ts) and its name there (`lead`, or a
+   *  member's). Absent where no team is offered. */
+  team?: { runtime: import("../team/runtime.ts").TeamRuntime; as: string }
   /** The id of the call being run (set by the engine per call). */
   callId?: string
   /** The project directory (.agent), when the project has one. */
@@ -91,12 +94,16 @@ export interface SpawnOptions {
   description?: string
   model?: string
   background?: boolean
+  /** Spec 3.2.0: a team member (team.md §4) — run as one, not as a task helper. */
+  member?: import("../team/team.ts").TeamAgent
 }
 
 /** What the task tool gets back from spawn: the job's id and the report when it ends. */
 export interface SubagentHandleInfo {
   id: string
   done: Promise<import("./task.ts").SubagentResult>
+  /** A team member's engine, for the team's runtime to drive. */
+  member?: import("../team/runtime.ts").MemberHandle
 }
 
 export interface ToolResult {
@@ -124,7 +131,7 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
    *  display`). The tool list is the session's (harness context.md §10): one the session could
    *  never meet leaves the tool out; one that comes and goes (plan mode, a display) keeps it in, and
    *  a call while it is unmet answers the spec's `unavailable` text. */
-  requires?: "vision" | "plan" | "project" | "knowledge" | "display"
+  requires?: "vision" | "plan" | "project" | "knowledge" | "display" | "team"
   description: string
   schema: S
   /** The JSON Schema sent to the model, when it does not come from `schema` (MCP tools). */
@@ -136,6 +143,9 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
    *  `purpose` argument added to every tool (the default), a field of the tool's own (bash's
    *  `description`), or false for a tool that never asks. */
   purpose?: string | false
+  /** What a call answers when its arguments do not parse, where the spec has its own words for it
+   *  (team_add's name); undefined: the generic answer. */
+  invalid?(raw: unknown, ctx: ToolContext): string | undefined
   permission(args: z.infer<S>, ctx: ToolContext): PermissionRequest
   /** What the call would change, as a unified diff, shown when the user is asked. Writes nothing. */
   preview?(args: z.infer<S>, ctx: ToolContext): Promise<string>

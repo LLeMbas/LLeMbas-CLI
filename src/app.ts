@@ -45,6 +45,8 @@ import { LIBRARY_SERVER, mcpInstructions } from "./mcp/index.ts"
 import type { McpServer } from "./config/schema.ts"
 import { embedderFor } from "./library/embed.ts"
 import { isLevel, levelsFor, readLevel, type Level } from "./provider/effort.ts"
+import { readingBashByDefault, Team, TEAM, TEAM_TOOLS, type Capacity, type TeamAgent } from "./team/team.ts"
+import { TeamRuntime, type MemberHandle } from "./team/runtime.ts"
 
 export interface AppOptions {
   cwd: string
@@ -149,6 +151,8 @@ export interface App {
   context: SessionContext
   /** Replace it (`{}`: none), naming the instance it came from for the prompt's heading. */
   setContext(ctx: SessionContext, from?: string): void
+  /** The session's team (spec 3.2.0, team.md): its rules and its members at work. */
+  team: TeamRuntime
   /** The chat a session the client opened belongs to (its id): sent with every call to the server's
    *  memory, which answers in that chat's data group (harness/acp.md *Memory*); undefined for a
    *  session of this device's own. The memory for the prompt is read again in it. */
@@ -360,7 +364,7 @@ export function createApp(o: AppOptions): App {
     if (src.instance) named[`Instructions from ${src.instance.name}`] = src.instance.instructions
     return { memory: src.memory ?? "", personality: src.personality ?? "", files: named, mcp: src.mcp, source: src }
   }
-  const system = (m: Mode, current: ResolvedModel, ch: Changing, subagent?: { name: string; instructions: string; report: boolean; skills: boolean; recall: boolean }, at?: { cwd: string; root: string }, plan?: Plan) => {
+  const system = (m: Mode, current: ResolvedModel, ch: Changing, subagent?: { name: string; instructions: string; report: boolean; skills: boolean; recall: boolean }, at?: { cwd: string; root: string }, plan?: Plan, member?: { name: string; manager: string; role: string; goal: string; lead: boolean }) => {
     const src = ch.source as Source
     return assembleSystem({
       modelRef: current.ref,
@@ -392,6 +396,9 @@ export function createApp(o: AppOptions): App {
       library: libraryBlock(),
       prototypes: prototypesBlock(),
       context: subagent ? subagent.recall : true,
+      ...(member ? { member } : {}),
+      // The lead's prompt says how to lead whenever the team tools are offered (team.md §10).
+      teamLead: !subagent && teamRt.team.offered,
     })
   }
   /** A mode's text for a note, as the prompt would have it. */
@@ -417,6 +424,7 @@ export function createApp(o: AppOptions): App {
   const inWords = (sec: number) => (sec % 60 === 0 ? `${sec / 60} minute${sec === 60 ? "" : "s"}` : `${sec} seconds`)
   const vars: Record<string, Record<string, string>> = {
     task: { agents: agentList.map((a) => `${a.name} — ${a.description}`).join("; ") },
+    team_add: { agents: agentList.map((a) => `${a.name} — ${a.description}`).join("; ") },
     bash: {
       timeout: inWords(loaded.config.limits?.bash_timeout ?? 120),
       timeout_max: inWords(600),
@@ -464,11 +472,15 @@ export function createApp(o: AppOptions): App {
     // The model asked for (task's `model`), else the agent's own, else the session's — and whether
     // its server can take it beside the session's and beside every subagent already running
     // (src/session/capacity.ts), before anything is made.
+    const member = opts.member
     const m = opts.model ? resolveModel(loaded, opts.model) : spec.model ? resolveModel(loaded, spec.model) : engine.model
-    const running = registry.running(jobsSessionId()).filter((j) => j.kind === "subagent" && j.subagent)
-    const onIt = running.filter((j) => j.subagent!.engine.model.ref === m.ref).length
-    const refused = capacityRefusal(engine.model, m, onIt) || running.map((j) => capacityBeside(j.subagent!.engine.model, m, onIt)).find(Boolean)
-    if (refused) throw new ToolError(`${refused} Do this part yourself, or hand it to a model on another connection.`)
+    // A team's member is not refused for capacity: the team gave it its slot (team.md §8).
+    if (!member) {
+      const running = registry.running(jobsSessionId()).filter((j) => j.kind === "subagent" && j.subagent && !j.team)
+      const onIt = running.filter((j) => j.subagent!.engine.model.ref === m.ref).length
+      const refused = capacityRefusal(engine.model, m, onIt) || running.map((j) => capacityBeside(j.subagent!.engine.model, m, onIt)).find(Boolean)
+      if (refused) throw new ToolError(`${refused} Do this part yourself, or hand it to a model on another connection.`)
+    }
     // A checkout and branch of its own, when asked for (the task's worktree, the agent's isolation).
     let wt: Worktree | undefined
     if (opts.worktree || spec.isolation === "worktree") {
@@ -496,8 +508,14 @@ export function createApp(o: AppOptions): App {
         }
       : perm
     // `report` is every subagent's: its way of speaking to the main agent before its final reply.
-    const childTools = [...tools.filter((t) => !NOT_FOR_SUBAGENTS.has(t.name) && (!spec.tools || spec.tools.includes(t.name))), ...BUILTIN_TOOLS.filter((t) => SUBAGENT_ONLY.has(t.name))]
-    const description = opts.description ?? prompt.split("\n")[0]!.slice(0, 60)
+    // A team member also has team_send and team_read, and one that may lead team_add and team_stop
+    // (team.md §4); a task helper has none of them.
+    const memberTools = member ? (member.leads ? [...TEAM_TOOLS] : ["team_read", "team_send"]) : []
+    const childTools = [
+      ...tools.filter((t) => !NOT_FOR_SUBAGENTS.has(t.name) && (!(TEAM_TOOLS as readonly string[]).includes(t.name) || memberTools.includes(t.name)) && (!spec.tools || spec.tools.includes(t.name) || memberTools.includes(t.name))),
+      ...BUILTIN_TOOLS.filter((t) => SUBAGENT_ONLY.has(t.name)),
+    ]
+    const description = member ? `${member.name}: ${member.role}` : (opts.description ?? prompt.split("\n")[0]!.slice(0, 60))
     const ownerSession = jobsSessionId()
     const childRow = store?.createSession(at?.root ?? project.root, m.ref, engine.sessionId)
     if (childRow) store!.setTitle(childRow.id, `${spec.name}: ${description}`)
@@ -532,7 +550,17 @@ export function createApp(o: AppOptions): App {
         ...baseToolCtx(),
         ...(at ? { root: at.root, cwd: at.cwd, projectDir: undefined } : {}),
         jobs: { registry, owner: () => ({ sessionId: childSessionId, job }) },
+        ...(member ? { team: { runtime: teamRt, as: member.name } } : {}),
       },
+      ...(member
+        ? {
+            team: {
+              fix: () => teamRt.team.offered,
+              offered: () => teamRt.team.offered,
+              refuse: (tool: Tool, args: unknown) => teamRt.refuse(member.name, tool, args),
+            },
+          }
+        : {}),
       steerMark: MARKS.to_subagent,
       changing: () => changing(true, at),
       modeText: modeNote,
@@ -552,6 +580,7 @@ export function createApp(o: AppOptions): App {
           },
           at,
           plan,
+          member ? { name: member.name, manager: member.manager ?? TEAM.names.lead, role: member.role, goal: member.goal, lead: member.leads } : undefined,
         ),
     })
     // Its own background commands wake it at its next step while it runs; once it has ended they
@@ -567,7 +596,14 @@ export function createApp(o: AppOptions): App {
       const end = registry.finishSubagent(job, { reason, report: text, ...(error ? { error } : {}), ...(worktree ? { worktree } : {}) })
       return { text: worktree ? `${text}\n\n[worktree] ${worktree}` : text, steps: job.steps ?? 0, tools: job.tools ?? 0, reason, ...(error ? { error } : {}), ...(end.stopped ? { stopped: end.stopped } : {}) }
     }
-    const run = (text: string) => child.prompt(text).then(finish, (e) => (job.lastError = (e as Error).message, finish("error")))
+    // A task helper started inside a team counts toward its size and holds a slot while it runs
+    // (team.md §3, §8).
+    const counted = (p: Promise<SubagentResult>) => {
+      if (member || !teamRt.team.offered) return p
+      const id = teamRt.team.helperStart(TEAM.names.lead, m.ref)
+      return p.finally(() => teamRt.team.helperDone(id))
+    }
+    const run = (text: string, machine = false) => counted(child.prompt(text, [], text, machine ? { machine: true } : {}).then(finish, (e) => (job.lastError = (e as Error).message, finish("error"))))
     const handle: SubagentHandle = {
       bus: childBus,
       engine: child,
@@ -575,7 +611,23 @@ export function createApp(o: AppOptions): App {
       restart: (text) => run(text).then(() => undefined),
       cancel: () => child.cancel(),
     }
-    job = registry.startSubagent({ sessionId: ownerSession, ownerCallId: opts.callId, ownerJobId: baseOwner().job?.id, agent: spec.name, model: m.ref, description, handle, childSessionId, silent: !opts.background })
+    job = registry.startSubagent({ sessionId: ownerSession, ownerCallId: opts.callId, ownerJobId: baseOwner().job?.id, agent: spec.name, model: m.ref, description, handle, childSessionId, silent: !opts.background || member !== undefined })
+    if (member) {
+      // A member's turn that ends is its report (team.md §5): the team, not a job note, carries it.
+      job.team = member.name
+      const memberRun = (text: string, machine: boolean) => {
+        if (job.state !== "running") registry.restartSubagent(job)
+        void run(text, machine).then((r) => {
+          const leftover = [...child.takeNotes(), ...child.takeInbox()]
+          const reason = r.reason === "error" ? `error — ${r.error ?? "unknown"}` : r.reason
+          if (r.reason !== "cancelled") teamRt.memberDone(member.name, r.text, reason, leftover)
+        })
+      }
+      const mh: MemberHandle = { engine: child, run: (text) => memberRun(text, true), cancel: () => child.cancel() }
+      teamRt.attach(member.name, mh)
+      memberRun(prompt, false)
+      return { id: job.id, done: Promise.resolve({ text: "", steps: 0, tools: 0, reason: "stop" }), member: mh }
+    }
     // A synchronous subagent goes with its parent's turn (Esc stops both); a background one does not.
     const onAbort = () => child.cancel()
     opts.signal?.addEventListener("abort", onAbort, { once: true })
@@ -601,15 +653,71 @@ export function createApp(o: AppOptions): App {
     budget: { wall_seconds: loaded.config.limits?.wall_seconds, output_bytes: loaded.config.limits?.output_bytes, completion_tokens: loaded.config.limits?.completion_tokens },
     compaction,
     perm,
-    toolCtx: { ...baseToolCtx(), jobs: { registry, owner: baseOwner } },
+    toolCtx: { ...baseToolCtx(), jobs: { registry, owner: baseOwner }, team: { get runtime() { return teamRt }, as: TEAM.names.lead } },
     system: (m, current, plan, ch) => system(m, current, ch, undefined, undefined, plan),
+    team: {
+      fix: (ref, offered) => teamRt.team.fix(ref, offered),
+      offered: () => teamRt.team.offered,
+      refuse: (tool, args) => teamRt.refuse(TEAM.names.lead, tool, args),
+      note: () => teamRt.team.noteLines(),
+      forget: () => teamRt.team.forgetTold(),
+      beforeTurn: (signal) => teamRt.beforeLeadTurn(signal),
+    },
     changing: () => changing(),
     modeText: modeNote,
     // The configured MCP servers, up to loop.json's wait: their tools in the first list.
     beforeFirst: () => Promise.race([mcpReady.catch(() => {}), Bun.sleep(LOOP.context.mcp_wait_ms)]),
     persistRule: trusted ? (rule) => persistProjectRule(project, rule) : undefined,
-    spawn,
+    // subagents: false — no task tool, and no team (team.md §2).
+    spawn: loaded.config.subagents === false ? undefined : spawn,
   })
+
+  // The session's team (spec 3.2.0, team.md): its size from the configuration (the cap the global
+  // one's), the capacity of each model as the server says it.
+  const capacityOf = (ref: string): Capacity => {
+    try {
+      const s = ref === engine.model.ref ? engine.model.spec : resolveModel(loaded, ref).spec
+      return { parallel: s.parallel, single_session: s.single_session, group: s.group }
+    } catch {
+      return {}
+    }
+  }
+  // The size as set while the process runs (any scope): a new or resumed session keeps it.
+  const teamSize: { min?: number; max?: number } = {}
+  const newTeam = () =>
+    new Team({
+      min: teamSize.min ?? loaded.config.agents?.min,
+      max: teamSize.max ?? loaded.config.agents?.max,
+      cap: loaded.config.agents?.cap,
+      subagents: loaded.config.subagents !== false,
+      model: engine.model.ref,
+      capacity: capacityOf,
+      leadState: "idle",
+      readingBash: (command) => readingBashByDefault(command, project.root),
+    })
+  const teamRt: TeamRuntime = new TeamRuntime({
+    team: newTeam(),
+    bus,
+    // spawn makes the member's engine and attaches it before its first await, so a message to it
+    // finds it at once.
+    spawnMember: (member: TeamAgent, text: string) => {
+      spawn(member.agent, text, { member, model: member.model, background: true, description: `${member.name}: ${member.role}` }).catch((e) => {
+        bus.emit({ type: "notice", level: "warn", message: `team: ${member.name} could not start: ${(e as Error).message}` })
+        teamRt.memberDone(member.name, "", `error — ${(e as Error).message}`, [])
+      })
+    },
+    lead: { note: (text) => engine.note(text), wake: (text) => wake(text, shownLine(text)) },
+    resolve: (agent, model) => {
+      if (!agentList.some((a) => a.name === agent)) return { error: `There is no agent "${agent}". The agents are: ${agentList.map((a) => a.name).join(", ")}.` }
+      try {
+        return { model: model ? resolveModel(loaded, model).ref : engine.model.ref }
+      } catch (e) {
+        return { error: (e as Error).message }
+      }
+    },
+  })
+  // The lead's turn ended: it is idle, and its slot frees (team.md §8).
+  bus.on((e) => e.type === "done" && teamRt.leadDone())
 
   // MCP tools join the engine's list as servers connect (the engine reads it at each prompt).
   let mcpNames = new Set<string>()
@@ -722,6 +830,9 @@ export function createApp(o: AppOptions): App {
       if (key === "model") return engine.model.ref
       if (key === "effort") return engine.effort
       if (key === "mode") return engine.mode
+      // The team's size as the session holds it (the cap applied).
+      if (key === "agents.min") return teamRt.team.min
+      if (key === "agents.max") return teamRt.team.max
       return key.split(".").reduce<unknown>((x, k) => (x && typeof x === "object" ? (x as Record<string, unknown>)[k] : undefined), loaded.config)
     },
     check(key, v) {
@@ -729,6 +840,12 @@ export function createApp(o: AppOptions): App {
       if (key === "effort" && !(levelsFor(engine.model).levels as string[]).includes(String(v)))
         throw new Error(`${engine.model.ref} offers the levels ${levelsFor(engine.model).levels.join(", ")}`)
       if (key === "knowledge") for (const b of v as string[]) if (!library.base(b)) throw new Error(`there is no knowledge base "${b}" — lembas kb lists them`)
+      // The team's size (team.md §2): refused outside 1 ≤ min ≤ max ≤ cap, with the bounds.
+      if (key === "agents.min" || key === "agents.max") {
+        const t = teamRt.team
+        const no = Team.check(key === "agents.min" ? Number(v) : t.min, key === "agents.max" ? Number(v) : t.max, t.cap)
+        if (no) throw new Error(no)
+      }
     },
     apply(key, v) {
       if (key === "model") switchModel(String(v))
@@ -740,6 +857,14 @@ export function createApp(o: AppOptions): App {
       else if (key === "limits.wall_seconds" || key === "limits.output_bytes" || key === "limits.completion_tokens") engine.o.budget = { ...engine.o.budget, [key.slice("limits.".length)]: Number(v) }
       else if (key === "compaction.auto_at") compaction.autoAt = Number(v)
       else if (key === "knowledge") libraryCtx.bases = (v as string[]).length ? (v as string[]) : undefined
+      else if (key === "agents.min" || key === "agents.max") {
+        // Said to the lead as a note on its next message (team.md §2), never in the prompt.
+        const t = teamRt.team
+        t.setSetting(key === "agents.min" ? Number(v) : t.min, key === "agents.max" ? Number(v) : t.max)
+        teamSize.min = t.min
+        teamSize.max = t.max
+        bus.emit({ type: "team" })
+      }
       if (key !== "model" && key !== "effort" && key !== "mode") setIn(key, v)
       bus.emit({ type: "setting", key, value: v })
     },
@@ -791,6 +916,7 @@ export function createApp(o: AppOptions): App {
     mcpReady,
     small,
     close: () => {
+      teamRt.stopAll()
       detach()
       for (const d of childDetach.splice(0)) d()
       return mcp.close()
@@ -805,6 +931,7 @@ export function createApp(o: AppOptions): App {
     jobsSessionId,
     jobs: () => registry.list(jobsSessionId()),
     wake,
+    team: teamRt,
     get context() {
       return context
     },
@@ -830,6 +957,7 @@ export function createApp(o: AppOptions): App {
       const s = store?.createSession(project.root, engine.model.ref)
       keepCwd(s?.id)
       standIn = `local_${crypto.randomUUID().slice(0, 8)}`
+      teamRt.reset(newTeam())
       engine.newSession(s?.id)
       turns.reset()
       if (s) bus.emit({ type: "session", id: s.id, model: engine.model.ref, mode: engine.mode })
@@ -843,6 +971,7 @@ export function createApp(o: AppOptions): App {
       const before = engine.sessionId
       frozen = freeze()
       void readServerMemory()
+      teamRt.reset(newTeam())
       engine.resume(id, store.context(id))
       // A session from before titles gets its first prompt's line now, and the model's after the next reply.
       firstShown = ""

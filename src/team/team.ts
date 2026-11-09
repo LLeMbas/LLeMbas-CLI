@@ -156,18 +156,22 @@ export class Team {
     return undefined
   }
 
+  capacityOf(model: string): Capacity {
+    return this.o.capacity(model)
+  }
+
   /** How many requests the lead's model serves at once now. */
   parallelNow(): number {
     return parallelFrom(this.o.capacity(this.model))
   }
 
   /** §2: offered when subagents are on and the chat's model serves two at once — fixed as the
-   *  prompt is made (and made again on a model switch). */
-  fix(model = this.model): boolean {
+   *  prompt is made (and made again on a model switch); `offered` is a kept prompt's decision. */
+  fix(model = this.model, offered?: boolean): boolean {
     this.model = model
     const lead = this.agents.get(LEAD)
     if (lead) lead.model = model
-    this.offered = this.subagents && this.parallelNow() >= 2
+    this.offered = offered ?? (this.subagents && this.parallelNow() >= 2)
     return this.offered
   }
 
@@ -338,17 +342,24 @@ export class Team {
 
   // ── the tools ───────────────────────────────────────────────────────────────
 
+  /** team_add's refusals, in the spec's order (§4), or undefined when it would add. */
+  wouldRefuse(by: string, a: { name: string; goal?: string }): string | undefined {
+    const no = this.offered ? this.unavailable() : TEAM.unavailable.one_agent
+    if (no) return no
+    if (a.name === "all") return TEXTS.all_name
+    if (!NAME.test(a.name)) return fill(TEXTS.bad_name, { name: a.name })
+    if (this.agents.has(a.name)) return fill(TEXTS.taken, { name: a.name })
+    if (by === LEAD && !this.agents.get(LEAD)!.goal && !a.goal?.trim()) return TEXTS.no_goal
+    if (this.size() + 1 > this.max) return fill(TEXTS.full, { max: this.max })
+    return undefined
+  }
+
   /** team_add (§4). `brief` is what the member's first turn is given. */
   add(by: string, a: { name: string; role: string; task: string; goal?: string; lead?: boolean; agent?: string; model?: string }): { text: string; added?: TeamAgent } {
-    const no = this.offered ? this.unavailable() : TEAM.unavailable.one_agent
+    const no = this.wouldRefuse(by, a)
     if (no) return { text: no }
-    if (a.name === "all") return { text: TEXTS.all_name }
-    if (!NAME.test(a.name)) return { text: fill(TEXTS.bad_name, { name: a.name }) }
-    if (this.agents.has(a.name)) return { text: fill(TEXTS.taken, { name: a.name }) }
     const lead = this.agents.get(LEAD)!
     const goal = a.goal?.trim()
-    if (by === LEAD && !lead.goal && !goal) return { text: TEXTS.no_goal }
-    if (this.size() + 1 > this.max) return { text: fill(TEXTS.full, { max: this.max }) }
     const caller = this.agents.get(by) ?? lead
     if (by === LEAD && goal) lead.goal = goal
     const member: TeamAgent = {
@@ -511,11 +522,16 @@ export class Team {
     this.fillSlots()
   }
 
-  /** The lead's turn is starting without having asked (the engine's own): it holds a slot. */
-  leadWorking() {
+  /** The lead stopped waiting (the person pressed Esc): idle, out of the queue. */
+  leadIdle() {
     const lead = this.agents.get(LEAD)!
-    lead.state = "working"
+    if (lead.state === "waiting") lead.state = "idle"
     lead.waitSince = undefined
+  }
+
+  /** Nothing of the stopped members is said: the session they were in is gone. */
+  forgetStopped() {
+    this.stoppedByPerson = []
   }
 
   // ── what the lead is told ───────────────────────────────────────────────────

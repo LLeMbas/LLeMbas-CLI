@@ -236,6 +236,12 @@ export interface PromptContext {
   /** Set for a subagent: who it is and what it is for; replaces the mode's own instructions.
    *  `report`: it has the report tool. */
   subagent?: { name: string; instructions: string; report?: boolean }
+  /** Spec 3.2.0 (team.md §4): a team member — blocks/team_member.md in place of blocks/subagent.md,
+   *  with the whole of blocks/team_lead.md for one that may lead. */
+  member?: { name: string; manager: string; role: string; goal: string; lead: boolean }
+  /** Spec 3.2.0 (team.md §10): the team tools are offered to this session's agent (the lead):
+   *  blocks/team_lead.md is in its prompt. */
+  teamLead?: boolean
   /** The memory as it was when the prompt was made ("" when both files are empty); undefined
    *  when memory is off. A later change by the person goes as a note. */
   memory?: string
@@ -380,7 +386,22 @@ export function assembleSystem(ctx: PromptContext): string {
   if (ctx.library && !ctx.subagent) sections.push(fillPrompt(promptText("blocks/library.md"), { knowledge_scope: ctx.library.scope }))
   if (ctx.prototypes && !ctx.subagent) sections.push(fillPrompt(promptText("blocks/prototypes.md"), { prototype_sources: ctx.prototypes.sources, prototype_surface: PROTOTYPE_SURFACE }))
 
-  if (ctx.subagent)
+  if (ctx.teamLead && !ctx.subagent) sections.push(promptText("blocks/team_lead.md"))
+  if (ctx.subagent && ctx.member)
+    sections.push(
+      fillPrompt(promptText("blocks/team_member.md"), {
+        name: ctx.member.name,
+        manager: ctx.member.manager,
+        role: ctx.member.role,
+        goal: ctx.member.goal,
+        instructions: ctx.subagent.instructions,
+        read_only: ctx.mode === "plan" ? SUBAGENT_READ_ONLY : "",
+        lead: ctx.member.lead ? promptText("blocks/team_lead.md") : "",
+      })
+        .replace(/\n{3,}/g, "\n\n")
+        .trim(),
+    )
+  else if (ctx.subagent)
     sections.push(
       fillPrompt(promptText("blocks/subagent.md"), {
         name: ctx.subagent.name,

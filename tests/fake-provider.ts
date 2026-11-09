@@ -16,7 +16,9 @@ export interface Fake {
 /** `served`: what GET /v1/models lists, as a LLeMbas server lists its models (default two
  *  placeholders). Any other GET — the instance's own description, its personalization — is a 404,
  *  which a client reads as "this server does not have it". */
-export function fakeProvider(script: Scripted[], opts: { route?: (model: string) => Fake | undefined; served?: Record<string, unknown>[] } = {}): Fake {
+/** `script` may be a function of the request (and its number), for requests that race: a team's
+ *  agents ask at once, and each is answered by who is asking. */
+export function fakeProvider(script: Scripted[] | ((body: any, n: number) => Scripted | undefined), opts: { route?: (model: string) => Fake | undefined; served?: Record<string, unknown>[] } = {}): Fake {
   const requests: any[] = []
   const calls: { path: string; headers: Record<string, string> }[] = []
   let i = 0
@@ -34,7 +36,7 @@ export function fakeProvider(script: Scripted[], opts: { route?: (model: string)
       if (to) return fetch(to.url.replace(/\/v1$/, "") + url.pathname + url.search, { method: "POST", headers: req.headers, body: JSON.stringify(body) })
       requests.push(body)
       calls.push({ path: url.pathname + url.search, headers: Object.fromEntries(req.headers.entries()) })
-      const r = script[i++]
+      const r = typeof script === "function" ? script(body, i++) : script[i++]
       if (!r) return new Response("script exhausted", { status: 500 })
       if ("status" in r) return new Response(r.body, { status: r.status })
       // gapMs: a pause between chunks, to look at the screen mid-stream.

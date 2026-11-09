@@ -5,6 +5,7 @@ import { stricterMode, type App as Runtime } from "../app.ts"
 import { isLocal } from "../config/paths.ts"
 import type { Mode } from "../config/schema.ts"
 import { levelLabel, type Level } from "../provider/effort.ts"
+import { teamLabel } from "../session/commands.ts"
 import { COMMANDS, findCommand, type CommandCtx } from "./commands.ts"
 import { Dialog, type DialogSpec } from "./components/dialog.tsx"
 import { Messages } from "./components/messages.tsx"
@@ -60,6 +61,8 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   const mode = () => (rev(), app.engine.mode)
   const model = () => (rev(), app.engine.model.ref)
   const effort = () => (rev(), levelLabel(app.engine.model, app.engine.effort))
+  // "team 3/4 · 2 working" while the lead has members (team.md, the TUI's status).
+  const teamWord = () => (rev(), teamLabel(app.team.team))
   const busy = () => view.state.phase !== "idle"
   const branch = () => (rev(), app.project.gitRoot ? currentBranch(app.project.gitRoot) : undefined)
   // A word in the status bar that goes by itself (a copy): it says something happened without
@@ -74,7 +77,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   onCleanup(() => clearTimeout(flashTimer))
   // A mode changed inside a turn (a plan approved) must reach the status bar; so must a branch the
   // model switched with git.
-  app.bus.on((e) => (e.type === "mode" || e.type === "done") && refresh())
+  app.bus.on((e) => (e.type === "mode" || e.type === "done" || e.type === "team") && refresh())
   app.bus.on((e) => e.type === "flash" && flash(e.text, 6000))
   // A setting changed by the agent, /settings or a command: show it. Theme and icons are drawn here.
   app.bus.on((e) => {
@@ -642,7 +645,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
           </Show>
           <Queued />
           <Prompt focused={() => !dialog() && !jobPanel() && !view.state.pending && !view.state.question && !view.state.plan} busy={busy} commands={palette} files={files} onSubmit={submit} ref={(r) => (input = r)} queue={queueAccess} onWheel={(dir, lines) => scroll?.scrollBy(dir * lines)} onBackground={backgroundNow} />
-          <StatusBar mode={mode} model={model} effort={effort} branch={branch()} voice={voiceStatus} flash={flashText} remote={() => (rev(), share.label())} spend={spend} />
+          <StatusBar mode={mode} model={model} effort={effort} branch={branch()} voice={voiceStatus} flash={flashText} remote={() => (rev(), share.label())} spend={spend} team={teamWord} />
         </box>
         <Show when={dialog()}>
           <Dialog spec={dialog()!} close={() => setDialog(undefined)} />

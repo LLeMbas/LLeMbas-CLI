@@ -52,7 +52,8 @@ test("no clock in the prompt: two requests across a date change send the same sy
   expect(system(1)).toBe(system(0))
   expect(system(2)).toBe(system(0))
   expect(fake!.requests[2].tools).toEqual(fake!.requests[0].tools)
-  expect(lastUser(0)).toBe(`first\n${NOTE.open}\nToday is 2026-11-04.\n${NOTE.close}`)
+  // A model with no capacity said (a hosted API) offers a team: its size is said once, last (spec 3.2.0).
+  expect(lastUser(0)).toBe(`first\n${NOTE.open}\nToday is 2026-11-04.\n\nThe team may have 1 to 4 agents, you included.\n${NOTE.close}`)
   expect(lastUser(1)).toBe("second")
   expect(lastUser(2)).toBe(`third\n${NOTE.open}\nToday is 2026-11-05.\n${NOTE.close}`)
   // A note is part of its message from then on: the next request sends the first one as it was.
@@ -140,7 +141,8 @@ test("compaction: the same system and tools, every message, then the compaction 
   expect(store.requests(sid).map((r) => r.kind)).toEqual(["step", "compaction"])
   // After it the prompt is made again, and the next user message says the date again.
   await app.engine.prompt("go on")
-  expect(lastUser(2)).toMatch(/^go on\n<session-note>\nToday is \d{4}-\d{2}-\d{2}\.\n<\/session-note>$/)
+  // The team's size too (spec 3.2.0): like the date, it is not in the prompt.
+  expect(lastUser(2)).toMatch(/^go on\n<session-note>\nToday is \d{4}-\d{2}-\d{2}\.\n\nThe team may have 1 to 4 agents, you included\.\n<\/session-note>$/)
 })
 
 test("a resumed session sends the prompt it kept, byte for byte; what changed meanwhile is a note", async () => {

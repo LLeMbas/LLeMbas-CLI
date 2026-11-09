@@ -63,6 +63,21 @@ export interface EngineOptions {
   /** What a message sent mid-turn starts with: the user's words for a session, the main agent's for
    *  a subagent (loop.json jobs.marks to_subagent). */
   steerMark?: string
+  /** The team this engine's agent is on (spec 3.2.0, team.md): whether it is offered (decided as
+   *  the prompt is made, for `model`), what a call answers before its permission check (the team
+   *  tools' requirement, task's size, a manager's work), the lead's note lines, and — the lead —
+   *  a slot of the model before a turn runs. */
+  team?: {
+    /** Decide whether the team is offered for a new prompt on `model` — or, for a prompt the
+     *  session kept (a resume), take what it decided then (`offered`). */
+    fix(model: string, offered?: boolean): boolean
+    offered(): boolean
+    refuse(tool: Tool, args: unknown): string | undefined
+    note?(): string[]
+    /** What the lead was told of the team is to be said again: a new prompt, or a rewind. */
+    forget?(): void
+    beforeTurn?(signal: AbortSignal): Promise<boolean>
+  }
 }
 
 /** What a prompt carries besides its text. */
@@ -168,6 +183,8 @@ export class Engine {
   private keptBase: Told | undefined
   /** The last request's usage, cached input tokens included, and what it was for. */
   lastRequest: { usage: Usage; kind: "step" | "compaction" } | undefined
+  /** The prompt the team's offer was last decided for. */
+  private teamFixed: Kept | undefined
 
   constructor(readonly o: EngineOptions) {
     this.mode = o.mode
@@ -201,6 +218,9 @@ export class Engine {
     if (this.model.spec.vision === true) could.add("vision")
     if (this.o.toolCtx.projectDir !== undefined) could.add("project")
     if (this.o.toolCtx.show !== undefined) could.add("display")
+    // The team tools' requirement: offered as the prompt is made; whether it is met is the team's
+    // to answer at each call (team.md §2: one_agent or one_request).
+    if (this.o.team?.offered()) could.add("team")
     const L = this.o.toolCtx.library
     const have = L?.lib.bases().filter((b) => b.documents > 0).map((b) => b.name) ?? []
     if (have.some((b) => !L!.bases || L!.bases.includes(b))) could.add("knowledge")
@@ -223,7 +243,20 @@ export class Engine {
 
   /** The session's prefix, made now if there is none yet (or it was made for another model). */
   prefix(): Kept {
-    if (this.kept && this.kept.model === this.model.ref) return this.kept
+    if (this.kept && this.kept.model === this.model.ref) {
+      // A kept prompt (a resumed session) decided whether the team is offered when it was made: its
+      // tool list says so (team.md §2: fixed for as long as the prompt is).
+      if (this.teamFixed !== this.kept) {
+        this.teamFixed = this.kept
+        this.o.team?.fix(this.model.ref, !this.kept.left.includes("team_add"))
+      }
+      return this.kept
+    }
+    // Whether a team is offered is decided here, with the prompt and the tool list (team.md §2).
+    this.o.team?.fix(this.model.ref)
+    // After a compaction the size is said again, as the date is: neither is in the prompt. A model
+    // switch keeps the conversation, and what it said.
+    if (!this.kept) this.o.team?.forget?.()
     const changing = this.o.changing?.() ?? NO_CHANGING
     const now = this.now(changing)
     const could = this.could()
@@ -235,6 +268,7 @@ export class Engine {
     if (this.kept?.told.date) told.date = this.kept.told.date
     this.keptBase = { ...structuredClone(told), date: undefined }
     this.kept = { system: this.o.system(this.mode, this.model, this.plan, changing), left, model: this.model.ref, told }
+    this.teamFixed = this.kept
     this.saveKept()
     return this.kept
   }
@@ -261,7 +295,7 @@ export class Engine {
    *  the model's from then on. */
   private takeNote(): string {
     const kept = this.prefix()
-    const { note, told } = noteFor(kept.told, this.now(), (m) => this.o.modeText?.(m) ?? fillPrompt(promptText(`modes/${m}.md`), { plan_dir: this.o.toolCtx.planDir ?? "" }))
+    const { note, told } = noteFor(kept.told, this.now(), (m) => this.o.modeText?.(m) ?? fillPrompt(promptText(`modes/${m}.md`), { plan_dir: this.o.toolCtx.planDir ?? "" }), this.o.team?.note?.() ?? [])
     if (note) {
       kept.told = told
       this.saveKept()
@@ -282,6 +316,7 @@ export class Engine {
   rewound() {
     if (!this.kept || !this.keptBase) return
     this.kept.told = structuredClone(this.keptBase)
+    this.o.team?.forget?.()
     this.saveKept()
   }
 
@@ -596,6 +631,11 @@ export class Engine {
     // Before a session's first request: the configured MCP servers get a moment to connect, so
     // their tools are in the first list (§10 rule 4).
     if (!this.kept || this.kept.model !== this.model.ref) await this.o.beforeFirst?.()
+    // A team's lead holds a slot of its model while its turn runs (team.md §8): it may wait for one.
+    if (this.o.team?.beforeTurn && !(await this.o.team.beforeTurn(signal))) {
+      bus.emit({ type: "done", reason: "cancelled" })
+      return "cancelled"
+    }
     // What changed since the prompt was made goes after the person's words, as a note (§10 rule 3).
     const note = this.takeNote()
     this.push({
@@ -878,6 +918,7 @@ export class Engine {
     const resolved = resolveCall(call.name, raw)
     tool = toolMap.get(resolved.name) ?? tool
     raw = resolved.raw
+    const team = this.o.team
     // Offered for the whole session; while what it needs is not met, the spec's sentence (§10 rule 4).
     const no = unavailable(tool.name, tool.requires ? [tool.requires] : undefined, this.met())
     if (no) return { result: { output: no, isError: true } }
@@ -888,10 +929,15 @@ export class Engine {
     const { args: own, purpose } = splitPurpose(tool, raw)
     const parsed = tool.schema.safeParse(own)
     if (!parsed.success) {
+      const spoken = tool.invalid?.(own, { ...this.o.toolCtx, signal: new AbortController().signal })
+      if (spoken) return { result: { output: spoken, isError: true } }
       const why = parsed.error.issues.map((i) => `${i.path.join(".") || "(arguments)"}: ${i.message}`).join("; ")
       return { result: { output: `Invalid arguments for ${tool.name}: ${why}`, isError: true } }
     }
     let args = parsed.data
+    // A team's answers come before the permission check — nothing is asked (team.md §6).
+    const byTeam = team?.refuse(tool, args)
+    if (byTeam) return { result: { output: byTeam, isError: true } }
     const toolCtx: ToolContext = { ...this.o.toolCtx, signal: new AbortController().signal }
     let request = tool.permission(args, toolCtx)
     let edited: string | undefined

@@ -11,7 +11,7 @@ import { doRelease, planRelease } from "../git/release.ts"
 import { instructionFiles } from "../prompt/assemble.ts"
 import { addDecision, readBoard, readDecisions, renderBoard } from "../project/board.ts"
 import { contextBreakdown, renderBreakdown } from "../session/context.ts"
-import { changelogPrompt, initPrompt, reviewPrompt } from "../session/commands.ts"
+import { changelogPrompt, initPrompt, reviewPrompt, teamText } from "../session/commands.ts"
 import { git } from "../git/run.ts"
 import { branches, deleteBranch, switchBranch } from "../git/branch.ts"
 import type { Ctx } from "./context.ts"
@@ -93,6 +93,27 @@ description: what ${name} is for — the model reads this when it picks a subage
 You are the ${name} subagent. Say what to do, how to check it, and what to report back — the
 report is all the session's model sees of your work.
 `
+
+const TEAM_ROW = "\u0000team"
+
+/** The team's size for this session: a few usual pairs, or any typed as `<min> <max>`. */
+function openTeamSize(c: CommandCtx) {
+  const t = c.app.team.team
+  const pairs = [
+    [1, 1, "one agent: no team, no helper"],
+    [1, 4, "you decide; up to three members"],
+    [2, 4, "a team from the start"],
+    [1, 8, "you decide; up to seven members"],
+    [3, 8, "a team of at least three"],
+    [1, Math.min(16, t.cap), "a bigger team, with sub-managers"],
+  ] as const
+  const seen = new Set<string>()
+  const options = pairs
+    .filter(([min, max]) => max <= t.cap && !seen.has(`${min} ${max}`) && seen.add(`${min} ${max}`))
+    .map(([min, max, what]) => ({ label: `${min} to ${max}`, value: `${min} ${max}`, description: what, current: t.min === min && t.max === max }))
+  const apply = (v: string) => (c.view.info(teamText(c.app, `size ${v}`)), c.refresh())
+  c.openDialog({ title: `Agents — now ${t.min} to ${t.max} (at most ${t.cap})`, options, onSelect: apply, custom: { label: "set to", onSubmit: apply } })
+}
 
 export const COMMANDS: Command[] = [
   {
@@ -194,22 +215,49 @@ export const COMMANDS: Command[] = [
         c.setEffort(v as Level)
         c.view.info(control === "switch" ? `thinking ${v === "off" ? "off" : `on (${v})`}` : `effort: ${v}`)
       }
-      if (control === "none") return c.view.info(`${m.ref} has one level (${levels[0]}): there is nothing to choose`)
+      // The team's size sits beside the effort (team.md §2: shown only where a team is offered).
+      const team = c.app.team.team
+      const agentsRow = team.offered ? [{ label: `agents: ${team.min} to ${team.max}`, value: TEAM_ROW, description: "how many agents the team may have, you included" }] : []
+      const choose = (v: string) => (v === TEAM_ROW ? openTeamSize(c) : set(v))
+      if (control === "none" && (arg || !agentsRow.length)) return c.view.info(`${m.ref} has one level (${levels[0]}): there is nothing to choose`)
       if (arg) return set(arg)
+      if (control === "none") return c.openDialog({ title: `Chat settings — ${m.ref}`, options: agentsRow, onSelect: choose })
       if (control === "switch")
         return c.openDialog({
           title: `Thinking — ${m.ref}`,
           options: [
             { label: "on", value: on, description: on === "default" ? "the model's own" : on, current: c.app.engine.effort !== "off" },
             { label: "off", value: "off", current: c.app.engine.effort === "off" },
+            ...agentsRow,
           ],
-          onSelect: set,
+          onSelect: choose,
         })
       c.openDialog({
         title: `Effort — ${m.ref}`,
-        options: levels.map((e) => ({ label: e === "off" ? "off (no thinking)" : e, value: e, current: c.app.engine.effort === e })),
-        onSelect: set,
+        options: [...levels.map((e) => ({ label: e === "off" ? "off (no thinking)" : e, value: e, current: c.app.engine.effort === e })), ...agentsRow],
+        onSelect: choose,
       })
+    },
+  },
+  {
+    name: "team",
+    args: "[size [<min> <max>] | stop [<name>]]",
+    description: "the team: its agents and the room; its size; stop a member",
+    run(c, arg) {
+      // The tree and the room as the lead sees them — the person sees everything (team.md §5).
+      const words = arg.trim().split(/\s+/).filter(Boolean)
+      if (words[0] === "size" && words.length === 1) return openTeamSize(c)
+      if (words[0] === "stop" && words.length === 1) {
+        const members = c.app.team.team.tree().filter((a) => a.manager !== null)
+        if (!members.length) return c.view.info("the team has no members")
+        return c.openDialog({
+          title: "Stop a member, and everything under it",
+          options: members.map((a) => ({ label: a.name, value: a.name, description: `${a.role} · ${a.state}` })),
+          onSelect: (name) => (c.view.info(teamText(c.app, `stop ${name}`)), c.refresh()),
+        })
+      }
+      c.view.info(teamText(c.app, arg))
+      c.refresh()
     },
   },
   {

@@ -32,6 +32,8 @@ export function resolveCall(name: string, raw: unknown): { name: string; raw: un
     const plan = fromTodos(obj.todos)
     args = isPlan(plan) ? { title: plan.title, phases: plan.phases.map((p) => ({ title: p.title, status: p.status, tasks: p.tasks.map((t) => ({ text: t.text, status: t.status })) })) } : { title: "Work", phases: [] }
   }
+  // team_send's `to` as one name: read as a list of one (team.md §5).
+  if (to === "team_send" && obj && typeof obj.to === "string") args = { ...obj, to: [obj.to] }
   const renamed = ARGUMENTS_RENAMED[to]
   if (renamed && args && typeof args === "object" && !Array.isArray(args)) {
     const a = { ...(args as Record<string, unknown>) }

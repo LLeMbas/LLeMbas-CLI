@@ -17,7 +17,8 @@ function jobsOf(ctx: ToolContext) {
 function find(ctx: ToolContext, id: string): Job {
   const { registry, owner } = jobsOf(ctx)
   const job = registry.get(owner().sessionId, id.trim())
-  if (!job) throw new ToolError(`No background job ${id}. job_list shows this session's jobs.`)
+  // A team member is not a job to the model: the team tools take it (team.md §4).
+  if (!job || job.team) throw new ToolError(`No background job ${id}. job_list shows this session's jobs.`)
   return job
 }
 
@@ -42,7 +43,7 @@ export const jobListTool = defineTool({
   permission: () => ({ permission: "job_list", class: "read", patterns: ["*"] }),
   async run(_a, ctx) {
     const { registry, owner } = jobsOf(ctx)
-    const jobs = registry.list(owner().sessionId)
+    const jobs = registry.list(owner().sessionId).filter((j) => !j.team)
     if (!jobs.length) return { output: "No background jobs.", title: "0 jobs" }
     const now = Date.now()
     const lines = jobs.map((j) => {
@@ -101,6 +102,9 @@ export const jobSendTool = defineTool({
       job.subagent.send(a.text)
       return { output: `Sent to ${job.id} (${whatWords(job)}); it is given to it at its next step.`, title: `${job.id} · message sent` }
     }
+    // Starting a finished helper again counts toward a team's size as task does (team.md §3).
+    const no = ctx.team?.runtime.team.taskRefusal()
+    if (no) throw new ToolError(no)
     registry.restartSubagent(job)
     void job.subagent.restart(a.text)
     return { output: `${job.id} (${whatWords(job)}) is running again with your message as its new prompt, its context intact. Its report comes to you when it ends.`, title: `${job.id} · started again` }
@@ -114,6 +118,12 @@ export const reportTool = defineTool({
   schema: z.object({ text: z.string().min(1) }),
   permission: () => ({ permission: "report", class: "interact", patterns: ["*"] }),
   async run(a, ctx) {
+    // A team member's report goes through the room, to its manager (team.md §4).
+    if (ctx.team && ctx.team.as !== "lead") {
+      const sent = ctx.team.runtime.team.message(ctx.team.as, a.text)
+      ctx.team.runtime.notify()
+      if (sent) return { output: `${sent} An answer, if one comes, arrives as a message to you; carry on meanwhile.`, title: `message to ${ctx.team.runtime.team.get(ctx.team.as)?.manager ?? "your manager"}` }
+    }
     const { registry, owner } = jobsOf(ctx)
     const job = owner().job
     if (!job) throw new ToolError("report is for a subagent: you are the main agent, so write to the user directly.")

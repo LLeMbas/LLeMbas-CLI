@@ -62,6 +62,9 @@ export type Event =
   /** The note about that job was given to the model: inside a turn at its next step, or as the
    *  `machine` turn whose `prompt` follows. */
   | { type: "job_note"; jobId: string; text: string }
+  /** The session's team changed (spec 3.2.0): a member added, started, finished or stopped, a
+   *  message in the room. Read the team itself for what. */
+  | { type: "team" }
   /** The permission mode changed from inside a turn (plan approved). */
   | { type: "mode"; mode: Mode }
   /** The session's model or effort changed, for whatever reason — /model, /effort, the settings

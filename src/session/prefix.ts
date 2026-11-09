@@ -74,7 +74,7 @@ export function toldAt(now: Now): Told {
 /** The note for a user message: a line for each thing that differs from what the model was told,
  *  in loop.json's order, inside the note's tags — "" when nothing does. `modeText` is the mode's
  *  text (modes/<mode>.md, filled as the prompt fills it). Returns what is told after it. */
-export function noteFor(told: Told, now: Now, modeText: (mode: Mode) => string): { note: string; told: Told } {
+export function noteFor(told: Told, now: Now, modeText: (mode: Mode) => string, extra: string[] = []): { note: string; told: Told } {
   const lines: string[] = []
   const say = (text: string, vars: Record<string, string>) => lines.push(fillPrompt(text, vars))
   const or = (s: string) => (s.trim() ? s : NOTHING)
@@ -88,6 +88,8 @@ export function noteFor(told: Told, now: Now, modeText: (mode: Mode) => string):
   // Only a server that has connected or changed since: one that went away takes its tools with it.
   const arrived = Object.keys(now.mcp).filter((name) => told.mcp[name] !== now.mcp[name])
   if (arrived.length) say(NOTE.mcp, { instructions: arrived.map((name) => mcpBlock(name, now.mcp[name]!)).join("\n") })
+  // Spec 3.2.0: the team's size and members the person stopped (team.md §10), last.
+  lines.push(...extra)
   return { note: lines.length ? noteBlock(lines) : "", told: { ...toldAt(now), date: now.date } }
 }
 
@@ -118,7 +120,7 @@ export function today(at = new Date()): string {
 
 /** A requirement a tool can have (the spec's `requires`, and the CLI's own: vision, project,
  *  knowledge). */
-export type Requirement = "vision" | "plan" | "project" | "knowledge" | "display" | "page" | "forge"
+export type Requirement = "vision" | "plan" | "project" | "knowledge" | "display" | "page" | "forge" | "team"
 
 /** Rule 4: the tool list is fixed for the session. A tool is offered when every requirement it has
  *  is one the session could meet at some point (`could`), decided once as the prompt is made; a

@@ -16,6 +16,7 @@ import { customCommands, expandCommand } from "../project/commands.ts"
 import { fill, promptText } from "../prompt/assemble.ts"
 import { skillMessage, slug, type Skill } from "../skill/index.ts"
 import { CONTINUE_PROMPT } from "./engine.ts"
+import { TEAM, Team } from "../team/team.ts"
 
 export type CommandKind = "custom" | "skill" | "builtin"
 
@@ -34,7 +35,7 @@ export const TUI_COMMAND_NAMES = [
   "agents", "continue", "help", "model", "effort", "mode", "plan", "plans", "prototype", "review", "changelog", "init", "release", "tasks", "decisions", "decide",
   "jobs", "sessions", "resume", "remote", "delete", "new", "clear", "copy", "undo", "redo", "diff", "checkpoint", "checkpoints", "branch", "commit", "context",
   "compact", "memory", "skills", "skill", "personality", "voice", "speak", "mcp", "login", "logout", "settings", "usage", "kb", "theme", "skin", "terminal",
-  "icons", "trust", "reload", "restart", "quit", "exit", "q",
+  "icons", "trust", "reload", "restart", "quit", "exit", "q", "team",
 ] as const
 
 /** The built-ins that work without a screen of their own. Descriptions as the TUI's (a test). */
@@ -47,7 +48,50 @@ export const SHARED_BUILTINS: { name: string; description: string; hint?: string
   { name: "init", description: "make or update the project's AGENTS.md from what the repository says", hint: "what to focus on" },
   { name: "continue", description: "carry on — after esc stopped it, or when it should keep going (ctrl+g)" },
   { name: "agents", description: "subagents: list them, make one, or hand one a task", hint: "name" },
+  { name: "team", description: "the team: its agents and the room; its size; stop a member", hint: "size <min> <max> | stop <name>" },
 ]
+
+/** The status bar's word for a team with members: its size of the most it may have, and how many
+ *  work now; "" without members. */
+export function teamLabel(team: Team): string {
+  if (!team.hasMembers()) return ""
+  const n = team.active()
+  return `team ${team.size()}/${team.max}${n ? ` · ${n} working` : ""}`
+}
+
+/** `/team [size <min> <max> | stop <name>]`: the team's tree and room, as the lead sees them (the
+ *  person sees everything, team.md §5); its size for this session; a member stopped by the person,
+ *  which the lead is told in a note. */
+export function teamText(app: App, arg: string): string {
+  const rt = app.team
+  const t = rt.team
+  const [verb, ...rest] = arg.trim().split(/\s+/).filter(Boolean)
+  if (verb === "size") {
+    const [min, max] = rest.map(Number)
+    if (min === undefined || max === undefined || Number.isNaN(min) || Number.isNaN(max)) return `/team size <min> <max> — now ${t.min} to ${t.max} (at most ${t.cap})`
+    // Checked whole before anything is set: a refused pair changes nothing (team.md §2).
+    const no = Team.check(min, max, t.cap)
+    if (no) return no
+    try {
+      app.settings.set("agents.min", Math.min(min, t.max))
+      app.settings.set("agents.max", max)
+      app.settings.set("agents.min", min)
+    } catch (e) {
+      return (e as Error).message
+    }
+    return `The team may have ${t.min} to ${t.max} agents for this session; the lead is told with your next message.`
+  }
+  if (verb === "stop") {
+    const name = rest[0]
+    if (!name) return "/team stop <name> — a member and everything under it"
+    const gone = rt.personStop(name)
+    return gone.length ? `Stopped ${gone.join(", ")}; the lead is told with your next message.` : `No member called ${name} on the team.`
+  }
+  if (!t.offered)
+    return t.subagents ? `No team in this session: ${app.engine.model.ref} serves one request at a time, and a team needs two at once.` : "No team in this session: subagents are switched off (subagents: false)."
+  const since = Math.max(0, t.room.length - TEAM.read_max)
+  return `${t.read("lead", since)}\n\nSize ${t.min} to ${t.max} agents (/team size <min> <max>); /team stop <name> stops a member.`
+}
 
 /** `/agents [name]`: the subagents the task tool offers, or one of them — the text both the TUI and
  *  a client over ACP show. Making one (`new`) and handing one a task need a screen: the TUI's. */
@@ -175,6 +219,8 @@ export function expandSlash(app: App, text: string): Expanded | undefined {
       // List and describe anywhere; `new` and `<name> <task>` are the TUI's own.
       if (/^(new)\b/.test(arg) || arg.trim().split(/\s+/).length > 1) return { kind: "message", name, text: "/agents here lists and describes the subagents; making one or handing one a task is done at the terminal." }
       return { kind: "message", name, text: agentsText(app, arg) }
+    case "team":
+      return { kind: "message", name, text: teamText(app, arg) }
     case "init":
       // The prompt is ours; only what was typed after the name may attach files.
       return { kind: "prompt", name, prompt: initPrompt(app, arg), shown: t, attachFrom: arg }
