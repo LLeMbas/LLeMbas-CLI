@@ -5,13 +5,13 @@ import { parseArgs } from "node:util"
 import { createApp } from "./app.ts"
 import { attachmentsFor } from "./project/attach.ts"
 import { ConfigError, loadConfig } from "./config/load.ts"
-import { asMode, EFFORTS, MODES, type Effort, type Mode } from "./config/schema.ts"
+import { asMode, EFFORTS, MODES, type Mode } from "./config/schema.ts"
 import { isLocal, localRoot } from "./config/paths.ts"
 import { SettingError } from "./config/settings.ts"
 import { renderJson, renderPlain, settleJobs, terminalAsker } from "./headless.ts"
 import { enterLocal, localFor, LocalError, localRefusal, localTmp, LOCAL_FLAGS } from "./project/local.ts"
 import { findProject, setTrust, trustOf } from "./project/root.ts"
-import { effortsFor } from "./provider/effort.ts"
+import { isLevel, levelsFor } from "./provider/effort.ts"
 import { clientFor, ModelError, NOT_LOGGED_IN, resolveModel } from "./provider/index.ts"
 import { Store } from "./session/store.ts"
 import { promptTitle } from "./session/title.ts"
@@ -84,7 +84,7 @@ Local mode:
 Options for run:
   -m, --model conn/model    model to use (default: config.yaml \`model\`)
       --mode MODE           manual | edit | auto | plan
-  -e, --effort LEVEL        ${EFFORTS.join(" | ")} | off
+  -e, --effort LEVEL        ${EFFORTS.join(" | ")} | off | default (one the model offers)
   -y, --yes                 approve every ask (still never the hardline)
       --json                events as JSON lines
       --reasoning           show the model's reasoning
@@ -240,7 +240,7 @@ async function main() {
       cwd: process.cwd(),
       model: values.model,
       mode: asMode(values.mode),
-      effort: values.effort as Effort | "off" | undefined,
+      effort: values.effort,
       resume: values.session ?? (values.continue ? "last" : undefined),
     })
     if (done.reload) await (await import("./reload.ts")).restart(done.reload)
@@ -299,14 +299,13 @@ async function main() {
     if (!prompt && !process.stdin.isTTY) prompt = (await new Response(Bun.stdin.stream()).text()).trim()
     if (!prompt) fail('nothing to do: lembas run "your prompt"', 2)
     if (values.mode && !asMode(values.mode)) fail(`--mode must be one of ${MODES.join(", ")}`, 2)
-    if (values.effort && values.effort !== "off" && !(EFFORTS as readonly string[]).includes(values.effort))
-      fail(`--effort must be one of ${EFFORTS.join(", ")}, off`, 2)
+    if (values.effort && !isLevel(values.effort)) fail(`--effort must be one of ${EFFORTS.join(", ")}, off, default`, 2)
 
     const app = createApp({
       cwd: process.cwd(),
       model: values.model,
       mode: asMode(values.mode),
-      effort: values.effort as Effort | "off" | undefined,
+      effort: values.effort,
       asker: terminalAsker({ yes: values.yes ?? false, unattended: loadConfig().config.question?.unattended, theme: loadConfig().config.theme }),
       unattended: !values.yes && !process.stdin.isTTY,
       store: values["no-store"] ? false : undefined,
@@ -342,7 +341,8 @@ async function main() {
           spec.max_output ? `out ${spec.max_output}` : "",
           spec.vision ? "vision" : "",
           spec.tools === false ? "no-tools" : "",
-          spec.effort || spec.efforts ? `effort ${spec.effort ?? "off"} of ${effortsFor(m).join("/")}` : "",
+          ((l) => (l.control === "none" ? "" : `effort ${l.start} of ${l.levels.join("/")}`))(levelsFor(m)),
+          spec.parallel ? `parallel ${spec.parallel}` : spec.single_session ? "parallel 1" : "",
         ].filter(Boolean)
         console.log(`  ${m.ref}${bits.length ? "  — " + bits.join(", ") : ""}`)
       }

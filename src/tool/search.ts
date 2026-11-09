@@ -82,7 +82,7 @@ export const grepTool = defineTool({
       if (a.literal) args.push("-F")
       if (a.include) args.push("--glob", a.include)
       args.push("-e", a.pattern, target)
-      const r = await run(args, ctx.cwd, ctx.signal)
+      const r = await run(args, ctx.root, ctx.signal)
       if (r.code > 1) throw new ToolError(r.err.trim() || `rg exited ${r.code}`)
       for (const l of r.out.split("\n")) if (l) lines.push(l)
     } else {

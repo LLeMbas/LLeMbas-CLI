@@ -3,6 +3,7 @@
 // them, and counted as read so the model may edit them at once. The prompt text is unchanged.
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, resolve } from "node:path"
+import { promptPath } from "../prompt/assemble.ts"
 import type { ImagePart } from "../provider/types.ts"
 import type { ToolContext } from "../tool/tool.ts"
 import { isImage, loadImage } from "./image.ts"
@@ -34,6 +35,8 @@ export function attachmentsFor(text: string, ctx: Pick<ToolContext, "root" | "cw
     const rel = m[1]!.replace(/\\([ #])/g, "$1").replace(/[.,;:!?)]+$/, "")
     const abs = resolve(ctx.cwd, rel)
     if (allow && !allow(abs)) continue
+    // Named to the model as its tools read paths: from the project root, ~/… under home (context.md §11).
+    const named = promptPath(ctx.root, abs) + (rel.endsWith("/") && abs !== "/" ? "/" : "")
     const key = `${abs}#${m[2] ?? ""}-${m[3] ?? ""}`
     if (seen.has(key)) continue
     seen.add(key)
@@ -47,25 +50,25 @@ export function attachmentsFor(text: string, ctx: Pick<ToolContext, "root" | "cw
       const entries = readdirSync(abs, { withFileTypes: true })
         .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
         .sort()
-      out.push({ path: rel, text: `<directory path="${rel}">\n${entries.join("\n")}\n</directory>` })
+      out.push({ path: rel, text: `<directory path="${named}">\n${entries.join("\n")}\n</directory>` })
       continue
     }
     if (isImage(abs)) {
       if (!vision) {
-        out.push({ path: rel, text: `<image path="${rel}">(not attached: this model has no vision)</image>` })
+        out.push({ path: rel, text: `<image path="${named}">(not attached: this model has no vision)</image>` })
         continue
       }
       const img = loadImage(abs)
-      out.push(typeof img === "string" ? { path: rel, text: `<image path="${rel}">(not attached: ${img})</image>` } : { path: rel, text: `<image path="${rel}"/>`, image: img })
+      out.push(typeof img === "string" ? { path: rel, text: `<image path="${named}">(not attached: ${img})</image>` } : { path: rel, text: `<image path="${named}"/>`, image: img })
       continue
     }
     if (st.size > MAX_BYTES && !m[2]) {
-      out.push({ path: rel, text: `<file path="${rel}">\n(${st.size} bytes — too large to attach whole; read it in parts, or reference a range like @${rel}#1-200)\n</file>` })
+      out.push({ path: rel, text: `<file path="${named}">\n(${st.size} bytes — too large to attach whole; read it in parts, or reference a range like @${named}#1-200)\n</file>` })
       continue
     }
     const raw = readFileSync(abs)
     if (raw.subarray(0, 8192).includes(0)) {
-      out.push({ path: rel, text: `<file path="${rel}">\n(binary file, ${st.size} bytes)\n</file>` })
+      out.push({ path: rel, text: `<file path="${named}">\n(binary file, ${st.size} bytes)\n</file>` })
       continue
     }
     const lines = raw.toString("utf8").split("\n")
@@ -75,7 +78,7 @@ export function attachmentsFor(text: string, ctx: Pick<ToolContext, "root" | "cw
     const body = lines.slice(from - 1, to).map((l, i) => `${from + i}: ${l}`).join("\n")
     const range = m[2] ? ` lines="${from}-${to}"` : ""
     const more = !m[2] && lines.length > to ? `\n(${lines.length - to} more lines — read with offset ${to + 1})` : ""
-    out.push({ path: rel, text: `<file path="${rel}"${range}>\n${body}${more}\n</file>` })
+    out.push({ path: rel, text: `<file path="${named}"${range}>\n${body}${more}\n</file>` })
     if (!m[2]) {
       ctx.readFiles.add(abs)
       ctx.fileStamps.set(abs, st.mtimeMs)

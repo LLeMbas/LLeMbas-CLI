@@ -68,7 +68,7 @@ test("session, global and project scope: what is written where, and where a valu
   expect(readFileSync(join(cwd, ".agent/config.yaml"), "utf8")).toContain("auto_at: 0.6")
   expect(s.get("compaction.auto_at")).toMatchObject({ value: 0.6, source: "project" })
 
-  expect(() => s.set("effort", "max")).toThrow("takes")
+  expect(() => s.set("effort", "max")).toThrow("offers the levels")
   expect(() => s.set("update.channel", "beta", "project")).toThrow("can be set for: global")
 })
 

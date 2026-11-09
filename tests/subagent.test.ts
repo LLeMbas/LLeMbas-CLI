@@ -133,7 +133,9 @@ describe("worktrees", () => {
     await a.engine.prompt("fix it in a worktree")
     const child = fake!.requests[1].messages[0].content as string
     expect(child).toContain("You are working in a separate checkout")
-    expect(child).toMatch(/Project root: .*worktrees/)
+    // Named by its directory, never by an absolute path (context.md §11).
+    expect(child).toMatch(/Project: general-fix-average-[a-z0-9]+ \(paths are relative to its root\)/)
+    expect(child).not.toContain(root)
     expect(readFileSync(join(root, "calc.py"), "utf8")).toContain("len(v) - 1")
     const result = fake!.requests[4].messages.at(-1).content as string
     const branch = /branch (lembas\/general-fix-average-[a-z0-9]+)/.exec(result)?.[1]

@@ -18,7 +18,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { parse } from "yaml"
 import { connectionFiles, isLocal, paths } from "../config/paths.ts"
-import type { Connection, ModelSpec, WebuiConnection } from "../config/schema.ts"
+import { EFFORTS, type Connection, type ModelSpec, type WebuiConnection } from "../config/schema.ts"
 import { substituteDeep } from "../config/substitute.ts"
 import { instanceInfo, LembasError, models as listModels, normalise, personalization, type InstanceInfo, type Personalization, type ServedModel, type Tls } from "./client.ts"
 
@@ -94,12 +94,15 @@ export function specFor(m: ServedModel, connection: string): ModelSpec {
   if (m.max_output) out.max_output = m.max_output
   if (typeof m.temperature === "number" && m.temperature >= 0 && m.temperature <= 2) out.temperature = m.temperature
   if (typeof m.top_p === "number" && m.top_p >= 0 && m.top_p <= 1) out.top_p = m.top_p
-  if (m.efforts?.length) out.efforts = m.efforts
+  // [] is said: the model takes no efforts (its one level is `default`), unlike an absent list.
+  if (Array.isArray(m.efforts)) out.efforts = m.efforts.filter((e) => (EFFORTS as readonly string[]).includes(e))
   if (m.effort) out.effort = m.effort
+  if (m.thinking_switch === true) out.thinking_switch = true
   if (m.vision !== undefined) out.vision = m.vision
   if (m.tools !== undefined) out.tools = m.tools
   if (m.notes) out.notes = m.notes.slice(0, 300)
   if (m.capacity?.single_session) out.single_session = true
+  if (Number.isInteger(m.capacity?.parallel) && m.capacity!.parallel! >= 1) out.parallel = m.capacity!.parallel
   if (m.capacity?.group) out.group = `${connection}:${m.capacity.group}`
   return out as ModelSpec
 }

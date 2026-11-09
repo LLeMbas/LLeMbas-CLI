@@ -33,7 +33,8 @@ import { addPendingDeleted, clearPendingDeleted, pendingDeleted } from "./pendin
 import { shellLaunch } from "./shellrc.ts"
 import { sessionTurnFile, sessionTurns, TurnLog } from "./turns.ts"
 import { expandHome } from "../config/paths.ts"
-import { asMode, EFFORTS, MODES, type Effort, type Mode } from "../config/schema.ts"
+import { asMode, MODES, type Mode } from "../config/schema.ts"
+import { isLevel, readLevel, type Level } from "../provider/effort.ts"
 import { HARNESS_VERSION } from "../harness.ts"
 import { findProject, trustedRoots, trustedWithin, trustOf } from "../project/root.ts"
 import { VERSION } from "../version.ts"
@@ -131,10 +132,10 @@ interface Terminal {
 /** Most terminals one link may hold at once. */
 const MAX_TERMINALS = 4
 
-/** An effort as the instance sends it: a level, or "off"; anything else is not one. */
-export function effortOf(v: unknown): Effort | "off" | undefined {
-  if (v === "off" || v === "" || v === null) return "off"
-  return typeof v === "string" && (EFFORTS as readonly string[]).includes(v) ? (v as Effort) : undefined
+/** An effort level as the instance sends it (an effort, "off" or "default"); anything else is not
+ *  one. Whether the model offers it is the session's to decide (readLevel). */
+export function effortOf(v: unknown): Level | undefined {
+  return isLevel(v) ? v : undefined
 }
 
 const MODE_RANK: Record<Mode, number> = { auto: 0, edit: 1, manual: 2, plan: 3 }
@@ -619,7 +620,7 @@ export class AcpAgent {
       sessionId: id,
       modes: { currentModeId: session.app.engine.mode, availableModes: this.modes().map((m) => ({ id: m, name: m })) },
       // `instance` (spec 3.0.0): the model is one this link's instance serves, as the model event says.
-      _meta: { lembas: { model: session.app.engine.model.ref, mode: session.app.engine.mode, effort: session.app.engine.effort ?? "off", instance: this.isInstance(session.app.engine.model.connectionName) } },
+      _meta: { lembas: { model: session.app.engine.model.ref, mode: session.app.engine.mode, effort: session.app.engine.effort, instance: this.isInstance(session.app.engine.model.connectionName) } },
     }
   }
 
@@ -672,8 +673,9 @@ export class AcpAgent {
       s.app.switchModel(ref)
     }
     const effort = effortOf(p?.effort)
-    if (effort !== undefined) s.app.engine.effort = effort === "off" ? null : effort
-    return { model: s.app.engine.model.ref, effort: s.app.engine.effort ?? "off" }
+    // A level the model does not offer is read as its start level; the answer says the one used.
+    if (effort !== undefined) s.app.engine.effort = readLevel(s.app.engine.model, effort)
+    return { model: s.app.engine.model.ref, effort: s.app.engine.effort }
   }
 
   private modes(): Mode[] {

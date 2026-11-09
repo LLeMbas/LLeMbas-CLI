@@ -870,7 +870,7 @@
       "type": "string"
     },
     "effort": {
-      "description": "The effort a session starts with, when the model takes it; otherwise the model's own default.",
+      "description": "The effort level a session starts with, when the model offers it: an effort, off (thinking switched off, on a model with the switch) or default; otherwise the model's own start level.",
       "anyOf": [
         {
           "type": "string",
@@ -886,8 +886,41 @@
         {
           "type": "string",
           "const": "off"
+        },
+        {
+          "type": "string",
+          "const": "default"
         }
       ]
+    },
+    "agents": {
+      "description": "Teams (harness team.md): how many agents a session's team may have. Offered only where subagents are on and the model serves two requests at once. /agents changes it for the session.",
+      "type": "object",
+      "properties": {
+        "min": {
+          "description": "The fewest agents a team works with, the lead included (default 1). 2 or more: the lead works through a team from the start.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "max": {
+          "description": "The most agents a team may have, the lead included (default 4). 1: one agent, no team and no helper.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "cap": {
+          "description": "Global config only. The highest max a session may set (default 32).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "subagents": {
+      "description": "false: no subagents — no task tool and no team.",
+      "type": "boolean"
     },
     "settings_tool": {
       "description": "Global config only. The agent's settings tool: ask (default) — each change is approved like any tool call; allow — changes go through without asking (a less strict mode still asks); off — no settings tool.",

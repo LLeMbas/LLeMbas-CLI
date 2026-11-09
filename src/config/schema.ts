@@ -51,15 +51,17 @@ export const ModelSpec = z.strictObject({
   max_output: z.number().int().positive().optional().describe("Max tokens per reply."),
   temperature: z.number().min(0).max(2).optional().describe("Sampling temperature; absent = the server's default."),
   top_p: z.number().min(0).max(1).optional().describe("Nucleus sampling; absent = the server's default."),
-  efforts: z.array(z.enum(EFFORTS)).optional().describe("The model's own effort vocabulary, in offering order."),
-  effort: z.union([z.enum(EFFORTS), z.literal("off")]).optional().describe("Default effort; `off` sends none."),
+  efforts: z.array(z.enum(EFFORTS)).optional().describe("The model's own effort vocabulary, in offering order. [] — it takes none (its one level is `default`)."),
+  thinking_switch: z.boolean().optional().describe("The server turns thinking off for a request with chat_template_kwargs.enable_thinking false: only then is the level `off` offered."),
+  effort: z.union([z.enum(EFFORTS), z.literal("off"), z.literal("default")]).optional().describe("The level a conversation starts with, when the model offers it: an effort, `off` (thinking switched off, with thinking_switch) or `default` (nothing sent, for a model that takes no efforts)."),
   effort_style: z.enum(["top", "kwargs", "both"]).optional().describe("Where the effort goes in a request: top-level, in chat_template_kwargs, or both (the default: llama.cpp drops top-level)."),
   vision: z.boolean().optional().describe("The model reads images: @image files, pasted paths and view_image."),
   tools: z.boolean().optional().describe("false: a model without tool calls — it can only talk."),
   headers: z.record(z.string(), z.string()).optional().describe("Extra HTTP headers for this model's requests."),
   body: z.record(z.string(), z.unknown()).optional().describe("Merged into every request body for this model."),
   notes: z.string().max(300).optional().describe("What this model is good at, in a line: the model in use is told which others there are, for handing work over (task) or switching."),
-  single_session: z.boolean().optional().describe("The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused."),
+  single_session: z.boolean().optional().describe("The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused. The same as parallel: 1."),
+  parallel: z.number().int().positive().optional().describe("How many requests the model's server serves at once (capacity.parallel); wins over single_session. Absent with no single_session: no limit (a hosted API). A team is offered only on a model that serves at least 2."),
   group: z.string().optional().describe("Models sharing one GPU server that holds one model at a time (llama-swap), as the LLeMbas server says (capacity.group): a subagent on another model of the same group would unload this one, so it is refused."),
 })
 export type ModelSpec = z.infer<typeof ModelSpec>
@@ -293,7 +295,16 @@ export const Config = z.strictObject({
   mcp: z.record(z.string(), McpServer).optional().describe("MCP servers by name. `{env:}`/`{file:}` are filled in per server (a missing one disables that server only). A project's servers count only once the project is trusted."),
   knowledge: z.array(z.string()).optional().describe("The knowledge bases searched (lembas kb); absent: all of them. A project's own config narrows it to what that project needs."),
   embedding: z.string().optional().describe("Global config only. An embedding model the LLeMbas server serves, by its id there: knowledge bases are then searched by meaning as well as by words. lembas kb reindex after changing it."),
-  effort: z.union([z.enum(EFFORTS), z.literal("off")]).optional().describe("The effort a session starts with, when the model takes it; otherwise the model's own default."),
+  effort: z.union([z.enum(EFFORTS), z.literal("off"), z.literal("default")]).optional().describe("The effort level a session starts with, when the model offers it: an effort, off (thinking switched off, on a model with the switch) or default; otherwise the model's own start level."),
+  agents: z
+    .strictObject({
+      min: z.number().int().min(1).optional().describe("The fewest agents a team works with, the lead included (default 1). 2 or more: the lead works through a team from the start."),
+      max: z.number().int().min(1).optional().describe("The most agents a team may have, the lead included (default 4). 1: one agent, no team and no helper."),
+      cap: z.number().int().min(1).optional().describe("Global config only. The highest max a session may set (default 32)."),
+    })
+    .optional()
+    .describe("Teams (harness team.md): how many agents a session's team may have. Offered only where subagents are on and the model serves two requests at once. /agents changes it for the session."),
+  subagents: z.boolean().optional().describe("false: no subagents — no task tool and no team."),
   settings_tool: z.enum(["ask", "allow", "off"]).optional().describe("Global config only. The agent's settings tool: ask (default) — each change is approved like any tool call; allow — changes go through without asking (a less strict mode still asks); off — no settings tool."),
   update: Update.optional().describe("Global config only. Updating LLeMbas CLI itself."),
   prototypes: z.boolean().optional().describe("Global config only. Offer the model prototypes: a complete HTML page in a `prototype-chat` or `prototype-page` fence, saved as a file under the state directory (prototypes/<session>/) and listed by /prototype; the LLeMbas web UI renders the same fences live. Default false."),

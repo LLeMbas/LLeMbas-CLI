@@ -139,11 +139,18 @@ describe("openai-chat streaming", () => {
     expect(fake.requests[0].chat_template_kwargs).toEqual({ reasoning_effort: "high" })
   })
 
-  test("effort outside the vocabulary is not sent", async () => {
-    fake = fakeProvider([{ chunks: [delta({ content: "ok" })] }])
+  test("a level the model does not offer is read as its start level (spec 3.2.0 levels)", async () => {
+    fake = fakeProvider([{ chunks: [delta({ content: "ok" })] }, { chunks: [delta({ content: "ok" })] }, { chunks: [delta({ content: "ok" })] }])
     await collect(new OpenAIChatClient(model(fake.url, { efforts: ["low"] })), "high")
-    expect(fake.requests[0].reasoning_effort).toBeUndefined()
-    expect(fake.requests[0].chat_template_kwargs).toBeUndefined()
+    expect(fake.requests[0].reasoning_effort).toBe("low")
+    // off: only with the switch, and then enable_thinking false and no effort anywhere.
+    await collect(new OpenAIChatClient(model(fake.url, { efforts: ["medium"], thinking_switch: true })), "off")
+    expect(fake.requests[1].reasoning_effort).toBeUndefined()
+    expect(fake.requests[1].chat_template_kwargs).toEqual({ enable_thinking: false })
+    // default: a model that takes no efforts — nothing sent.
+    await collect(new OpenAIChatClient(model(fake.url, { efforts: [] })), "default")
+    expect(fake.requests[2].reasoning_effort).toBeUndefined()
+    expect(fake.requests[2].chat_template_kwargs).toBeUndefined()
   })
 
   test("template refuses an effort → retried without it, vocabulary learned from the message", async () => {

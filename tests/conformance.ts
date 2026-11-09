@@ -7,13 +7,14 @@ import { splitCommand, words } from "../src/permission/bash.ts"
 import { prefix } from "../src/permission/arity.ts"
 import { split } from "../src/library/chunks.ts"
 import { ThinkSplitter } from "../src/provider/think.ts"
-import { advertisedEfforts, effortRefused } from "../src/provider/effort.ts"
+import { advertisedEfforts, effortRefused, levelFields, levelsOf, type LevelMeta } from "../src/provider/effort.ts"
 import { replace } from "../src/tool/replace.ts"
 import { applyUnified, parseUnified } from "../src/tool/unidiff.ts"
 import { derive, joinBom, parse } from "../src/tool/patch.ts"
 import type { Mode, PermissionConfig } from "../src/config/schema.ts"
 import { apply, fromTodos, normalise, type Plan } from "../src/plan/plan.ts"
-import { ToolCallAccumulator } from "../src/provider/openai-chat.ts"
+import { ToolCallAccumulator, toOpenAIMessages } from "../src/provider/openai-chat.ts"
+import type { Message } from "../src/provider/types.ts"
 import { parseInfo, titleFor } from "../src/prototype/fence.ts"
 import { resolveBase } from "../src/library/store.ts"
 import { NarrowError, narrowParameters, type Narrow } from "../src/harness.ts"
@@ -24,8 +25,11 @@ import { readBody } from "../src/tool/read.ts"
 import { applyOps, type Op, type Target } from "../src/memory/store.ts"
 import { jobNote, type NoteCase } from "../src/jobs/note.ts"
 import { compactAsk, noteFor, offeredFor, toldAt, unavailable, type Now, type Requirement, type Told } from "../src/session/prefix.ts"
-import { promptText } from "../src/prompt/assemble.ts"
+import { envLines, promptText } from "../src/prompt/assemble.ts"
+import { absPath, type ToolContext } from "../src/tool/tool.ts"
 import { TOOL_SPECS } from "../src/harness.ts"
+import { Team, TEAM_TOOLS, type Capacity } from "../src/team/team.ts"
+import { noteBlock } from "../src/session/prefix.ts"
 
 type Case = Record<string, unknown>
 
@@ -68,6 +72,14 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
     return out
   },
   effort: (c) => ({ refused: effortRefused(c.message as string), advertised: advertisedEfforts(c.message as string) }),
+  // Effort levels (models/schema.json `levels`): what a model offers, how it is shown, where it
+  // starts, and what a request carries for a level.
+  levels: (c) => {
+    const meta = c.model as LevelMeta
+    if (c.op === "levels") return levelsOf(meta)
+    if (c.op === "request") return levelFields(meta, c.level as string)
+    throw new Error(`levels: unknown op ${String(c.op)}`)
+  },
   edit: (c) => {
     try {
       return { content: replace(c.content as string, c.old as string, c.new as string, c.all === true) }
@@ -203,6 +215,82 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
         return { system: k.system, tools: k.tools, ask: compactAsk() }
       }
       throw new Error(`prefix: unknown op ${String(st.op)}`)
+    })
+  },
+  // Reasoning sent back during its turn (context.md §8): the history as the OpenAI chat dialect
+  // sends it — role, content and reasoning_content (tool calls and ids left out, as the cases do).
+  reasoning: (c) => {
+    const history: Message[] = (c.messages as Record<string, any>[]).map((m, i): Message => {
+      if (m.role === "user") return { role: "user", parts: [{ type: "text", text: m.content }], ...(m.turn === false ? { turn: false as const } : {}) }
+      if (m.role === "assistant") return { role: "assistant", parts: [...(m.reasoning !== undefined ? [{ type: "reasoning" as const, text: m.reasoning }] : []), ...(m.content ? [{ type: "text" as const, text: m.content }] : [])] }
+      return { role: "tool", callId: `c${i}`, name: "read", content: m.content }
+    })
+    return (toOpenAIMessages("", history, false) as Record<string, any>[]).map((m) => ({ role: m.role, content: m.content ?? "", ...(m.reasoning_content !== undefined ? { reasoning_content: m.reasoning_content } : {}) }))
+  },
+  // No absolute paths (context.md §11): the environment block's lines, and how a tool reads a path.
+  paths: (c) => {
+    if (c.op === "env") return envLines(c.root as string, c.started as string)
+    if (c.op === "resolve") return absPath(c.path as string, { root: (c.root as string).replace(/\/+$/, ""), cwd: c.started as string } as ToolContext)
+    throw new Error(`paths: unknown op ${String(c.op)}`)
+  },
+  // Teams (team.md): one lead session's team, step by step, through the CLI's own rules
+  // (team/team.ts); the app drives the same class from real turns.
+  team: (c) => {
+    const start = c.start as { min: number; max: number; subagents?: boolean; capacity: Capacity }
+    let capacity = start.capacity
+    const team = new Team({ min: start.min, max: start.max, subagents: start.subagents, model: "m", capacity: () => capacity })
+    const delivered = () => {
+      const out: Record<string, string[]> = {}
+      for (const d of team.delivered.splice(0)) (out[d.name] ??= []).push(d.text)
+      return out
+    }
+    return (c.steps as Record<string, any>[]).map((st) => {
+      const by = (st.by as string | undefined) ?? "lead"
+      switch (st.op) {
+        case "offered": {
+          const a = team.get(by)!
+          const tools = !team.offered ? [] : a.leads ? [...TEAM_TOOLS] : ["team_read", "team_send"]
+          return { tools: tools.sort(), setting: team.offered }
+        }
+        case "call": {
+          const args = st.args as Record<string, any>
+          let result: string | null
+          if (st.tool === "team_read") {
+            const no = team.offered ? team.unavailable() : "unavailable"
+            const room = no ? [] : team.readRoom(by, args.since ?? 0).messages.map((m) => ({ n: m.n, from: m.from, to: m.to.join(", ") }))
+            return { room, delivered: delivered() }
+          }
+          if (st.tool === "team_add") result = team.add(by, args as any).text
+          else if (st.tool === "team_send") result = team.send(by, args as any)
+          else if (st.tool === "team_stop") result = team.stopCmd(by, args.name)
+          else {
+            result = team.refusal(by, st.tool, args) ?? null
+            if (st.tool === "task" && result === null && team.offered) team.helperStart(by)
+          }
+          return { result, delivered: delivered() }
+        }
+        case "finish":
+          team.finish(by, st.reply ?? "", st.reason ?? "stop")
+          return { delivered: delivered() }
+        case "helper_done":
+          team.helperDoneBy(by)
+          return null
+        case "set":
+          if (st.capacity) capacity = st.capacity
+          if (st.min !== undefined || st.max !== undefined) team.setSetting(st.min ?? team.min, st.max ?? team.max)
+          return null
+        case "person_stop":
+          team.personStop(st.name)
+          return null
+        case "user": {
+          const lines = team.noteLines()
+          team.leadWants()
+          return { note: lines.length ? noteBlock(lines) : null }
+        }
+        case "state":
+          return team.state()
+      }
+      throw new Error(`team: unknown op ${String(st.op)}`)
     })
   },
   library_scope: (c) => resolveBase(c.bases as { id: string; name: string }[], c.base as string | null),

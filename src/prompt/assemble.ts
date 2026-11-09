@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
-import { platform, release } from "node:os"
-import { dirname, join, relative, resolve, sep } from "node:path"
+import { homedir, platform, release } from "node:os"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { LOOP } from "../harness.ts"
 import type { Mode } from "../config/schema.ts"
 import { expandHome, paths } from "../config/paths.ts"
 import { render, type Plan } from "../plan/plan.ts"
@@ -268,6 +269,29 @@ export interface PromptContext {
 
 const MAX_INSTRUCTION_CHARS = 40_000
 
+/** The environment block's lines about where the session works (loop.json `context.env`, spec
+ *  3.2.0): the project by its root's last path component, and — started below the root — that
+ *  directory relative to it. No absolute path. */
+export function envLines(root: string, started: string): string[] {
+  const r = resolve(root)
+  const name = basename(r) || r
+  const lines = [fillPrompt(LOOP.context.env.project, { name })]
+  const rel = relative(r, resolve(started))
+  if (rel && !rel.startsWith("..") && !isAbsolute(rel)) lines.push(fillPrompt(LOOP.context.env.started, { path: rel }))
+  return lines
+}
+
+/** A path as a prompt names it (context.md §11): relative to the project root inside it, `~/…`
+ *  under the person's home, absolute only outside both. */
+export function promptPath(root: string, path: string): string {
+  const rel = relative(resolve(root), path)
+  if (rel === "") return "."
+  if (!rel.startsWith("..") && !isAbsolute(rel)) return rel
+  const home = homedir()
+  if (home && home !== "/" && (path === home || path.startsWith(home + sep))) return `~${path.slice(home.length)}`
+  return path
+}
+
 /** The system prompt (harness spec; its stability is context.md §10, from 3.1.0). It is made once
  *  per session — at the start, after a compaction, on a model switch — and the engine resends
  *  those bytes on every request, so nothing in it may be a clock or anything else that moves on
@@ -305,8 +329,8 @@ export function assembleSystem(ctx: PromptContext): string {
   sections.push(
     [
       "<env>",
-      `Working directory: ${ctx.cwd}`,
-      `Project root: ${ctx.root}`,
+      // No absolute path (context.md §11): the project by its name, relative paths against its root.
+      ...envLines(ctx.root, ctx.cwd),
       `Git repository: ${ctx.isGit ? "yes" : "no"}`,
       `Platform: ${platform()} ${release()}`,
       // No date: it would change at midnight and the whole session be read again (§10 rule 2).
@@ -322,10 +346,10 @@ export function assembleSystem(ctx: PromptContext): string {
   const files = ctx.files ?? instructionFiles(ctx.cwd, ctx.root, ctx.instructions)
   for (const f of files) {
     let text = f.text.trim()
+    // A file in the project by its path from the root, one under home as ~/… (context.md §11).
+    const named = promptPath(ctx.root, f.path)
     if (text.length > MAX_INSTRUCTION_CHARS)
-      text = text.slice(0, MAX_INSTRUCTION_CHARS) + `\n[…truncated: kept ${MAX_INSTRUCTION_CHARS} of ${f.text.length} characters; read ${f.path} for the rest]`
-    // The chain's files by their path in the project (the spec's "relative to the boundary").
-    const named = f.chain ? relative(ctx.root, f.path) || f.path : f.path
+      text = text.slice(0, MAX_INSTRUCTION_CHARS) + `\n[…truncated: kept ${MAX_INSTRUCTION_CHARS} of ${f.text.length} characters; read ${named} for the rest]`
     sections.push(`Instructions from ${named}:\n<instructions>\n${text}\n</instructions>`)
   }
 
@@ -393,7 +417,7 @@ function agentsBlock(ctx: PromptContext, files: { path: string; text: string; ch
   // Files handed in without the mark (an older caller): anything but the global file, as before.
   const marked = files.some((f) => f.chain)
   const own = files.filter((f) => (marked ? f.chain : f.path !== join(paths.config, "AGENTS.md")))
-  const vars = { root: ctx.root, git_question: ctx.isGit ? GIT_QUESTION : GIT_QUESTION_NO_REPO }
+  const vars = { git_question: ctx.isGit ? GIT_QUESTION : GIT_QUESTION_NO_REPO }
   if (!own.length) return fillPrompt(promptText("blocks/agents-missing.md"), vars)
   const keep = promptText("blocks/agents-keep.md")
   return own.some((f) => /^#{1,3}\s*git\b/im.test(f.text)) ? keep : `${fillPrompt(promptText("blocks/agents-git.md"), vars)}\n\n${keep}`

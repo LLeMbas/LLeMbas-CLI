@@ -210,7 +210,7 @@ test("_lembas/directories is for the link only: an editor's ACP session has no r
 test("the chat's model and effort: named by the instance, at the start and between prompts", async () => {
   fake = fakeProvider([{ chunks: [delta({ content: "one" })] }, { chunks: [delta({ content: "two" })] }])
   mkdirSync(paths.config, { recursive: true })
-  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  example:\n    type: webui\n    url: ${fake.url}\n    models: { bonsai: {}, deepseek-flash: { efforts: [low, medium, high] } }\n`, { mode: 0o600 })
+  writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  example:\n    type: webui\n    url: ${fake.url}\n    models: { bonsai: { thinking_switch: true, efforts: [medium] }, deepseek-flash: { efforts: [low, medium, high] } }\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), "model: bonsai\n")
   const root = project()
   const { c } = await client({ roots: [root], maxMode: "auto", approvalTimeoutMs: 50, requireTrust: true }, undefined, "example")
@@ -225,7 +225,11 @@ test("the chat's model and effort: named by the instance, at the start and betwe
   expect(changed).toEqual({ model: "bonsai", effort: "off" })
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "again" }] })
   expect(fake.requests.at(-1).model).toBe("bonsai")
+  // off (spec 3.2.0): thinking switched off, and no effort anywhere.
   expect(JSON.stringify(fake.requests.at(-1))).not.toContain("reasoning_effort")
+  expect(fake.requests.at(-1).chat_template_kwargs).toEqual({ enable_thinking: false })
+  // A level the model does not offer is read as its start level, and the answer says which.
+  expect(await c.request<any>("_lembas/configure", { sessionId: s.sessionId, model: "deepseek-flash", effort: "off" })).toEqual({ model: "deepseek-flash", effort: "medium" })
 })
 
 test("the chat's model, full stop (spec 3.0.0): `instance` on session/new; a model the device cannot run is -32602, never its own", async () => {

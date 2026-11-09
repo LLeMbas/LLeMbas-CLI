@@ -12,10 +12,9 @@ import { boardSummary } from "./project/board.ts"
 import { unsafeProjectFile } from "./project/safe.ts"
 import { Bus, type Asker } from "./bus/index.ts"
 import { loadConfig, type Loaded } from "./config/load.ts"
-import type { Effort, Mode } from "./config/schema.ts"
+import type { Mode } from "./config/schema.ts"
 import { DEFAULT_RULES, toRules } from "./permission/evaluate.ts"
 import { hardlineRules } from "./permission/hardline.ts"
-import { defaultEffort } from "./provider/effort.ts"
 import { clientFor, familyOf, resolveModel } from "./provider/index.ts"
 import { assembleSystem, instructionFiles, knowledgeScope, modeText } from "./prompt/assemble.ts"
 import type { Changing } from "./session/prefix.ts"
@@ -45,14 +44,15 @@ import type { Plan } from "./plan/plan.ts"
 import { LIBRARY_SERVER, mcpInstructions } from "./mcp/index.ts"
 import type { McpServer } from "./config/schema.ts"
 import { embedderFor } from "./library/embed.ts"
-import { effortsFor } from "./provider/effort.ts"
+import { isLevel, levelsFor, readLevel, type Level } from "./provider/effort.ts"
 
 export interface AppOptions {
   cwd: string
   model?: string
   mode?: Mode
-  /** undefined = the model's default; "off" = none */
-  effort?: Effort | "off"
+  /** The effort level asked for (an effort, "off" or "default"); undefined, or one the model does
+   *  not offer: its start level. */
+  effort?: string
   asker: Asker
   store?: Store | false
   /** Nobody can answer an approval (headless, no --yes). Said in the system prompt up front. */
@@ -215,13 +215,10 @@ export function createApp(o: AppOptions): App {
   // An untrusted project is read-only: plan mode, and its own config is ignored.
   let mode: Mode = o.mode ?? loaded.config.mode ?? "manual"
   if (trust === "readonly") mode = "plan"
-  // `effort:` in config when this model takes it, else the model's own default.
-  const startEffort = (m: ResolvedModel) => {
-    const e = loaded.config.effort
-    if (e === "off") return null
-    return e && effortsFor(m).includes(e) ? e : defaultEffort(m)
-  }
-  const effort = o.effort === "off" ? null : (o.effort ?? startEffort(model))
+  // `effort:` in config when this model offers that level, else the model's own start level
+  // (harness models/schema.json `levels`).
+  const startEffort = (m: ResolvedModel): Level => readLevel(m, loaded.config.effort)
+  const effort: Level = o.effort !== undefined && isLevel(o.effort) && (levelsFor(model).levels as string[]).includes(o.effort) ? o.effort : startEffort(model)
   // One object for the session's lifetime, so a setting changed later reaches the tools.
   loaded.config.search ??= {}
   const bus = o.bus ?? new Bus()
@@ -468,7 +465,9 @@ export function createApp(o: AppOptions): App {
     // its server can take it beside the session's and beside every subagent already running
     // (src/session/capacity.ts), before anything is made.
     const m = opts.model ? resolveModel(loaded, opts.model) : spec.model ? resolveModel(loaded, spec.model) : engine.model
-    const refused = capacityRefusal(engine.model, m) || registry.running(jobsSessionId()).filter((j) => j.kind === "subagent" && j.subagent).map((j) => capacityBeside(j.subagent!.engine.model, m)).find(Boolean)
+    const running = registry.running(jobsSessionId()).filter((j) => j.kind === "subagent" && j.subagent)
+    const onIt = running.filter((j) => j.subagent!.engine.model.ref === m.ref).length
+    const refused = capacityRefusal(engine.model, m, onIt) || running.map((j) => capacityBeside(j.subagent!.engine.model, m, onIt)).find(Boolean)
     if (refused) throw new ToolError(`${refused} Do this part yourself, or hand it to a model on another connection.`)
     // A checkout and branch of its own, when asked for (the task's worktree, the agent's isolation).
     let wt: Worktree | undefined
@@ -545,7 +544,7 @@ export function createApp(o: AppOptions): App {
           {
             name: spec.name,
             instructions: wt
-              ? `${spec.instructions}\n\nYou are working in a separate checkout of the repository, at ${at!.root}, on the branch ${wt.branch} (made from the last commit — uncommitted work of the main agent is not here). Work only inside it. When you finish, your changes are committed on that branch for the main agent to merge: do not commit, merge or push yourself.`
+              ? `${spec.instructions}\n\nYou are working in a separate checkout of the repository — its root is your project root, so relative paths reach it — on the branch ${wt.branch} (made from the last commit — uncommitted work of the main agent is not here). Work only inside it. When you finish, your changes are committed on that branch for the main agent to merge: do not commit, merge or push yourself.`
               : spec.instructions,
             report: childTools.some((t) => t.name === "report"),
             skills: childTools.some((t) => t.name === "skill_view"),
@@ -721,19 +720,19 @@ export function createApp(o: AppOptions): App {
     },
     live(key) {
       if (key === "model") return engine.model.ref
-      if (key === "effort") return engine.effort ?? "off"
+      if (key === "effort") return engine.effort
       if (key === "mode") return engine.mode
       return key.split(".").reduce<unknown>((x, k) => (x && typeof x === "object" ? (x as Record<string, unknown>)[k] : undefined), loaded.config)
     },
     check(key, v) {
       if (key === "model" || key === "small_model") resolveModel(loaded, String(v))
-      if (key === "effort" && v !== "off" && !effortsFor(engine.model).includes(v as Effort))
-        throw new Error(`${engine.model.ref} takes ${effortsFor(engine.model).join(", ")} or off`)
+      if (key === "effort" && !(levelsFor(engine.model).levels as string[]).includes(String(v)))
+        throw new Error(`${engine.model.ref} offers the levels ${levelsFor(engine.model).levels.join(", ")}`)
       if (key === "knowledge") for (const b of v as string[]) if (!library.base(b)) throw new Error(`there is no knowledge base "${b}" — lembas kb lists them`)
     },
     apply(key, v) {
       if (key === "model") switchModel(String(v))
-      else if (key === "effort") engine.effort = v === "off" ? null : (v as Effort)
+      else if (key === "effort") engine.effort = v as Level
       else if (key === "mode") engine.mode = v as Mode
       else if (key === "limits.steps") engine.o.maxSteps = Number(v)
       else if (key === "busy_input") engine.busyInput = v as "steer" | "queue"

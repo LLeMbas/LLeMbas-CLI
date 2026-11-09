@@ -154,6 +154,12 @@ function readConfig(file: string, label: string, notes: string[], dropped?: stri
         delete all[k]
         dropped.push(k)
       }
+  // The team's cap is the global configuration's: a project never raises it (harness team.md §2).
+  if (dropped && all.agents && typeof all.agents === "object" && !Array.isArray(all.agents) && "cap" in all.agents) {
+    const { cap: _cap, ...agents } = all.agents as Record<string, unknown>
+    all.agents = agents
+    dropped.push("agents.cap")
+  }
   // mcp, voice and search are filled in later, one server / half / service at a time: a key that
   // cannot be read turns off that one thing instead of the whole file.
   // update: filled in when an update is looked for — a token file missing must not stop a start.

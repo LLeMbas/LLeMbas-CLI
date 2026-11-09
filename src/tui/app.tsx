@@ -3,7 +3,8 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { stricterMode, type App as Runtime } from "../app.ts"
 import { isLocal } from "../config/paths.ts"
-import type { Effort, Mode } from "../config/schema.ts"
+import type { Mode } from "../config/schema.ts"
+import { levelLabel, type Level } from "../provider/effort.ts"
 import { COMMANDS, findCommand, type CommandCtx } from "./commands.ts"
 import { Dialog, type DialogSpec } from "./components/dialog.tsx"
 import { Messages } from "./components/messages.tsx"
@@ -58,7 +59,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   const refresh = () => setRev((n) => n + 1)
   const mode = () => (rev(), app.engine.mode)
   const model = () => (rev(), app.engine.model.ref)
-  const effort = () => (rev(), app.engine.effort ?? "")
+  const effort = () => (rev(), levelLabel(app.engine.model, app.engine.effort))
   const busy = () => view.state.phase !== "idle"
   const branch = () => (rev(), app.project.gitRoot ? currentBranch(app.project.gitRoot) : undefined)
   // A word in the status bar that goes by itself (a copy): it says something happened without
@@ -223,8 +224,8 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     setMode(m: Mode) {
       app.settings.set("mode", m)
     },
-    setEffort(e: Effort | null) {
-      app.settings.set("effort", e ?? "off")
+    setEffort(e: Level) {
+      app.settings.set("effort", e)
     },
     setTheme(name: string) {
       try {
@@ -246,7 +247,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
       confirmStop("reload", () => {
         // Back on this session, with what it was using; everything else comes from the files again.
         const e = app.engine
-        const args = [...(isLocal() ? ["-l"] : []), ...(e.sessionId ? ["-s", e.sessionId] : []), "-m", e.model.ref, "--mode", e.mode, "-e", e.effort ?? "off"]
+        const args = [...(isLocal() ? ["-l"] : []), ...(e.sessionId ? ["-s", e.sessionId] : []), "-m", e.model.ref, "--mode", e.mode, "-e", e.effort]
         void app
           .close()
           .catch(() => {})
@@ -402,7 +403,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     const id = view.shellStart(command)
     const t0 = performance.now()
     bashTool
-      .run({ command }, { ...app.engine.o.toolCtx, signal: new AbortController().signal, bashTimeline: false })
+      .run({ command, cwd: app.engine.o.toolCtx.cwd }, { ...app.engine.o.toolCtx, signal: new AbortController().signal, bashTimeline: false })
       .then((r) => {
         view.shellEnd(id, r, performance.now() - t0)
         app.engine.pendingContext.push(`<shell command="${command.replaceAll('"', "'")}">\n${r.output}\n</shell>`)

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { createApp } from "../src/app.ts"
 import type { AskReply, Event } from "../src/bus/index.ts"
 import { paths } from "../src/config/paths.ts"
@@ -49,7 +49,8 @@ describe("end to end", () => {
     expect(fake!.requests[1].messages.at(-1).content).toMatch(/^\[#0001 hello\.txt lines 1-1 of 1 sha [0-9a-f]{8}\]\n1: hello world$/)
     expect(fake!.requests[2].messages.at(-1).content).toMatch(/^\[#0002 hello\.txt sha [0-9a-f]{8}\]\n@@ -1,1 \+1,1 @@\n-hello world\n\+hello lembas$/)
     // System prompt carries env and the mode.
-    expect(fake!.requests[0].messages[0].content).toContain(`Project root: ${dir}`)
+    expect(fake!.requests[0].messages[0].content).toContain(`Project: ${basename(dir)} (paths are relative to its root)`)
+    expect(fake!.requests[0].messages[0].content).not.toContain(dir)
     expect(fake!.requests[0].messages[0].content).toContain("Permission mode: edit")
     // knowledge_search/get are offered once any knowledge base has documents, and the suite shares
     // one LEMBAS_HOME: another file's base must not decide this list (found in the full run).

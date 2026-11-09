@@ -19,7 +19,7 @@ export type Source = "default" | "global" | "project" | "session"
 
 export interface SettingDef {
   key: string
-  /** model: a model the server serves, by its id; effort: one the model takes, or off; list: comma-separated. */
+  /** model: a model the server serves, by its id; effort: one of the model's levels; list: comma-separated. */
   kind: "enum" | "model" | "effort" | "number" | "boolean" | "list" | "string"
   values?: readonly string[]
   /** The agent may change it (through the settings tool, with approval). */
@@ -36,7 +36,10 @@ const USER: Scope[] = ["session", "global"]
 
 export const SETTINGS: SettingDef[] = [
   { key: "model", kind: "model", agent: true, scopes: ALL },
-  { key: "effort", kind: "effort", agent: true, scopes: ALL, fallback: "the model's default" },
+  { key: "effort", kind: "effort", agent: true, scopes: ALL, fallback: "the model's start level" },
+  // The team's size is the person's: the agent never sets how many agents it may have.
+  { key: "agents.min", kind: "number", agent: false, scopes: ALL, fallback: "1" },
+  { key: "agents.max", kind: "number", agent: false, scopes: ALL, fallback: "4" },
   { key: "mode", kind: "enum", values: MODES, agent: true, scopes: ALL, fallback: "manual" },
   { key: "small_model", kind: "model", agent: true, scopes: ALL, fallback: "the session's model" },
   { key: "knowledge", kind: "list", agent: true, scopes: ALL, fallback: "every base" },
@@ -104,7 +107,7 @@ export function parseValue(def: SettingDef, raw: unknown): unknown {
   if (def.key === "mode") v = asMode(v) ?? v
   // "none" is how a dialog or a person says it; the file keeps the web UI's empty string.
   if (def.key === "personality" && typeof v === "string" && ["none", "off", "default"].includes(v.toLowerCase())) v = ""
-  if (def.kind === "effort" && v !== "off" && !(EFFORTS as readonly string[]).includes(String(v))) throw new SettingError(`effort: one of ${EFFORTS.join(", ")} or off`)
+  if (def.kind === "effort" && !["off", "default", ...EFFORTS].includes(String(v))) throw new SettingError(`effort: one of ${EFFORTS.join(", ")}, off or default`)
   const schema = schemaAt(def.key.split("."))
   const r = schema?.safeParse(v)
   if (!r || !r.success) throw new SettingError(`${def.key}: ${def.values ? `one of ${def.values.join(", ")}` : (r?.error.issues.map((i) => i.message).join("; ") ?? "not settable")}`)

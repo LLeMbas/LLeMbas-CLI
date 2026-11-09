@@ -14,6 +14,7 @@ import type { ImagePart } from "../provider/types.ts"
 import { commandSet, sourcesOf } from "../session/commands.ts"
 import type { PlanReply, PlanRequest } from "../tool/plan_submit.ts"
 import type { QuestionReply, QuestionRequest } from "../tool/ask_user.ts"
+import { readLevel } from "../provider/effort.ts"
 import { clampMode, effortOf, markRemote, permissionParams, planParams, planReplyFrom, questionParams, questionReplyFrom, replyFrom, STOP, type PromptResult } from "./agent.ts"
 import { jobList, jobOutput, jobSend, jobStop, jobTranscript } from "./jobs.ts"
 import type { SessionContext } from "../app.ts"
@@ -390,7 +391,7 @@ export class Share {
           // is the instance's.
           modelConnection: this.app.engine.model.connectionName,
           mode: this.app.engine.mode,
-          effort: this.app.engine.effort ?? "off",
+          effort: this.app.engine.effort,
           busy: Boolean(this.app.turns.current),
           explicit,
         },
@@ -596,9 +597,9 @@ export class Share {
       // same model as `deepseek/x`, and switching to it again would reset the effort.
       if (typeof p?.model === "string" && p.model && this.app.canonicalRef(p.model) !== this.app.engine.model.ref) this.app.switchModel(p.model)
       const effort = effortOf(p?.effort)
-      if (effort !== undefined) this.app.engine.effort = effort === "off" ? null : effort
+      if (effort !== undefined) this.app.engine.effort = readLevel(this.app.engine.model, effort)
       this.hooks.changed()
-      return { model: this.app.engine.model.ref, effort: this.app.engine.effort ?? "off" }
+      return { model: this.app.engine.model.ref, effort: this.app.engine.effort }
     })
   }
 }

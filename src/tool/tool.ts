@@ -9,7 +9,8 @@ import { fillParameters, PURPOSE_DEF, TOOL_SPECS } from "../harness.ts"
 export interface ToolContext {
   /** Absolute project root. */
   root: string
-  /** Absolute working directory for relative paths and shells. */
+  /** Where the session was started (absolute): it ends the instruction chain and is told to the
+   *  model relative to the root. Relative paths and the shell are the root's (context.md §11). */
   cwd: string
   signal: AbortSignal
   /** Absolute paths read in this session — `edit`/`write` of an existing file requires one. */
@@ -189,12 +190,13 @@ export async function readText(abs: string): Promise<string> {
   return new TextDecoder("utf-8", { ignoreBOM: true }).decode(await Bun.file(abs).bytes())
 }
 
-/** A tool's path argument, absolute. Models send both absolute and relative paths. */
+/** A tool's path argument, absolute. Models send both absolute and relative paths; a relative one
+ *  is read against the project root, wherever the session was started (harness context.md §11). */
 export function absPath(p: string, ctx: ToolContext): string {
   // A model writes ~/x as a shell would; without this it becomes a directory named "~".
   if (p === "~" || p.startsWith("~/")) return resolve(expandHome(p))
   if (isAbsolute(p)) return resolve(p)
-  const rel = resolve(ctx.cwd, p)
+  const rel = resolve(ctx.root, p)
   // Small models often drop the leading "/" of an absolute path ("home/me/proj/a.py"). When the
   // relative reading does not exist and the absolute one does, inside the project, take that.
   if (!existsSync(rel)) {

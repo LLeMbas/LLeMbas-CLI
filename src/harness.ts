@@ -118,6 +118,17 @@ export const LOOP: {
     running_max: { default: number }
     subagent_steps: { default: number }
   }
+  /** Teams (spec 3.2.0, harness/team.md): the size setting, names, marks, texts. */
+  team: {
+    agents: { min: number; max: number; cap: number }
+    names: { pattern: string; lead: string; reserved: string[] }
+    marks: { message: string; report: string }
+    unavailable: { one_agent: string; one_request: string }
+    work: { write: string[]; execute: string[]; kept: string[] }
+    read_max: number
+    texts: Record<"added" | "added_waiting" | "sent" | "stopped" | "manager" | "full" | "bad_name" | "all_name" | "taken" | "no_goal" | "unknown" | "self" | "nobody" | "not_yours" | "nobody_to_stop" | "no_report" | "ended", string>
+    read: { tree: string; agent: string; lead_role: string; states: Record<"working" | "waiting" | "finished" | "idle", string>; active: string; room: string; message: string; report: string; none: string; more: string }
+  }
   /** Context hygiene (spec 3.0.0, harness/context.md): the result ids, the texts of a read's
    *  header, a stub, the elided line, recall; the output cap; what is deduplicated; the table
    *  compaction adds. */
@@ -138,6 +149,8 @@ export const LOOP: {
     dedupe: { by_hash: string[]; by_result: string[] }
     compaction: { heading: string; line: string; rows: number }
     reasoning: string
+    /** The environment block's lines about where an agent session works (spec 3.2.0, §11). */
+    env: { project: string; started: string }
     /** A note on the next user message (spec 3.1.0, context.md §10): its tags and its lines, in
      *  the order they are said. */
     note: { open: string; close: string; date: string; mode: string; plan: string; memory: string; instructions: string; personality: string; mcp: string; empty: string
@@ -147,6 +160,11 @@ export const LOOP: {
       plan_ended: string
       /** For a chat, which does not resend earlier tool results; the CLI's model has them. */
       plan_own: string
+      /** Spec 3.2.0 (team.md §10): the size setting, said to the lead. */
+      team: string
+      team_lead: string
+      team_one: string
+      team_stopped: string
     }
     /** How long a session waits for its configured MCP servers before its first request. */
     mcp_wait_ms: number

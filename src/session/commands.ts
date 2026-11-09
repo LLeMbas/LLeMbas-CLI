@@ -151,7 +151,6 @@ export function changelogPrompt(app: App, arg: string): { prompt: string } | { m
 /** `/init [focus]`: make or update AGENTS.md. */
 export function initPrompt(app: App, arg: string): string {
   return fill(promptText("tasks/init.md"), {
-    root: app.project.root,
     focus: arg.trim() ? `What the user wants it to focus on: ${arg.trim()}` : "",
   }).replace(/\n{3,}/g, "\n\n")
 }

@@ -13,7 +13,17 @@ export type ToolCallPart = { type: "tool_call"; id: string; name: string; args: 
 export type Message =
   /** `turnId`: the turn a prompt started, kept with it in the store for
    *  `_lembas/session/history`; never sent to a model. */
-  | { role: "user"; parts: (TextPart | ImagePart)[]; turnId?: string; /** The harness wrote it (a job's note), not the person: shown as such. */ machine?: true }
+  | {
+      role: "user"
+      parts: (TextPart | ImagePart)[]
+      turnId?: string
+      /** The harness wrote it (a job's note), not the person: shown as such. */
+      machine?: true
+      /** false: it does not start a turn — delivered at a step boundary while a turn runs (a job's
+       *  note, a team message, words the person added), or the harness's own nudge within the turn.
+       *  Absent: it does (harness context.md §8). */
+      turn?: false
+    }
   | { role: "assistant"; parts: (TextPart | ReasoningPart | ToolCallPart)[] }
   | { role: "tool"; callId: string; name: string; content: string; isError?: boolean }
 
@@ -50,8 +60,9 @@ export interface ChatRequest {
   system: string
   messages: Message[]
   tools: ToolSpec[]
-  /** null = off */
-  effort?: Effort | null
+  /** The effort level (provider/effort.ts); null or absent: nothing sent (a small job of the
+   *  harness's own). */
+  effort?: Effort | "off" | "default" | null
   signal?: AbortSignal
 }
 

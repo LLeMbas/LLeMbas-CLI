@@ -553,7 +553,8 @@ test("the model event: said whenever the model or effort changes, forwarded to L
   await until(() => events.filter((e) => e.event.type === "model").length >= 2, "two model events")
   const models = events.filter((e) => e.event.type === "model").map((e) => e.event)
   // `instance`: the model is spoken to through the connection this link's instance is.
-  expect(models[0]).toEqual({ type: "model", ref: "example/b", effort: "off", connection: "example", instance: true })
+  // b says nothing of its efforts: the common three, starting at medium (models/schema.json levels).
+  expect(models[0]).toEqual({ type: "model", ref: "example/b", effort: "medium", connection: "example", instance: true })
   expect(models.at(-1)).toEqual({ type: "model", ref: "example/a", effort: "high", connection: "example", instance: true })
 })
 

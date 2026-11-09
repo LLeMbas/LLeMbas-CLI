@@ -93,18 +93,20 @@ describe("history", () => {
 })
 
 describe("the context meter", () => {
-  test("counts the reply's thinking only until it is dropped from the next request", async () => {
+  test("counts a reply's thinking while its turn goes on (it is sent back), not after the turn's final reply (context.md §8)", async () => {
     const dir = setup([
       { chunks: [delta({ reasoning_content: "x".repeat(4000) }), toolCall(0, "l1", "list", "{}"), usage(1000, 1100)] },
-      { chunks: [delta({ content: "ok" }, "stop"), usage(1150, 5)] },
+      { chunks: [delta({ reasoning_content: "y".repeat(4000) }), delta({ content: "ok" }, "stop"), usage(2150, 1100)] },
     ])
     const app = createApp({ cwd: dir, mode: "edit", asker: noAsk, store: false })
     const used: number[] = []
     app.bus.on((e: Event) => e.type === "usage" && e.used !== undefined && used.push(e.used))
     await app.engine.prompt("go")
-    // 1000 in + 1100 out, of which ~1000 thinking that is not sent again: ~1100, not 2100.
-    expect(used[0]).toBeLessThan(1200)
-    expect(used[0]).toBeGreaterThan(1000)
+    // The step that called a tool: its ~1000 tokens of thinking go back with the next step.
+    expect(used[0]).toBeGreaterThan(2000)
+    // The final reply: 2150 in + 1100 out, of which ~1000 thinking the next turn does not send.
+    expect(used[1]).toBeLessThan(2400)
+    expect(used[1]).toBeGreaterThan(2150)
   })
 })
 

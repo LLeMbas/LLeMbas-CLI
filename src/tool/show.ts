@@ -68,7 +68,7 @@ export const showTool = defineTool({
     if (size > SHOW_MAX_BYTES) throw new ToolError(`${showPath(abs, ctx)} is ${Math.round(size / 1024)} KB; at most 1 MB can be shown. Give the user the path instead.`)
     const text = await readText(abs)
     if (text.includes("\u0000")) throw new ToolError(`${showPath(abs, ctx)} is not a text file; it cannot be shown. Give the user the path instead.`)
-    const rel = relative(ctx.cwd, abs) || basename(abs)
+    const rel = relative(ctx.root, abs) || basename(abs)
     const reply = await ctx.show({ path: rel, ...showKind(abs), ...(a.line ? { line: a.line } : {}), text }, ctx.callId)
     if (!reply.shown) return { output: `Not shown: ${reply.reason}`, isError: true }
     return { output: `Shown to the user: ${showPath(abs, ctx)}${a.line ? ` at line ${a.line}` : ""}.`, title: showPath(abs, ctx) }

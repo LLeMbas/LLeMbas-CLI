@@ -8,7 +8,7 @@ import { resolveKey } from "../config/load.ts"
 import { advertisedEfforts, applyEffort, effortRefused, effortsFor, stripEffort } from "./effort.ts"
 import { authHeaders, request, joinUrl, tlsFor } from "./http.ts"
 import { learned, learnEfforts, learnNoProgress, learnNoStreamOptions } from "./learned.ts"
-import { historyArgs, Parts, record, recordFailure, retrying, statusOf, SwapBanner } from "./common.ts"
+import { historyArgs, Parts, record, recordFailure, retrying, statusOf, SwapBanner, turnReasoning } from "./common.ts"
 import { sseJson } from "./sse.ts"
 import { ThinkSplitter } from "./think.ts"
 import { estimateTokens, estimateValue } from "./tokens.ts"
@@ -30,7 +30,7 @@ type Assistant = Extract<Message, { role: "assistant" }>
 export function toOpenAIMessages(system: string, messages: Message[], vision: boolean): unknown[] {
   const out: unknown[] = []
   if (system) out.push({ role: "system", content: system })
-  for (const m of messages) {
+  for (const m of turnReasoning(messages)) {
     if (m.role === "user") {
       const images = m.parts.filter((p) => p.type === "image")
       if (images.length === 0 || !vision) {
@@ -50,6 +50,10 @@ export function toOpenAIMessages(system: string, messages: Message[], vision: bo
       const text = m.parts.filter((p): p is TextPart => p.type === "text").map((p) => p.text).join("")
       const calls = m.parts.filter((p): p is ToolCallPart => p.type === "tool_call")
       const msg: Record<string, unknown> = { role: "assistant", content: text || null }
+      // The current turn's reasoning goes back as the model gave it (context.md §8) — inline <think>
+      // tags were read as reasoning, and go back here, never as text. None: no field.
+      const reasoning = m.parts.filter((p): p is ReasoningPart => p.type === "reasoning").map((p) => p.text).join("")
+      if (reasoning) msg.reasoning_content = reasoning
       if (calls.length)
         msg.tool_calls = calls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: historyArgs(c.args) } }))
       out.push(msg)

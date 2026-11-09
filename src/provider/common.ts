@@ -168,3 +168,18 @@ export function historyArgs(args: string): string {
   } catch {}
   return "{}"
 }
+
+/** Harness context.md §8 (spec 3.2.0): the history as a request sends it — every assistant message
+ *  of the current turn (after the last user message that started a turn) keeps its reasoning,
+ *  earlier ones carry none. What is stored is unchanged; only the request is. */
+export function turnReasoning(messages: Message[]): Message[] {
+  let start = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!
+    if (m.role === "user" && m.turn !== false) {
+      start = i
+      break
+    }
+  }
+  return messages.map((m, i) => (m.role === "assistant" && i < start && m.parts.some((p) => p.type === "reasoning") ? { ...m, parts: m.parts.filter((p) => p.type !== "reasoning") } : m))
+}

@@ -127,7 +127,7 @@
                   "maximum": 1
                 },
                 "efforts": {
-                  "description": "The model's own effort vocabulary, in offering order.",
+                  "description": "The model's own effort vocabulary, in offering order. [] — it takes none (its one level is `default`).",
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -141,8 +141,12 @@
                     ]
                   }
                 },
+                "thinking_switch": {
+                  "description": "The server turns thinking off for a request with chat_template_kwargs.enable_thinking false: only then is the level `off` offered.",
+                  "type": "boolean"
+                },
                 "effort": {
-                  "description": "Default effort; `off` sends none.",
+                  "description": "The level a conversation starts with, when the model offers it: an effort, `off` (thinking switched off, with thinking_switch) or `default` (nothing sent, for a model that takes no efforts).",
                   "anyOf": [
                     {
                       "type": "string",
@@ -158,6 +162,10 @@
                     {
                       "type": "string",
                       "const": "off"
+                    },
+                    {
+                      "type": "string",
+                      "const": "default"
                     }
                   ]
                 },
@@ -202,8 +210,14 @@
                   "maxLength": 300
                 },
                 "single_session": {
-                  "description": "The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused.",
+                  "description": "The server serves one request at a time: a subagent on this same model would take its only slot and push the session's cached prompt out, so it is refused. The same as parallel: 1.",
                   "type": "boolean"
+                },
+                "parallel": {
+                  "description": "How many requests the model's server serves at once (capacity.parallel); wins over single_session. Absent with no single_session: no limit (a hosted API). A team is offered only on a model that serves at least 2.",
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 },
                 "group": {
                   "description": "Models sharing one GPU server that holds one model at a time (llama-swap), as the LLeMbas server says (capacity.group): a subagent on another model of the same group would unload this one, so it is refused.",

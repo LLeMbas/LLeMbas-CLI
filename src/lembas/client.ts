@@ -58,10 +58,12 @@ export interface ServedModel {
   top_p?: number
   efforts?: string[]
   effort?: string
+  /** Spec 3.2.0: the server turns thinking off for enable_thinking false. */
+  thinking_switch?: boolean
   vision?: boolean
   tools?: boolean
   notes?: string
-  capacity?: { group?: string; single_session?: boolean }
+  capacity?: { group?: string; single_session?: boolean; parallel?: number }
   default?: boolean
   /** The provider's slug — the part of `id` before its `/` — and what kind of model it is. */
   provider?: string

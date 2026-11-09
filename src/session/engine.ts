@@ -6,7 +6,8 @@
 import continueText from "../../harness/prompts/tasks/continue.md" with { type: "text" }
 import { isAbsolute } from "node:path"
 import type { Asker, AttachmentInfo, Bus } from "../bus/index.ts"
-import type { Effort, Mode } from "../config/schema.ts"
+import type { Mode } from "../config/schema.ts"
+import type { Level } from "../provider/effort.ts"
 import { evaluate, shadowsDeny, type Context as PermContext, type Rule } from "../permission/evaluate.ts"
 import { ProviderError, type Client, type ImagePart, type Message, type ResolvedModel, type ToolCallPart, type Usage } from "../provider/types.ts"
 import type { Plan } from "../plan/plan.ts"
@@ -46,7 +47,8 @@ export interface EngineOptions {
   /** Today's date, as the note says it (tests set it). */
   today?: () => string
   mode: Mode
-  effort: Effort | null
+  /** The effort level (provider/effort.ts): an effort, `off` or `default`. */
+  effort: Level
   perm: Omit<PermContext, "mode">
   toolCtx: Omit<ToolContext, "signal">
   maxSteps?: number
@@ -89,7 +91,8 @@ export function mergeUsers(messages: Message[]): Message[] {
   const out: Message[] = []
   for (const m of messages) {
     const last = out[out.length - 1]
-    if (m.role === "user" && last?.role === "user") out[out.length - 1] = { role: "user", parts: [...last.parts, ...m.parts] }
+    // One that starts a turn makes the pair start one (context.md §8).
+    if (m.role === "user" && last?.role === "user") out[out.length - 1] = { role: "user", parts: [...last.parts, ...m.parts], ...(last.turn === false && m.turn === false ? { turn: false as const } : {}) }
     else out.push(m)
   }
   return out
@@ -109,7 +112,7 @@ export const PLAN_META = "plan"
 export class Engine {
   messages: Message[] = []
   mode: Mode
-  private _effort: Effort | null
+  private _effort: Level
   usage: Usage | undefined
   /** messages.length when `usage` was reported: everything after it is not yet counted. */
   usageAt = 0
@@ -314,25 +317,25 @@ export class Engine {
     this.o.bus.emit({ type: "plan", plan: this.plan })
   }
 
-  get effort(): Effort | null {
+  get effort(): Level {
     return this._effort
   }
   /** Said on the bus when it changes: the web UI's chat shows the device's model and effort,
    *  whoever changed them. */
-  set effort(v: Effort | null) {
+  set effort(v: Level) {
     if (v === this._effort) return
     this._effort = v
-    this.o.bus.emit({ type: "model", ref: this.model.ref, effort: v ?? "off", connection: this.model.connectionName })
+    this.o.bus.emit({ type: "model", ref: this.model.ref, effort: v, connection: this.model.connectionName })
   }
 
   /** Switch model mid-session. The conversation carries over; the effort resets to the new model's.
    *  The prompt is made again for it at the next request (prefix(): it was made for another). */
-  setModel(model: ResolvedModel, client: Client, effort: Effort | null) {
+  setModel(model: ResolvedModel, client: Client, effort: Level) {
     const changed = model.ref !== this.model.ref || effort !== this._effort
     this.model = model
     this.client = client
     this._effort = effort
-    if (changed) this.o.bus.emit({ type: "model", ref: model.ref, effort: effort ?? "off", connection: model.connectionName })
+    if (changed) this.o.bus.emit({ type: "model", ref: model.ref, effort, connection: model.connectionName })
   }
 
   /** Start over: a fresh conversation (and session row). Approvals given "for the session" end. */
@@ -405,9 +408,10 @@ export class Engine {
     return summary
   }
 
-  /** Tokens in use now: the last reported usage plus an estimate of what was added since. The
-   *  reply's thinking is left out where the dialect never sends it back (openai-chat): it is in the
-   *  last reply's output but will not be in the next request. */
+  /** Tokens in use now: the last reported usage plus an estimate of what was added since. A final
+   *  reply's thinking is left out: it is in its output, but the next request starts a turn and
+   *  sends no earlier turn's reasoning (context.md §8). A reply that called tools keeps it: its turn
+   *  goes on, and its reasoning goes back. */
   contextUsed(): number | undefined {
     if (!this.usage) return undefined
     return this.usage.input + this.usage.output - this.droppedThinking() + estimateValue(this.messages.slice(this.usageAt))
@@ -416,7 +420,7 @@ export class Engine {
   private droppedThinking(): number {
     if (!this.usage) return 0
     const reply = this.messages[this.usageAt - 1]
-    if (reply?.role !== "assistant") return 0
+    if (reply?.role !== "assistant" || reply.parts.some((p) => p.type === "tool_call")) return 0
     const estimate = reply.parts.reduce((n, p) => n + (p.type === "reasoning" ? estimateTokens(p.text) : 0), 0)
     return Math.min(this.usage.output, this.usage.reasoning ?? estimate)
   }
@@ -553,7 +557,7 @@ export class Engine {
   private deliverInbox(): boolean {
     const notes = this.notes.splice(0)
     if (notes.length) {
-      this.push({ role: "user", parts: [{ type: "text", text: notes.join("\n\n") }] })
+      this.push({ role: "user", parts: [{ type: "text", text: notes.join("\n\n") }], turn: false })
       // Said as what happened, not as its mark: the line after it.
       this.o.bus.emit({ type: "notice", message: notes.map((n) => n.split("\n").find((l, i) => i > 0 && l.trim()) ?? n.split("\n")[0]!).join("; ") })
     }
@@ -561,7 +565,7 @@ export class Engine {
     const texts = this.inbox.splice(0)
     const ids = this.inboxIds.splice(0).filter((i): i is string => typeof i === "string")
     this.turnSteers.push(...texts)
-    this.push({ role: "user", parts: [{ type: "text", text: `${this.o.steerMark ?? STEER_MARK}\n${texts.join("\n\n")}` }] })
+    this.push({ role: "user", parts: [{ type: "text", text: `${this.o.steerMark ?? STEER_MARK}\n${texts.join("\n\n")}` }], turn: false })
     this.o.bus.emit({ type: "steered", texts, ...(ids.length ? { ids } : {}) })
     this.o.bus.emit({ type: "inbox", texts: [], mode: this.busyInput })
     return true
@@ -638,7 +642,7 @@ export class Engine {
         // The same system prompt and tool list on every request of the session (§10).
         const stream = this.client.stream({
           system: this.systemPrompt(),
-          messages: mergeUsers(wrapUp ? [...this.messages, { role: "user", parts: [{ type: "text", text: wrapUpText(ranOut ? ranOut.limit : "step limit") }] }] : this.messages),
+          messages: mergeUsers(wrapUp ? [...this.messages, { role: "user", parts: [{ type: "text", text: wrapUpText(ranOut ? ranOut.limit : "step limit") }], turn: false }] : this.messages),
           // The wrap-up too (loop.json wrap_up): its message says the tools are withdrawn, and a
           // call in its reply is not run.
           tools: this.toolSpecs(),
@@ -721,7 +725,7 @@ export class Engine {
                 ? `the reply was cut off at the output limit${limit}; asking it to carry on`
                 : `the model used the whole output limit${limit} thinking; asking it to act`,
           })
-          this.push({ role: "user", parts: [{ type: "text", text: !cut ? NO_ANSWER : said ? CUT_TEXT : CUT_THINKING }] })
+          this.push({ role: "user", parts: [{ type: "text", text: !cut ? NO_ANSWER : said ? CUT_TEXT : CUT_THINKING }], turn: false })
           continue
         }
         bus.emit({
@@ -828,7 +832,7 @@ export class Engine {
       }
       // No dialect takes an image inside a tool result the same way; a user turn right after the
       // results works everywhere.
-      if (images.length) this.push({ role: "user", parts: [{ type: "text", text: "The image(s) you asked to view:" }, ...images] })
+      if (images.length) this.push({ role: "user", parts: [{ type: "text", text: "The image(s) you asked to view:" }, ...images], turn: false })
       if (signal.aborted) {
         bus.emit({ type: "done", reason: "cancelled" })
         return "cancelled"

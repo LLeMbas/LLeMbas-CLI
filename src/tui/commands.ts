@@ -3,8 +3,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { paths } from "../config/paths.ts"
-import { asMode, EFFORTS, MODES, type Effort, type Mode } from "../config/schema.ts"
-import { effortsFor } from "../provider/effort.ts"
+import { asMode, MODES, type Mode } from "../config/schema.ts"
+import { levelsFor, type Level } from "../provider/effort.ts"
 import { setTrust } from "../project/root.ts"
 import { commit, commitPlan, draftMessage } from "../git/commit.ts"
 import { doRelease, planRelease } from "../git/release.ts"
@@ -47,7 +47,7 @@ export interface CommandCtx extends Ctx {
   sendAs?(prompt: string, shown: string, opts?: { model?: string; mode?: string; attachFrom?: string }): void
   openDialog(spec: DialogSpec): void
   setMode(m: Mode): void
-  setEffort(e: Effort | null): void
+  setEffort(e: Level): void
   setTheme(name: string): void
   setIcons(set: import("./theme.ts").IconSet): void
   /** A short word in the status bar that goes by itself. */
@@ -171,7 +171,7 @@ export const COMMANDS: Command[] = [
         options: refs.map((r) => {
           const known = c.app.loaded.refs.find((x) => x.ref === r)!
           const spec = c.app.loaded.connections[known.connection]!.models[known.id]!
-          const bits = [spec.context ? `${Math.round(spec.context / 1024)}k ctx` : "", spec.vision ? "vision" : "", spec.efforts ? "effort" : ""].filter(Boolean).join(" · ")
+          const bits = [spec.context ? `${Math.round(spec.context / 1024)}k ctx` : "", spec.vision ? "vision" : "", levelsFor(c.app.engine.model.ref === r ? c.app.engine.model : { ...c.app.engine.model, ref: r, spec }).control === "switch" ? "thinking switch" : spec.efforts?.length ? "effort" : ""].filter(Boolean).join(" · ")
           return { label: r, value: r, description: bits, current: r === c.app.engine.model.ref }
         }),
         onSelect: pick,
@@ -180,19 +180,34 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "effort",
-    args: `[${EFFORTS.join("|")}|off]`,
-    description: "reasoning effort for this model",
+    args: "[level|on|off]",
+    description: "how hard the model thinks: its levels, a Thinking switch, or nothing to choose",
     run(c, arg) {
-      const allowed = effortsFor(c.app.engine.model)
+      // The control follows the model's levels (harness models/schema.json `levels`): one level —
+      // nothing to choose; [off, X] — a Thinking switch; more — a list.
+      const m = c.app.engine.model
+      const { levels, control } = levelsFor(m)
+      const on = levels.find((l) => l !== "off")!
       const set = (v: string) => {
-        if (v === "off") return c.setEffort(null)
-        if (!allowed.includes(v as Effort)) return c.view.info(`${c.app.engine.model.ref} takes ${allowed.join(", ")} or off`, "warn")
-        c.setEffort(v as Effort)
+        if (control === "switch" && (v === "on" || v === "thinking")) v = on
+        if (!(levels as string[]).includes(v)) return c.view.info(control === "switch" ? `${m.ref} has a Thinking switch: /effort on or /effort off` : `${m.ref} offers ${levels.join(", ")}`, "warn")
+        c.setEffort(v as Level)
+        c.view.info(control === "switch" ? `thinking ${v === "off" ? "off" : `on (${v})`}` : `effort: ${v}`)
       }
+      if (control === "none") return c.view.info(`${m.ref} has one level (${levels[0]}): there is nothing to choose`)
       if (arg) return set(arg)
+      if (control === "switch")
+        return c.openDialog({
+          title: `Thinking — ${m.ref}`,
+          options: [
+            { label: "on", value: on, description: on === "default" ? "the model's own" : on, current: c.app.engine.effort !== "off" },
+            { label: "off", value: "off", current: c.app.engine.effort === "off" },
+          ],
+          onSelect: set,
+        })
       c.openDialog({
-        title: `Effort — ${c.app.engine.model.ref}`,
-        options: [...allowed, "off"].map((e) => ({ label: e, value: e, current: (c.app.engine.effort ?? "off") === e })),
+        title: `Effort — ${m.ref}`,
+        options: levels.map((e) => ({ label: e === "off" ? "off (no thinking)" : e, value: e, current: c.app.engine.effort === e })),
         onSelect: set,
       })
     },
@@ -934,7 +949,7 @@ export const COMMANDS: Command[] = [
           e.def.kind === "model"
             ? c.app.modelRefs()
             : e.def.kind === "effort"
-              ? [...effortsFor(c.app.engine.model), "off"]
+              ? [...levelsFor(c.app.engine.model).levels]
               : e.def.kind === "boolean"
                 ? ["true", "false"]
                 : key === "theme"
