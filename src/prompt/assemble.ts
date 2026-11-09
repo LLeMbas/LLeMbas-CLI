@@ -345,7 +345,7 @@ export function assembleSystem(ctx: PromptContext): string {
     ].join("\n"),
   )
   if (ctx.roster && !ctx.subagent)
-    sections.push(`Other models configured here — the task tool can run a subagent on one (its model argument); the user can switch to one, and so can you through the settings tool when they ask:\n<models>\n${ctx.roster}\n</models>`)
+    sections.push(`Other models configured here — a subagent runs on one (task's or team_add's model argument) only when the user names it; the user can switch to one, and so can you through the settings tool when they ask:\n<models>\n${ctx.roster}\n</models>`)
   if (ctx.git) sections.push(`The git repository as it was when this session started — a snapshot, not kept up to date; run git status for how it is now:\n<git>\n${ctx.git}\n</git>`)
   if (ctx.tasks && !ctx.subagent) sections.push(`Open items on the project's task board (the tasks tool changes it):\n<project_tasks>\n${ctx.tasks}\n</project_tasks>`)
 
