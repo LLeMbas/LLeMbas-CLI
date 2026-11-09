@@ -555,3 +555,17 @@ test("lembas login --token-stdin --server --json: the token from stdin, the devi
   expect((await cli(["login", "--token-stdin", fake.url], "lmb_secret")).code).toBe(2)
   expect((await cli(["login", "--server", fake.url], "lmb_secret")).code).toBe(2)
 })
+
+test("lembas login over a sign-in the instance no longer accepts signs in afresh, not in a loop", async () => {
+  fake = lembas()
+  await login(fake.url, { ...quick, onCode: () => {} })
+  // The instance forgot the token kept here (revoked, or another instance's database).
+  fake.token = "lmb_fresh"
+  fake.polls = 0
+  const r = await cli(["login", fake.url, "--json"], "")
+  expect(r.code).toBe(0)
+  const lines = r.out.trim().split("\n").map((l) => JSON.parse(l))
+  expect(lines[0]).toMatchObject({ event: "code" })
+  expect(lines.at(-1)).toMatchObject({ event: "done", fresh: true, connection: "example" })
+  expect(readFileSync(keyFile("example"), "utf8").trim()).toBe("lmb_fresh")
+})

@@ -98,7 +98,7 @@ function fail(msg: string, code = 1): never {
 }
 
 async function loginCommand(cmd: "login" | "logout", args: string[]) {
-  const { codeEvent, codeInstructions, doneEvent, instances, isWebuiEntry, login, loginSummary, loginWithToken, logout, sync, LembasError } = await import("./lembas/login.ts")
+  const { codeEvent, codeInstructions, doneEvent, instances, isWebuiEntry, login, loginSummary, loginWithToken, logout, sync, LembasError, SignInRejected } = await import("./lembas/login.ts")
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
@@ -144,10 +144,19 @@ async function loginCommand(cmd: "login" | "logout", args: string[]) {
     // `login` again with no address refreshes the one instance there is.
     const again = address ? Object.values(known).find((i) => sameBase(i.base_url, address)) : Object.keys(known).length === 1 ? Object.values(known)[0] : undefined
     if (again && !values.ca && isWebuiEntry(again.connection)) {
-      const r = await sync(again.connection, { setDefault: values.default })
-      if (json) emit(doneEvent(r, false))
-      else console.log(loginSummary(r, false).join("\n"))
-      return
+      try {
+        const r = await sync(again.connection, { setDefault: values.default })
+        if (json) emit(doneEvent(r, false))
+        else console.log(loginSummary(r, false).join("\n"))
+        return
+      } catch (e) {
+        // The token here was revoked or is unknown to the instance: refreshing it can never work,
+        // and "run login again" would send the person straight back here. Sign in afresh instead;
+        // the new login replaces the old one.
+        if (!(e instanceof SignInRejected)) throw e
+        if (!json) console.error("The instance no longer accepts the sign-in kept here: signing in again.")
+        address = again.base_url
+      }
     }
     // An older kind of login (the models copied into connections.yaml) is replaced by signing in
     // again, at the address it had.

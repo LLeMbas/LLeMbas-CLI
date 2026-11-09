@@ -27,6 +27,8 @@ export function protocolMismatch(base: string, d: Pick<Discovery, "protocol" | "
 }
 
 export class LembasError extends Error {}
+/** The instance answered 401: the token this machine holds is revoked or unknown there. `login` signs in afresh. */
+export class SignInRejected extends LembasError {}
 /** The server and this CLI speak no link protocol in common: no login, and no dial gets further. */
 export class ProtocolError extends LembasError {}
 
@@ -268,7 +270,7 @@ export async function checkToken(d: Discovery, token: string, tls: Tls | undefin
 
 export async function models(d: { api: { openai: string } }, token: string, tls: Tls | undefined, timeoutMs?: number): Promise<ServedModel[]> {
   const res = await call(`${d.api.openai}/models`, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } }, tls, timeoutMs)
-  if (res.status === 401) throw new LembasError("the instance no longer accepts this sign-in — run login again")
+  if (res.status === 401) throw new SignInRejected("the instance no longer accepts this sign-in — run login again")
   if (res.status === 403) throw new LembasError("this account may not use the instance's models through the API (the “Use the API” permission)")
   if (!res.ok) throw new LembasError(`listing the models: ${res.status} ${res.statusText}`)
   const body = (await res.json()) as { data?: ServedModel[] }
@@ -293,7 +295,7 @@ export interface InstanceInfo {
 export async function instanceInfo(base: string, token: string, tls: Tls | undefined, timeoutMs?: number): Promise<InstanceInfo | undefined> {
   const res = await call(`${base}/api/v1/instance`, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } }, tls, timeoutMs)
   if (res.status === 404) return undefined
-  if (res.status === 401) throw new LembasError("the instance no longer accepts this sign-in — run login again")
+  if (res.status === 401) throw new SignInRejected("the instance no longer accepts this sign-in — run login again")
   if (!res.ok) throw new LembasError(`reading the instance: ${res.status} ${res.statusText}`)
   const body = (await res.json().catch(() => undefined)) as InstanceInfo | undefined
   return body && typeof body === "object" ? body : undefined
@@ -341,7 +343,7 @@ export interface Usage {
 export async function usage(base: string, token: string, tls: Tls | undefined, timeoutMs = 5000): Promise<Usage | undefined> {
   const res = await call(`${base}/v1/usage`, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } }, tls, timeoutMs)
   if (res.status === 404) return undefined
-  if (res.status === 401) throw new LembasError("the instance no longer accepts this sign-in — run login again")
+  if (res.status === 401) throw new SignInRejected("the instance no longer accepts this sign-in — run login again")
   if (!res.ok) throw new LembasError(`reading the usage: ${res.status} ${res.statusText}`)
   const body = (await res.json().catch(() => undefined)) as Usage | undefined
   return body && typeof body === "object" ? body : undefined
@@ -369,7 +371,7 @@ function asPersonalization(b: unknown): Personalization | undefined {
 export async function personalization(base: string, token: string, tls: Tls | undefined, timeoutMs = 5000): Promise<Personalization | undefined> {
   const res = await call(`${base}/v1/me/personalization`, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } }, tls, timeoutMs)
   if (res.status === 404) return undefined
-  if (res.status === 401) throw new LembasError("the instance no longer accepts this sign-in — run login again")
+  if (res.status === 401) throw new SignInRejected("the instance no longer accepts this sign-in — run login again")
   if (!res.ok) throw new LembasError(`reading the personalization: ${res.status} ${res.statusText}`)
   return asPersonalization(await res.json().catch(() => undefined))
 }
@@ -393,7 +395,7 @@ export async function savePersonalization(base: string, token: string, tls: Tls 
     if (res.status === 422) throw new LembasError(`the instance would not take that personalization${detail ? `: ${detail}` : ""}`)
     throw new LembasError(detail ? `the instance did not allow it: ${detail}` : "not allowed: the instance refused to save the personalization")
   }
-  if (res.status === 401) throw new LembasError("the instance no longer accepts this sign-in — run login again")
+  if (res.status === 401) throw new SignInRejected("the instance no longer accepts this sign-in — run login again")
   if (!res.ok) throw new LembasError(`saving the personalization: ${res.status} ${res.statusText}`)
   return asPersonalization(await res.json().catch(() => undefined))
 }

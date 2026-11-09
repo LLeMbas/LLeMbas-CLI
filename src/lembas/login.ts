@@ -13,7 +13,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join, resolve } from "node:path"
 import { parseDocument } from "yaml"
 import { expandHome, globalPaths, isLocal, paths } from "../config/paths.ts"
-import { awaitToken, checkToken, discover, LembasError, signOut, spoken, startDevice, type DeviceStart, type Discovery, type Granted, type InstanceInfo, type ServedModel, type Tls } from "./client.ts"
+import { awaitToken, checkToken, discover, LembasError, SignInRejected, signOut, spoken, startDevice, type DeviceStart, type Discovery, type Granted, type InstanceInfo, type ServedModel, type Tls } from "./client.ts"
 import { dropCache, fetchWebui, isChatModel, readCache, specFor } from "./webui.ts"
 
 export interface Instance {
@@ -557,4 +557,4 @@ export async function logout(connection: string): Promise<LogoutResult> {
   return { connection, revoked, modelLeft: model && (ours || model.startsWith(`${connection}/`)) ? model : undefined }
 }
 
-export { LembasError, readCache, specFor }
+export { LembasError, readCache, SignInRejected, specFor }

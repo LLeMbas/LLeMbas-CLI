@@ -324,5 +324,5 @@ say ""
 say "Done. Open a new shell (or: source your rc file), then run: lembas"
 [ -n "$extra" ] && say "Aliases: $(printf '%s' "$extra" | sed -n "s/^alias \([a-z]*\)=.*/\1/p" | paste -sd' ')"
 if [ "$starter" -eq 1 ] && [ -z "$(sed -n 's/^model: *//p' "$CONFIG/config.yaml")" ]; then
-  say "Next: add a connection to $CONFIG/connections.yaml and set model: in config.yaml."
+  say "Next: lembas login <your LLeMbas server address>"
 fi
