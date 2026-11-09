@@ -72,7 +72,7 @@ page *Harness-parity* in LLeMbas CLI's wiki.
 
 ## 3.3.0
 
-Written ahead of both implementations; both carry it in the same round (`subagents.md`).
+Written ahead of both implementations as LLeMbas CLI 02c7282; both carry it in the same round (`subagents.md`).
 
 - **Subagent** is the word everywhere a person or a model reads one — a `task` subagent and a
   team's member alike; *helper* is retired. Tool names and aliases are unchanged. The `team`
