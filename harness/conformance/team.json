@@ -1,5 +1,5 @@
 {
-  "about": "Teams (team.md, spec 3.2.0): one lead session's team, step by step, written from a reference model of the rules. `start`: the size setting `min` and `max`, `subagents` (enabled for the session; default true) and the chat model's `capacity` (models/schema.json: `parallel`, `single_session`; {} — no limit). The lead is `lead`; its first prompt is running as the case begins, and every agent is on the chat's model, and it is the only model there is (spec 3.3.0: other models are subagents.json's). Steps and what each answers: `offered` (`by` an agent, default lead) — `{tools, setting}`: the team tools listed for that agent, sorted, and whether the setting is shown; `call` (`by`, `tool`, `args`) — `{result, delivered}`: the call's answer word for word (null where an ordinary tool would run: the case looks only at whether it is refused), and what was delivered to whom by this step, `{name: [message, …]}`; `team_read` answers `{room, delivered}` instead, `room` being the messages it shows as `{n, from, to}` (the tree and the text format are loop.json team.read's, checked by each project's own tests); `task` runs a subagent that counts toward the size (and holds a slot) until `task_done` (`by`) — answers null; `finish` (`by`, `reply`, `reason`: stop by default, or steps, budget, `error — <text>`) — the agent's turn ends: a member's reply is its report — `{delivered}`; `set` (`min`, `max`, `capacity`: the person's setting or the model's metadata changed) — null; `person_stop` (`name`) — the person stopped that member in the UI — null; `user` — the person's message to the lead — `{note}`: the note on it (context.md §10), null when there is none; `state` — the team in tree order as `{name, manager, state}`: working, waiting (for a slot), finished, idle (the lead between turns). Delivering to a finished member or the idle lead wakes it (it is then working, or waiting when its model is full). LLeMbas: services/team.py; CLI: team/.",
+  "about": "Teams (team.md, spec 3.2.0; the main agent and its tree, subagents.md §5–§13, spec 3.4.0 — a member's team_add is now the lead's with `parent`, and `offered` lists 3.4.0's tools): one lead session's team, step by step, written from a reference model of the rules. `start`: the size setting `min` and `max`, `subagents` (enabled for the session; default true) and the chat model's `capacity` (models/schema.json: `parallel`, `single_session`; {} — no limit). The lead is `lead`; its first prompt is running as the case begins, and every agent is on the chat's model, and it is the only model there is (spec 3.3.0: other models are subagents.json's). Steps and what each answers: `offered` (`by` an agent, default lead) — `{tools, setting}`: the team tools listed for that agent, sorted, and whether the setting is shown; `call` (`by`, `tool`, `args`) — `{result, delivered}`: the call's answer word for word (null where an ordinary tool would run: the case looks only at whether it is refused), and what was delivered to whom by this step, `{name: [message, …]}`; `team_read` answers `{room, delivered}` instead, `room` being the messages it shows as `{n, from, to}` (the tree and the text format are loop.json team.read's, checked by each project's own tests); `task` runs a subagent that counts toward the size (and holds a slot) until `task_done` (`by`) — answers null; `finish` (`by`, `reply`, `reason`: stop by default, or steps, budget, `error — <text>`) — the agent's turn ends: a member's reply is its report — `{delivered}`; `set` (`min`, `max`, `capacity`: the person's setting or the model's metadata changed) — null; `person_stop` (`name`) — the person stopped that member in the UI — null; `user` — the person's message to the lead — `{note}`: the note on it (context.md §10), null when there is none; `state` — the team in tree order as `{name, manager, state}`: working, waiting (for a slot), finished, idle (the lead between turns). Delivering to a finished member or the idle lead wakes it (it is then working, or waiting when its model is full). LLeMbas: services/team.py; CLI: team/.",
   "cases": [
     {
       "about": "Offered on a model that serves two requests at once: the lead has all four tools and the setting is shown.",
@@ -19,9 +19,14 @@
         {
           "tools": [
             "team_add",
+            "team_assign",
+            "team_decide",
+            "team_findings",
             "team_read",
+            "team_replace",
             "team_send",
-            "team_stop"
+            "team_stop",
+            "team_whoami"
           ],
           "setting": true
         }
@@ -43,9 +48,14 @@
         {
           "tools": [
             "team_add",
+            "team_assign",
+            "team_decide",
+            "team_findings",
             "team_read",
+            "team_replace",
             "team_send",
-            "team_stop"
+            "team_stop",
+            "team_whoami"
           ],
           "setting": true
         }
@@ -113,9 +123,14 @@
         {
           "tools": [
             "team_add",
+            "team_assign",
+            "team_decide",
+            "team_findings",
             "team_read",
+            "team_replace",
             "team_send",
-            "team_stop"
+            "team_stop",
+            "team_whoami"
           ],
           "setting": true
         }
@@ -200,9 +215,14 @@
         {
           "tools": [
             "team_add",
+            "team_assign",
+            "team_decide",
+            "team_findings",
             "team_read",
+            "team_replace",
             "team_send",
-            "team_stop"
+            "team_stop",
+            "team_whoami"
           ],
           "setting": true
         },
@@ -228,7 +248,7 @@
       ]
     },
     {
-      "about": "A member that may not lead has team_send and team_read; one that may lead has all four.",
+      "about": "A subagent has team_whoami, team_read, team_send, team_findings and team_finish; a sub-manager the same — it adds nothing (spec 3.4.0).",
       "start": {
         "min": 1,
         "max": 4,
@@ -279,17 +299,21 @@
         },
         {
           "tools": [
+            "team_findings",
+            "team_finish",
             "team_read",
-            "team_send"
+            "team_send",
+            "team_whoami"
           ],
           "setting": true
         },
         {
           "tools": [
-            "team_add",
+            "team_findings",
+            "team_finish",
             "team_read",
             "team_send",
-            "team_stop"
+            "team_whoami"
           ],
           "setting": true
         }
@@ -392,7 +416,7 @@
       ],
       "expect": [
         {
-          "note": "<session-note>\nThe team may have 3 to 5 agents, you included.\nWork through a team from the start: you lead, and members do the work — at least 2 of them.\n</session-note>"
+          "note": "<session-note>\nThe team may have 3 to 5 agents, you included.\nWork through subagents from the start: you lead, and they do the work. The person opened 2 slots for them: fill them with team_add.\n</session-note>"
         },
         {
           "result": "You lead a team: give this to a member (team_add or team_send).",
@@ -458,7 +482,7 @@
       ],
       "expect": [
         {
-          "note": "<session-note>\nThe team may have 2 to 2 agents, you included.\nWork through a team from the start: you lead, and members do the work — at least 1 of them.\n</session-note>"
+          "note": "<session-note>\nThe team may have 2 to 2 agents, you included.\nWork through subagents from the start: you lead, and they do the work. The person opened 1 slots for them: fill them with team_add.\n</session-note>"
         }
       ]
     },
@@ -632,7 +656,7 @@
       ]
     },
     {
-      "about": "The size is across the whole tree: a member that leads adds within the same max.",
+      "about": "The size is across the whole tree: subagents placed under a sub-manager count within the same max.",
       "start": {
         "min": 1,
         "max": 4,
@@ -653,12 +677,13 @@
         },
         {
           "op": "call",
-          "by": "backend",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "db",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "backend"
           }
         },
         {
@@ -673,12 +698,13 @@
         },
         {
           "op": "call",
-          "by": "backend",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "api",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "backend"
           }
         },
         {
@@ -1538,7 +1564,7 @@
       ]
     },
     {
-      "about": "A member works; a member that leads becomes a manager when it adds one; stopping all its members makes the lead a worker again (min 1).",
+      "about": "A subagent works; a sub-manager becomes a manager when one is placed under it; stopping them all makes the lead a worker again (min 1).",
       "start": {
         "min": 1,
         "max": 6,
@@ -1565,12 +1591,13 @@
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "routes",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "api"
           }
         },
         {
@@ -1805,12 +1832,13 @@
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "routes",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "api"
           }
         },
         {
@@ -2009,22 +2037,24 @@
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "routes",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "api"
           }
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "db",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "api"
           }
         },
         {
@@ -2396,13 +2426,14 @@
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "routes",
             "role": "owns a part",
             "task": "Do the part.",
-            "goal": "The REST API"
+            "goal": "The REST API",
+            "parent": "api"
           }
         },
         {
@@ -2670,7 +2701,7 @@
       ]
     },
     {
-      "about": "Stopping a member stops its subtree; they leave the team, and their names are free again. Only members under the caller may be stopped.",
+      "about": "Stopping is the main agent's: a subagent's team_stop is refused. Stopping a subagent stops its subtree; they leave the team, and their names are free again.",
       "start": {
         "min": 1,
         "max": 8,
@@ -2691,33 +2722,36 @@
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "routes",
             "role": "owns a part",
             "task": "Do the part.",
-            "lead": true
+            "lead": true,
+            "parent": "api"
           }
         },
         {
           "op": "call",
-          "by": "routes",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "auth",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "routes"
           }
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "db",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "api"
           }
         },
         {
@@ -2756,7 +2790,7 @@
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_stop",
           "args": {
             "name": "routes"
@@ -2767,12 +2801,13 @@
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "auth",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "api"
           }
         },
         {
@@ -2817,15 +2852,15 @@
           "delivered": {}
         },
         {
-          "result": "web is not under you: you can stop only the members you lead, directly or through your members.",
+          "result": "Only the main agent adds, assigns, replaces and stops subagents: ask it (team_send to lead).",
           "delivered": {}
         },
         {
-          "result": "api is not under you: you can stop only the members you lead, directly or through your members.",
+          "result": "Only the main agent adds, assigns, replaces and stops subagents: ask it (team_send to lead).",
           "delivered": {}
         },
         {
-          "result": "No agent called ghost in this team. The team: lead, api, routes, auth, db, web.",
+          "result": "Only the main agent adds, assigns, replaces and stops subagents: ask it (team_send to lead).",
           "delivered": {}
         },
         {
@@ -2900,12 +2935,13 @@
         },
         {
           "op": "call",
-          "by": "api",
+          "by": "lead",
           "tool": "team_add",
           "args": {
             "name": "routes",
             "role": "owns a part",
-            "task": "Do the part."
+            "task": "Do the part.",
+            "parent": "api"
           }
         },
         {
