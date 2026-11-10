@@ -93,7 +93,7 @@ round (`acp.md` *Scheduled work on a linked computer*, `loop.json` `scheduled`).
   goes on. `ask_user` and `plan_submit` have nobody to answer; `show` is not offered.
 - **Monitor mode, the device's half**: `_lembas/monitor` runs a schedule's watch command in its
   folder, with a timeout, under the mode's permission rules — **a command the mode would ask about
-  is refused** — and answers the output's hash (`sha256:` over the exit status and the bytes) and a
+  is refused** — and answers the output's hash (`sha256:` over the bytes and then the exit status) and a
   short excerpt; the server runs the model only when the hash changed, and records `unchanged`
   otherwise.
 - **Schedules over `/api/v2` with the device's token** (scope `link`): the CLI's `/schedule` lists,

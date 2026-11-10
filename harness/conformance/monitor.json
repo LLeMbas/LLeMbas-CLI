@@ -6,35 +6,35 @@
       "kind": "hash",
       "exit": 0,
       "output": "ok\n",
-      "expect": "sha256:9dbd5131695af2d8636ea64178344ffcb5d682333c2ac8342153b5f8a999037a"
+      "expect": "sha256:9427ae13c91f98a3af2213b34fb59e4bb5aa9e6101a1f7407f526dde3571e6aa"
     },
     {
       "about": "The same output with another exit status is a change.",
       "kind": "hash",
       "exit": 1,
       "output": "ok\n",
-      "expect": "sha256:262115bdbc989849fb45967adac594dde8d45deb291f3a26b38fb2bf4e10512b"
+      "expect": "sha256:21e0bbd37d04094ef29f22d0212bb0f4bedda1b1fab38d51f9b8670b5cf07df4"
     },
     {
       "about": "No output.",
       "kind": "hash",
       "exit": 0,
       "output": "",
-      "expect": "sha256:9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      "expect": "sha256:c7757c0896cbfe6182d8ea2bda4a8bf94addc428980eedab8609c57ca7ff1763"
     },
     {
       "about": "A trailing newline counts: nothing is normalised.",
       "kind": "hash",
       "exit": 0,
       "output": "ok",
-      "expect": "sha256:05df918976ca296956abf9b5fb424bb9bef7c32bb471b1005b417abc696e25a9"
+      "expect": "sha256:b9b8913ecae1ba8190ef1a22cc57afef08ad3933ab4b13a32f8cdccb07bb527b"
     },
     {
       "about": "UTF-8 output, hashed as its bytes.",
       "kind": "hash",
       "exit": 0,
       "output": "lembas · ✓\n",
-      "expect": "sha256:cb00179ad9e36546b1b973ded0903592a6b975552b5596feac573426c67e24e4"
+      "expect": "sha256:3d1c38d3b96ee10d71faac35eb2933ba13b68d6325872fdda3e459c9fbd17d98"
     },
     {
       "about": "A read-only command in Edit runs.",

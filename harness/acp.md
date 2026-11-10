@@ -435,10 +435,11 @@ default rules, the global rules and — in a trusted project — the project's),
 `scheduled.texts.monitor_denied`, both `-32602` with `data: { reason: "permission" }`
 (`conformance/monitor.json`).
 
-**The hash** (`monitor.json` `hash` cases): `sha256:` and the lowercase hex SHA-256 of the exit
-status as decimal digits, a newline, and then the output's bytes exactly as read — standard output
-and standard error as one stream, as the `bash` tool reads them. Nothing is normalised: a watch
-command that prints a time changes every time, and should not.
+**The hash** (`monitor.json` `hash` cases): `sha256:` and the lowercase hex SHA-256 of the
+output's bytes exactly as read — standard output and standard error as one stream, as the `bash`
+tool reads them — followed by a newline and the exit status as decimal digits (after the bytes, so
+the device hashes the output as it streams, however long). Nothing is normalised: a watch command
+that prints a time changes every time, and should not.
 
 ## `_lembas/*` methods
 
@@ -499,8 +500,8 @@ with no input; at the timeout the group is stopped.
 Result `{ hash, exit, timed_out, excerpt, truncated, bytes, duration_ms }`: `hash` as above (`null`
 when it timed out), `exit` the exit status (`null` on a signal or a timeout), `excerpt` the start of
 the output decoded as UTF-8 (invalid bytes replaced), at most `scheduled.monitor.excerpt_chars`
-characters, `truncated` whether there was more, `bytes` the output's length. The device keeps at
-most `scheduled.monitor.output_max_bytes` of output and hashes all of it as it streams.
+characters, `truncated` whether there was more, `bytes` the output's length. The device hashes all
+of the output as it streams and keeps at most `scheduled.monitor.output_max_bytes` of it.
 
 ### `_lembas/directories` — client → agent → result
 
