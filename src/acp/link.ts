@@ -56,6 +56,9 @@ export function limitsFromConfig(o: { sharedOnly?: boolean } = {}): Limits & { e
     get terminal() {
       return r().terminal === true
     },
+    get scheduled() {
+      return r().enabled === true && r().scheduled === true
+    },
     get terminalIntegration() {
       return r().terminal_integration !== false
     },
@@ -65,7 +68,7 @@ export function limitsFromConfig(o: { sharedOnly?: boolean } = {}): Limits & { e
 /** What the instance is told when the link opens (the hello, initialize's limits and
  *  capabilities): when it changes, the link is dialled again so the instance hears the new one. */
 function announced(L: Limits & { enabled: boolean }): string {
-  return JSON.stringify([L.enabled, L.sharedOnly, L.roots, L.maxMode, L.requireTrust, L.terminal])
+  return JSON.stringify([L.enabled, L.sharedOnly, L.roots, L.maxMode, L.requireTrust, L.terminal, L.scheduled === true])
 }
 
 export function pickInstance(name?: string): Instance {
@@ -199,7 +202,7 @@ export async function runLink(o: LinkOptions = {}): Promise<LinkStatus> {
           version: VERSION,
           harness_spec: HARNESS_VERSION,
           device: { host: hostname(), platform: `${process.platform}-${process.arch}` },
-          limits: { roots: limits.roots, max_mode: limits.maxMode, require_trust: limits.requireTrust },
+          limits: { roots: limits.roots, max_mode: limits.maxMode, require_trust: limits.requireTrust, scheduled: limits.scheduled === true },
         })
         status("linked")
         // The limits apply at once, each time they are looked at. What the instance was told at

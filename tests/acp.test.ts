@@ -137,7 +137,7 @@ test("the device's limits: outside the roots, untrusted, a higher mode", async (
   const root = project()
   const limits: Limits = { roots: [root], maxMode: "edit", approvalTimeoutMs: 50, requireTrust: true }
   const { c, init } = await client(limits)
-  expect(init._meta.lembas.limits).toEqual({ roots: [root], max_mode: "edit" })
+  expect(init._meta.lembas.limits).toEqual({ roots: [root], max_mode: "edit", scheduled: false })
   await expect(c.request("session/new", { cwd: tmpdir() })).rejects.toThrow("outside the directories")
   const untrusted = join(root, "..", `ph-untrusted-${Date.now()}`)
   mkdirSync(untrusted)
@@ -268,7 +268,7 @@ test("the terminal: a real shell through the link, only where remote.terminal sa
   config(fake.url)
   const root = project()
   const off = await client({ roots: [root], maxMode: "edit", approvalTimeoutMs: 50, requireTrust: true })
-  expect(off.init._meta.lembas.capabilities).toEqual(["directories", "configure", "steer", "sessions", "status", "delete", "compact", "title", "files", "commands", "attachments", "ask", "plan", "model", "turns", "context", "library", "prototypes", "plan_state", "rewind", "jobs", "show", "progress", "tree", "agents"])
+  expect(off.init._meta.lembas.capabilities).toEqual(["directories", "configure", "steer", "sessions", "status", "delete", "compact", "title", "files", "commands", "attachments", "ask", "plan", "model", "turns", "context", "library", "prototypes", "plan_state", "rewind", "jobs", "show", "progress", "tree", "agents", "scheduled"])
   await expect(off.c.request("_lembas/terminal/open", { cwd: root })).rejects.toThrow("remote.terminal is off")
 
   const { c, init } = await client({ roots: [root], maxMode: "edit", approvalTimeoutMs: 50, requireTrust: true, terminal: true })

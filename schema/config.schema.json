@@ -1075,6 +1075,10 @@
           "description": "Let the web UI open a terminal here (LLeMbas's terminal panel on a chat on this device): a login shell as this user, in a directory remote sessions may use. Default false.",
           "type": "boolean"
         },
+        "scheduled": {
+          "description": "Accept scheduled work (harness acp.md, spec 3.5.0): let your schedules on the LLeMbas instance run here as agent turns, in the folders remote work may use, in the schedule's mode (Edit unless it says Auto) lowered to max_mode. Default false. lembas service scheduled on|off.",
+          "type": "boolean"
+        },
         "terminal_integration": {
           "description": "Shell integration in those terminals (bash, zsh, fish): after your own startup files, the shell marks each prompt, command and exit status (OSC 133) and its directory (OSC 7), so the web UI shows the directory, a mark beside each finished command, and can jump between commands. false: the shell starts as it is. Default true.",
           "type": "boolean"

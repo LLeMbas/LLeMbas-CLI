@@ -34,6 +34,7 @@ import { offer, subagentModel, type ModelInfo } from "../src/team/subagents.ts"
 import { progressLine, progressText, type Progress } from "../src/session/progress.ts"
 import { checkMode, requestRefusal, tighten, whoDecides, type Grant } from "../src/team/delegation.ts"
 import { fillPrompt as fillText } from "../src/prompt/fill.ts"
+import { isSilent, judgeCase, monitorHash, scheduledMode, stripSentinel } from "../src/acp/scheduled.ts"
 
 type Case = Record<string, unknown>
 
@@ -50,6 +51,14 @@ function readableUnder(grants: Record<string, string> | undefined, path: string)
 }
 
 export const AREAS: Record<string, (c: Case) => unknown> = {
+  // Spec 3.5.0: scheduled work on a linked computer (src/acp/scheduled.ts).
+  scheduled: (c) => scheduledMode({ accept: c.accept === true, mode: c.mode, max_mode: c.max_mode as Mode, approval_wait_s: c.approval_wait_s }),
+  silent: (c) => ({ silent: isSilent(c.text as string), stripped: stripSentinel(c.text as string) }),
+  monitor: (c) => {
+    if (c.kind === "hash") return monitorHash(c.exit as number, c.output as string)
+    const r = judgeCase(c.line as string, c.mode as Mode, c.rules as PermissionConfig | undefined)
+    return "run" in r ? "run" : { refused: r.refused }
+  },
   hardline: (c) => hardlineCommand(c.line as string, BUILTIN_HARDLINE)?.id ?? null,
   split: (c) => splitCommand(c.line as string),
   plain: (c) => plainCommands(c.line as string),

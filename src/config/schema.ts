@@ -317,6 +317,7 @@ export const Config = z.strictObject({
       approval_timeout: z.number().int().positive().optional().describe("Seconds an approval waits for an answer from the web before it counts as a denial (default 600)."),
       require_trust: z.boolean().optional().describe("Only projects trusted on this machine (default true)."),
       terminal: z.boolean().optional().describe("Let the web UI open a terminal here (LLeMbas's terminal panel on a chat on this device): a login shell as this user, in a directory remote sessions may use. Default false."),
+      scheduled: z.boolean().optional().describe("Accept scheduled work (harness acp.md, spec 3.5.0): let your schedules on the LLeMbas instance run here as agent turns, in the folders remote work may use, in the schedule's mode (Edit unless it says Auto) lowered to max_mode. Default false. lembas service scheduled on|off."),
       terminal_integration: z.boolean().optional().describe("Shell integration in those terminals (bash, zsh, fish): after your own startup files, the shell marks each prompt, command and exit status (OSC 133) and its directory (OSC 7), so the web UI shows the directory, a mark beside each finished command, and can jump between commands. false: the shell starts as it is. Default true."),
     })
     .optional()

@@ -142,7 +142,7 @@ export const LOOP: {
     work: { write: string[]; execute: string[]; kept: string[] }
     read_max: number
     texts: Record<
-      | "added" | "added_waiting" | "sent" | "stopped" | "manager" | "full" | "bad_name" | "all_name" | "taken" | "no_goal" | "unknown" | "self" | "nobody" | "not_yours" | "nobody_to_stop" | "no_report" | "ended"
+      | "added" | "added_waiting" | "added_under" | "added_waiting_under" | "sent" | "stopped" | "manager" | "full" | "bad_name" | "all_name" | "taken" | "no_goal" | "unknown" | "self" | "nobody" | "not_yours" | "nobody_to_stop" | "no_report" | "ended"
       // Spec 3.4.0 (subagents.md §5–§13).
       | "only_main" | "not_manager" | "wider" | "request_not_narrower" | "request_kind" | "requestable" | "not_delegated" | "not_requestable" | "requested" | "no_request" | "decided" | "allowed" | "refused" | "decision_allowed" | "decision_refused" | "no_parent" | "finished" | "has_ended" | "cycle" | "assigned" | "replaced" | "replace_brief" | "no_findings" | "noted" | "not_yours_findings" | "context_full" | "gone" | "request_body",
       string
@@ -170,6 +170,18 @@ export const LOOP: {
     request: { kinds: string[]; id_prefix: string }
     whoami: { lines: Record<"who" | "parent" | "task" | "mode" | "request" | "model" | "limits" | "spawn_yes" | "spawn_no" | "context", string> }
     findings: { header: string; item: string }
+  }
+  /** Scheduled work on a linked computer (spec 3.5.0, acp.md): the setting, the modes, the
+   *  approval wait, the sentinel, the watch command's limits, the refusals. */
+  scheduled: {
+    setting: { key: string; label: string; hint: string }
+    modes: string[]
+    default_mode: string
+    approval_wait_seconds: { default: number; min: number; max: number }
+    sentinel: string
+    statuses: string[]
+    monitor: { timeout_seconds: { default: number; min: number; max: number }; excerpt_chars: number; output_max_bytes: number }
+    texts: Record<"off" | "plan" | "denied" | "monitor_asks" | "monitor_denied" | "no_reply", string>
   }
   /** Progress (spec 3.4.0, harness/progress.md): the phases, their texts, the line. */
   progress: {

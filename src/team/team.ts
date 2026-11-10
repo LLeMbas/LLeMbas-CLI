@@ -515,8 +515,11 @@ export class Team {
     this.agents.set(member.name, member)
     this.want(member)
     this.fillSlots()
-    const vars = { name: member.name, role: member.role, size: this.size(), max: this.max, parallel: parallelFrom(this.o.capacity(member.model)) }
-    return { text: fill(member.state === "working" ? TEXTS.added : TEXTS.added_waiting, vars), added: member }
+    const vars = { name: member.name, role: member.role, size: this.size(), max: this.max, parallel: parallelFrom(this.o.capacity(member.model)), parent: parent.name }
+    // Spec 3.5.0: placed under a sub-manager, its report goes there — said so, not "to you".
+    const under = parent.name !== LEAD
+    const text = member.state === "working" ? (under ? TEXTS.added_under : TEXTS.added) : under ? TEXTS.added_waiting_under : TEXTS.added_waiting
+    return { text: fill(text, vars), added: member }
   }
 
   /** team_send (§5). */

@@ -4,6 +4,35 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Harness spec 3.5.0: scheduled work on a linked computer.
+
+### Added
+
+- **Accept scheduled work.** A new switch, off by default: `lembas service scheduled on` (or
+  `lembas remote scheduled on`; `remote.scheduled` in the global config). On, the schedules you
+  make on your LLeMbas server may run on this computer as agent turns, in the folders remote work
+  may use. `lembas remote list --json` says `scheduled`; the server is told at once (the link
+  dials again once nothing is working).
+- **Scheduled turns.** A run is an agent session in the schedule's mode — Edit unless the schedule
+  says Auto, never Plan, and never beyond `remote.max_mode` — with the schedule's Subagents
+  Min/Max. Its answer reports the run: `ok`, `silent` (the reply said `[SILENT]` on its first or
+  last line), `failed` or `cancelled`, and the final reply. A switch turned off is a fixed refusal
+  the server shows as it is.
+- **Approvals in a scheduled run** go to you through the server (a notification on your phone)
+  and wait the schedule's wait — 30 minutes unless it says otherwise — then count as denied, and
+  the model is told so. Questions and plans have nobody to answer in a scheduled run.
+- **Watch commands** (monitor mode): the server asks this computer to run a schedule's watch
+  command in its folder, with a timeout, and gets back a hash of the output and a short excerpt;
+  the model runs only when the output changed. A command the schedule's mode would ask about is
+  refused rather than run.
+
+### Changed
+
+- `team_add` under a sub-manager says where the report goes: "Its report goes to <sub-manager>
+  when it finishes", not "comes to you".
+
 ## [2.0.0-beta.6] — 2026-11-10
 
 Harness spec 3.4.0 (spec commits 4b8786b, b66891e): one progress vocabulary for every client, and

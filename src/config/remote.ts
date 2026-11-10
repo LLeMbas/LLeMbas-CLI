@@ -62,6 +62,8 @@ export interface RemoteState {
   roots: string[]
   max_mode: Mode
   terminal: boolean
+  /** Accept scheduled work (spec 3.5.0). */
+  scheduled: boolean
 }
 
 export function remoteState(b: RemoteBlock = remoteBlock()): RemoteState {
@@ -70,6 +72,7 @@ export function remoteState(b: RemoteBlock = remoteBlock()): RemoteState {
     roots: (b.roots ?? []).map((r) => resolve(expandHome(r))),
     max_mode: b.max_mode ?? "edit",
     terminal: b.terminal === true,
+    scheduled: b.scheduled === true,
   }
 }
 

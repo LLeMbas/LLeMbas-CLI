@@ -44,6 +44,7 @@ import type { Hub } from "./hub.ts"
 import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
 import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs, teamFindings, teamStop, teamTranscript, teamView, treeOf } from "./jobs.ts"
 import { isNote } from "../session/prefix.ts"
+import { deniedText, finalReply, judgeMonitor, monitorTimeout, permissionFor, refusalText, runMonitor, runOutcome, scheduledMode, type ScheduledTurn } from "./scheduled.ts"
 
 export const ACP_VERSION = 1
 /** The link's version (LLeMbas `services/device_link.py:PROTOCOL`, harness/acp.md *Versions*). 3:
@@ -68,6 +69,8 @@ export interface Limits {
   /** `remote.enabled`, where the limits are the device's (the link, the service's hub). False:
    *  nothing new is opened or shared, whatever the roots say. Absent: not judged here. */
   enabled?: boolean
+  /** Accept scheduled work (`remote.scheduled`, spec 3.5.0), with remote work on. Absent: no. */
+  scheduled?: boolean
   /** The link a terminal holds for /remote on a machine whose remote work is off: only
    *  the sessions shared from that terminal can be reached; the web UI opens none of its own. */
   sharedOnly?: boolean
@@ -180,6 +183,9 @@ export interface Session {
   turns: TurnLog<PromptResult>
   /** The command set last sent to the client, to send it again only when it changed. */
   commands?: string
+  /** The scheduled turn it runs now (spec 3.5.0): its mode is the ceiling, its approvals wait
+   *  the schedule's wait and say so, and nobody answers a question or a plan. */
+  scheduled?: ScheduledTurn
 }
 
 /** What `session/prompt` answers. */
@@ -279,6 +285,10 @@ export const CAPABILITIES = [
   "progress",
   "tree",
   "agents",
+  // Harness spec 3.5.0: scheduled turns (`scheduled` in session/new and session/prompt, the run's
+  // outcome in the answer, `scheduled` on an approval) and `_lembas/monitor`. Whether this device
+  // accepts them now is `limits.scheduled`.
+  "scheduled",
 ] as const
 export const STOP: Record<string, string> = { stop: "end_turn", steps: "max_turn_requests", budget: "max_tokens", cancelled: "cancelled", error: "end_turn" }
 
@@ -287,7 +297,7 @@ type AskRequest = Parameters<Asker["ask"]>[0]
 /** `session/request_permission`'s params for an approval — the same card whichever process asks
  *  (the hub for a session a terminal runs). `patient`: a person may answer at the terminal
  *  too, so the instance waits rather than timing the card out. */
-export function permissionParams(sessionId: string, req: AskRequest, o: { patient?: boolean; toolCallId?: string } = {}) {
+export function permissionParams(sessionId: string, req: AskRequest, o: { patient?: boolean; toolCallId?: string; scheduled?: ScheduledTurn } = {}) {
   const offerAlways = !req.request.alwaysAsk
   return {
     sessionId,
@@ -314,6 +324,9 @@ export function permissionParams(sessionId: string, req: AskRequest, o: { patien
         ...(req.source ? { job: { id: req.source.jobId, agent: req.source.agent, description: req.source.description } } : {}),
         // Spec 3.4.0 (capability tree): a subagent of the tree whose call only the person can allow.
         ...(req.source?.subagent ? { subagent: req.source.subagent } : {}),
+        // Spec 3.5.0 (capability scheduled): a scheduled turn's call — the client puts it to the
+        // person where they are, and the device waits the schedule's wait.
+        ...(o.scheduled ? { scheduled: { schedule_id: o.scheduled.scheduleId, run_id: o.scheduled.runId, wait_s: Math.round(o.scheduled.waitMs / 1000) } } : {}),
       },
     },
   }
@@ -480,6 +493,7 @@ export class AcpAgent {
     peer.handle("_lembas/team/transcript", (p) => this.tree("team_transcript", p))
     peer.handle("_lembas/team/findings", (p) => this.tree("team_findings", p))
     peer.handle("_lembas/team/stop", (p) => this.tree("team_stop", p))
+    peer.handle("_lembas/monitor", (p) => this.monitor(p))
     peer.on("_lembas/terminal/input", (p) => this.terminalInput(p))
     peer.on("_lembas/terminal/resize", (p) => this.terminalResize(p))
     peer.on("_lembas/terminal/close", (p) => this.terminalClose(String(p?.terminalId ?? "")))
@@ -528,7 +542,7 @@ export class AcpAgent {
         lembas: {
           protocol: this.protocol,
           harness_spec: HARNESS_VERSION,
-          limits: this.limits ? { roots: this.limits.roots, max_mode: this.limits.maxMode } : null,
+          limits: this.limits ? { roots: this.limits.roots, max_mode: this.limits.maxMode, scheduled: this.limits.scheduled === true } : null,
           // The login's connection: a `model` event's ref `<connection>/<name>` is the
           // instance's own model `<name>`; any other ref is one only this device has.
           connection: this.instanceConnection ?? null,
@@ -587,12 +601,15 @@ export class AcpAgent {
     const cwd = typeof p?.cwd === "string" ? expandHome(p.cwd) : ""
     if (!cwd || !isAbsolute(cwd)) throw new RpcError(INVALID_PARAMS, "cwd must be an absolute path")
     if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new RpcError(INVALID_PARAMS, `${cwd} is not a directory on this machine`)
+    // Spec 3.5.0: a scheduled session is judged first — off is the same fixed refusal whatever else.
+    const scheduled = this.judgeScheduled(p?._meta?.lembas?.scheduled)
     const refused = this.refusal(cwd)
-    if (refused) throw new RpcError(INVALID_PARAMS, refused)
+    if (refused) throw new RpcError(INVALID_PARAMS, refused, scheduled ? { reason: "folder" } : undefined)
     const L = this.limits
     const wanted = asMode(p?._meta?.mode) ?? undefined
-    const mode = L ? clampMode(wanted ?? L.maxMode, L.maxMode) : wanted
-    const session: Session = { id: "", cwd, prompting: false, app: undefined as unknown as App, turns: new TurnLog() }
+    // A scheduled session runs in the schedule's mode, never `_meta.mode`.
+    const mode = scheduled ? scheduled.mode : L ? clampMode(wanted ?? L.maxMode, L.maxMode) : wanted
+    const session: Session = { id: "", cwd, prompting: false, app: undefined as unknown as App, turns: new TurnLog(), ...(scheduled ? { scheduled } : {}) }
     // No model-made title: the client names its own conversations (LLeMbas has its chat's), and a
     // title request would be a second call the account pays for, for nothing.
     // The chat's model and effort: `lembas_model` is the instance's own name for it, the
@@ -778,7 +795,8 @@ export class AcpAgent {
    *  `_lembas/show`, where the client said it shows files; otherwise none, and show is not offered. */
   private equipShow(s: Session) {
     const ctx = s.app.engine.o.toolCtx
-    if (!this.shows) return void delete ctx.show
+    // Nobody is looking at a scheduled run (spec 3.5.0): show is not offered there.
+    if (!this.shows || s.scheduled) return void delete ctx.show
     ctx.show = async (req, callId) => {
       if (s.agent !== this || this.peer.isClosed) return { shown: false, reason: "the client is not connected" }
       const r = (await this.peer.request("_lembas/show", { sessionId: s.id, toolCallId: callId ?? "", ...req }, 30_000)) as { shown?: unknown; reason?: unknown } | undefined
@@ -994,12 +1012,18 @@ export class AcpAgent {
     // A turn id this session has taken already: not run again — the original's answer,
     // now or when it is done.
     if (s.turns.has(turnId)) return s.turns.run(turnId, () => Promise.reject(new Error("unreachable")))
+    // Spec 3.5.0: a scheduled turn is judged again (the setting may have been turned off since the
+    // session was opened); a prompt without `scheduled` is the person's, in the run's agent chat.
+    const scheduled = this.judgeScheduled(p?._meta?.lembas?.scheduled)
     this.takeContext(s, p)
     const prepared = preparePrompt(s.app, s.id, p.prompt, { roots: this.limits?.roots })
     // Working already: the prompt waits for the turn to end and runs next. It used to be
     // refused, and a web UI that had misjudged the session as idle lost its message to an error.
     const run = async (started: () => void): Promise<PromptResult> => {
       s.prompting = true
+      // The turn that runs now says whether the session is a scheduled run's (it may wait behind another).
+      if (scheduled) s.scheduled = scheduled
+      else delete s.scheduled
       started()
       try {
         return await this.runPrepared(s, prepared, turnId)
@@ -1023,6 +1047,8 @@ export class AcpAgent {
    *  the expanded prompt with its attachments, under the command's model and mode for this turn. */
   private async runPrepared(s: Session, prepared: ReturnType<typeof preparePrompt>, turnId: string): Promise<PromptResult> {
     const app = s.app
+    const turn = s.scheduled
+    if (turn) return this.runScheduled(s, prepared, turnId, turn)
     const done = (meta: Record<string, unknown>): PromptResult => ({ stopReason: "end_turn", _meta: { lembas: { turnId, ...meta } } })
     if (prepared.kind === "message") {
       app.bus.emit({ type: "notice", message: `/${prepared.name}: ${prepared.text}` })
@@ -1066,6 +1092,68 @@ export class AcpAgent {
       }
       if (prepared.mode && app.engine.mode === (this.limits ? clampMode(prepared.mode, this.limits.maxMode) : prepared.mode)) app.engine.mode = prev.mode
     }
+  }
+
+  /** A scheduled request's settings as this device runs them (spec 3.5.0), or undefined when the
+   *  request is not scheduled; a refusal is thrown as -32602 with `data.reason`. */
+  private judgeScheduled(meta: any): ScheduledTurn | undefined {
+    if (meta === undefined || meta === null) return undefined
+    const m = typeof meta === "object" ? meta : {}
+    const L = this.limits
+    const judged = scheduledMode({ accept: L?.scheduled === true && L.enabled !== false && !L.sharedOnly, mode: m.mode, max_mode: L?.maxMode ?? "edit", approval_wait_s: m.approval_wait_s })
+    if ("refused" in judged) throw new RpcError(INVALID_PARAMS, refusalText(judged.refused as "scheduled_off" | "plan"), { reason: judged.refused })
+    const str = (v: unknown) => (typeof v === "string" ? v.slice(0, 200) : "")
+    return { scheduleId: str(m.schedule_id), runId: str(m.run_id), title: str(m.title), mode: judged.mode, waitMs: judged.wait_s * 1000 }
+  }
+
+  /** One scheduled turn: the schedule's mode is the ceiling for the turn — a command in the prompt
+   *  narrows it, never widens it — and the answer carries the run's outcome. */
+  private async runScheduled(s: Session, prepared: ReturnType<typeof preparePrompt>, turnId: string, turn: ScheduledTurn): Promise<PromptResult> {
+    const app = s.app
+    const meta = (extra: Record<string, unknown>, reason: string, text: string, error?: string) => ({
+      turnId,
+      ...extra,
+      scheduled: runOutcome({ runId: turn.runId, reason, text, error }),
+    })
+    if (prepared.kind !== "run") {
+      // A scheduled run's text is the server's; a command that is only an action has no reply.
+      return { stopReason: "end_turn", _meta: { lembas: meta({ command: prepared.name }, "stop", "") } }
+    }
+    app.engine.mode = prepared.mode ? clampMode(prepared.mode, turn.mode) : turn.mode
+    let error: string | undefined
+    const off = app.bus.on((e) => {
+      if (e.type === "error") error = e.message
+    })
+    const prev = { model: app.engine.model.ref, effort: app.engine.effort }
+    try {
+      if (prepared.model) app.switchModel(prepared.model)
+      const reason = await app.turns.prompt(prepared.prompt, prepared.extra, prepared.shown, { turnId, attachments: prepared.attachments })
+      const unsent = app.engine.takeInbox()
+      return { stopReason: STOP[reason] ?? "end_turn", _meta: { lembas: meta(unsent.length ? { unsent } : {}, reason, finalReply(app.engine.messages), error) } }
+    } finally {
+      off()
+      if (prepared.model && app.engine.model.ref !== prev.model) {
+        app.switchModel(prev.model)
+        app.engine.effort = prev.effort
+      }
+      app.engine.mode = turn.mode
+    }
+  }
+
+  /** `_lembas/monitor` (spec 3.5.0): a schedule's watch command, run here only where the
+   *  schedule's mode allows it without asking — a watch has nobody to ask. */
+  private async monitor(p: any) {
+    const turn = this.judgeScheduled({ mode: p?.mode, schedule_id: p?.schedule_id, run_id: p?.run_id })!
+    const cwd = typeof p?.cwd === "string" ? expandHome(p.cwd) : ""
+    if (!cwd || !isAbsolute(cwd)) throw new RpcError(INVALID_PARAMS, "cwd must be an absolute path", { reason: "folder" })
+    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new RpcError(INVALID_PARAMS, `${cwd} is not a directory on this machine`, { reason: "folder" })
+    const refused = this.refusal(cwd)
+    if (refused) throw new RpcError(INVALID_PARAMS, refused, { reason: "folder" })
+    const command = typeof p?.command === "string" ? p.command.trim() : ""
+    if (!command) throw new RpcError(INVALID_PARAMS, "command must be a command line")
+    const judged = judgeMonitor(command, turn.mode, { ...permissionFor(cwd), cwd })
+    if ("refused" in judged) throw new RpcError(INVALID_PARAMS, judged.text, { reason: "permission" })
+    return runMonitor(command, cwd, monitorTimeout(p?.timeout_s))
   }
 
   /** `_lembas/session/status`: whether the session is working, and where it runs — asked
@@ -1370,7 +1458,8 @@ export class AcpAgent {
    *  (its time ran out, the link dropped) is taken down with `_lembas/permission/settled`. */
   private asker(s: Session): Asker {
     const agentOf = () => s.agent ?? this
-    const canAsk = () => agentOf().cards && !agentOf().peer.isClosed
+    // Nobody is at a scheduled run to answer a question or a plan (spec 3.5.0).
+    const canAsk = () => agentOf().cards && !agentOf().peer.isClosed && !s.scheduled
     /** The client does not know the method after all: as if it had never been offered (and never again). */
     const unknown = (a: AcpAgent, e: unknown) => {
       if (!(e instanceof RpcError) || e.code !== METHOD_NOT_FOUND) return false
@@ -1382,15 +1471,17 @@ export class AcpAgent {
       ask: async (req): Promise<AskReply> => {
         // Whichever link holds the session now; none (dropped, not back yet) is nobody to ask.
         const agent = agentOf()
-        const timeout = agent.limits?.approvalTimeoutMs ?? 0
-        const params = permissionParams(s.id, req)
+        // A scheduled turn's approval waits the schedule's wait (spec 3.5.0), and says so.
+        const turn = s.scheduled
+        const timeout = turn ? turn.waitMs : (agent.limits?.approvalTimeoutMs ?? 0)
+        const params = permissionParams(s.id, req, turn ? { scheduled: turn } : {})
         try {
           if (agent.peer.isClosed) throw new Error("not linked")
           const answer = await agent.peer.request("session/request_permission", params, timeout || undefined)
           return replyFrom(answer, !req.request.alwaysAsk)
         } catch {
           settle(agent, params.toolCall.toolCallId)
-          return { kind: "deny", feedback: "Nobody answered the approval in time, so it was refused." }
+          return { kind: "deny", feedback: turn ? deniedText(turn.waitMs) : "Nobody answered the approval in time, so it was refused." }
         }
       },
       // Getters: whether there is anybody to ask is decided when the tool runs, by the link

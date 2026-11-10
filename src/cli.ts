@@ -45,12 +45,16 @@ Usage:
   lembas serve --stdio            an ACP agent on stdin/stdout, for an editor that speaks ACP
   lembas service install | uninstall | status | logs [-f] | run
                                   work from a LLeMbas instance as a background service (remote:)
+  lembas service scheduled [on|off]
+                                  Accept scheduled work: your schedules may run here as agent
+                                  turns (remote.scheduled, off by default)
   lembas remote list | add <dir>… | remove <dir>… | enable | disable
-         | mode <manual|edit|auto|plan> | terminal <on|off>  [--json]
+         | mode <manual|edit|auto|plan> | terminal <on|off> | scheduled <on|off>  [--json]
                                   what the instance may do here (remote:): the directories it may
                                   work in (add turns remote work on), the most permissive mode,
                                   terminals; a running service applies a change within seconds
-                                  (--json: one object, {enabled, roots, max_mode, terminal})
+                                  (--json: one object, {enabled, roots, max_mode, terminal,
+                                  scheduled})
   lembas mcp [list]               connect the MCP servers and list their tools and prompts
   lembas mcp auth <server>        sign in to a remote MCP server (OAuth)
   lembas mcp logout <server>      forget a server's stored sign-in
@@ -286,7 +290,20 @@ async function main() {
     if (sub === "status") return void console.log(service.status().join("\n"))
     if (sub === "logs") process.exit(service.logs(argv.includes("-f") || argv.includes("--follow")))
     if (sub === "run") process.exit(await service.run(argv[2]))
-    fail("usage: lembas service install | uninstall | status | logs [-f] | run [connection]", 2)
+    // Accept scheduled work (spec 3.5.0): the same switch as `lembas remote scheduled`.
+    if (sub === "scheduled") {
+      const { remoteCommand } = await import("./remote.ts")
+      const v = argv[2]
+      if (v === undefined || v === "--json") {
+        const { remoteState } = await import("./config/remote.ts")
+        const s = remoteState()
+        if (v === "--json") console.log(JSON.stringify({ scheduled: s.scheduled, enabled: s.enabled }))
+        else console.log(`accept scheduled work: ${s.scheduled ? "on" : "off"}${s.scheduled && !s.enabled ? " (but remote work is off, so nothing runs: lembas remote enable)" : ""}`)
+        process.exit(0)
+      }
+      process.exit(remoteCommand(["scheduled", ...argv.slice(2)]))
+    }
+    fail("usage: lembas service install | uninstall | status | logs [-f] | run [connection] | scheduled [on|off]", 2)
   }
 
   if (cmd === "run") {
