@@ -38,7 +38,7 @@ export const TUI_COMMAND_NAMES = [
   "agents", "continue", "help", "model", "effort", "mode", "plan", "plans", "prototype", "review", "changelog", "init", "release", "tasks", "decisions", "decide",
   "jobs", "sessions", "resume", "remote", "delete", "new", "clear", "copy", "undo", "redo", "diff", "checkpoint", "checkpoints", "branch", "commit", "context",
   "compact", "memory", "skills", "skill", "personality", "voice", "speak", "mcp", "login", "logout", "settings", "usage", "kb", "theme", "skin", "terminal",
-  "icons", "trust", "reload", "restart", "quit", "exit", "q", "team",
+  "icons", "trust", "reload", "restart", "quit", "exit", "q", "team", "rename", "schedule", "schedules", "search",
 ] as const
 
 /** The built-ins that work without a screen of their own. Descriptions as the TUI's (a test). */
