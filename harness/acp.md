@@ -66,6 +66,7 @@ change to the protocol is a change here first, then in both projects.
 | `show` | spec 3.0.0: `_lembas/show`; the `show` tool is offered in a session the client opened when the client said `show: true` in `clientCapabilities._meta.lembas` |
 | `jobs` | background work (spec 2.0.0): the `job` and `job_note` events; `_lembas/jobs`, `_lembas/job/output`, `_lembas/job/stop`, `_lembas/job/send`, `_lembas/job/transcript`; `jobs` in `_lembas/session/status`; `job` on `session/request_permission`; `machine` on a `prompt` event |
 | `progress` | spec 3.4.0 (`progress.md`): the `phase` event; `progress` in `_lembas/session/status` |
+| `agents` | spec 3.4.0: the session's Subagents setting `{ min, max }` is read from `_meta.lembas.agents` on `session/new`, `session/prompt` and `_lembas/configure` (*Subagents in an agent chat*, below) |
 | `tree` | spec 3.4.0 (`subagents.md` §5–§13): the `team` event; `_lembas/team`, `_lembas/team/transcript`, `_lembas/team/findings`, `_lembas/team/stop`; `subagent` on `session/request_permission` |
 
 ## Standard ACP, as used here
@@ -254,6 +255,57 @@ Answer: ACP's `{ outcome: { outcome: "selected", optionId } | { outcome: "cancel
 optional `_meta.lembas.command` (the corrected command line, `once` only) or
 `_meta.lembas.feedback` (why it was denied). No answer within `remote.approval_timeout` is a denial.
 
+## Subagents in an agent chat (spec 3.4.0)
+
+**An agent chat's main agent is the CLI on the device.** Its subagents are the device's: it starts
+them locally, on the models of the server it is logged in to, under every rule of `subagents.md` —
+the model rules (§2–§3), Min/Max, slots, permissions only ever narrowed, request options, and a
+call nobody in the tree can allow going to the person. The server runs no subagent of its own for
+an agent chat and offers its own subagent tool to no agent chat; what it does is carry the setting
+down and the tree up. A device without the capabilities `agents` and `tree` gets neither and runs no
+subagents for the chat (the chat says so beside the setting).
+
+**What goes down, with every turn.**
+
+- `agents: { min, max }` in `_meta.lembas` of `session/new`, of **every** `session/prompt`, and of
+  `_lembas/configure` when the person changes it between turns — the chat's setting as the server
+  keeps it (`team.md` §2: 1 ≤ min ≤ max ≤ the instance's cap). The device takes the value as the
+  session's setting for that turn: a change reaches the main agent as `team.md` §10's note, and
+  nothing else reads the device's own configuration for the chat. Absent (an older server): `{ min:
+  1, max: 1 }` — no subagents. A value the device's own global cap is under is read as `team.md` §2
+  says (lowered, never refused).
+- `subagents: false` in the same `_meta.lembas` when the instance has subagents switched off: the
+  device offers none whatever `agents` says.
+- **What the person named** (`subagents.md` §2): the person's words reach the device as the turns'
+  prompt texts, so the device judges a named model from them as in its own sessions — every
+  `session/prompt` without `machine`; never a `machine` turn, a `_lembas/steer` from the harness, or
+  a tool's output. A chat continued on a device that has not seen its earlier turns gets them in
+  `_meta.lembas.said: string[]`, the person's earlier messages of the chat, oldest first (on
+  `session/new` only); the device counts them as typed in the session.
+- The models: the device's subagents may run on any model of the person's (`/v1/models` as the
+  device's token sees it), as in its own sessions.
+
+**What comes up.**
+
+- The tree, as it changes: the `team` event (`{ tree }`, `subagents.md` §12's data, at most four a
+  second), and on request `_lembas/team` (the tree and the whole room). Every agent's `progress`
+  is in it; the main agent's own also as the `phase` event (capability `progress`).
+- Approvals: a subagent's call that only the person can allow is an ordinary
+  `session/request_permission` with `_meta.lembas.subagent: { id, name, position }`; the server
+  shows it as its usual approval card naming the subagent, in every client. Requests the main agent
+  decides (`team_request` / `team_decide`) never reach the server as approvals: they are room
+  messages.
+- Findings and transcripts on request: `_lembas/team/findings`, `_lembas/team/transcript` (live and
+  ended subagents, read-only — the link has no method that writes into a subagent's session).
+- The person stopping a subagent: `_lembas/team/stop`.
+
+**What the server keeps.** The latest tree with the chat (so a client opening the chat draws it at
+once, and after the device has gone), and the room as `_lembas/team` last answered. Findings and
+transcripts stay on the device; a client asking for one while the device is not linked is told it
+is on the device, and gets it once the device links again. Over `/api/v2` the chat's stream carries
+the tree as it changes and the endpoints to read a subagent's transcript and findings, the same for
+a chat's own subagents and for an agent chat's — so Web, Desktop and Android draw both alike.
+
 ## `_lembas/*` methods
 
 Direction is who sends it. "→ result" marks a request; the others are notifications.
@@ -307,7 +359,7 @@ Only on the link (an error on `serve --stdio`).
 
 ### `_lembas/configure` — client → agent → result
 
-Params `{ sessionId, model?: <instance's name>, effort?: <level> }` between prompts (a level as in `session/new`). Result
+Params `{ sessionId, model?: <instance's name>, effort?: <level>, agents?: { min, max } }` between prompts (a level as in `session/new`; `agents` with capability `agents`, spec 3.4.0). Result
 `{ model: <ref>, effort }`. Emits a `model` event when something changed.
 
 ### `_lembas/steer` — client → agent → result

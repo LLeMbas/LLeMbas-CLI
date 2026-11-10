@@ -266,6 +266,9 @@ a message wakes it — 3.2.0), **`paused`** (its context is full; its last turn 
 **An ended subagent** — `done`, `out_of_context`, `stopped` — leaves the size and its slot frees;
 its name may be used again; it keeps its id, and the tree keeps it (§12) with its findings and
 transcript for the rest of the session. Messages to it by name are refused as `unknown`.
+The subagents under a sub-manager that ended by itself (`done`, `out_of_context`) move under its
+parent until the main agent replaces it, and then back under the replacement; a stopped one's
+subtree is stopped with it (§10).
 
 **When its context fills.** A subagent does not compact. When its context reaches
 `team.context.pause_at` of its model's window (default 0.85, the fraction compaction would start
@@ -348,3 +351,12 @@ the link (`acp.md`, capability `tree`):
 - A subagent: `blocks/team_member.md` (3.4.0: its id and position, `team_whoami`, `team_findings`,
   `team_finish`, that its context is limited and it will be told when it fills); a sub-manager,
   `blocks/team_submanager.md` in place of the whole lead block it got in 3.2.0.
+
+## 14. In an agent chat
+
+The main agent of an agent chat is the CLI on the linked device: it starts and runs the
+subagents there, under every rule above. The server carries the chat's Subagents setting down with
+every turn and the tree, approvals, findings and transcripts up, and offers no subagents of its own
+to an agent chat. The protocol: `acp.md`, *Subagents in an agent chat* (capabilities `agents` and
+`tree`).
+

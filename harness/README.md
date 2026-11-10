@@ -99,7 +99,10 @@ round (`progress.md`, `subagents.md` §5–§13).
   `team_add` gains `parent`, `mode`, `request`; `team_send` takes `parent`; `team_stop` is the main
   agent's. `blocks/team_submanager.md`; `team_lead.md` and `team_member.md` reworded. Over the link,
   capability `tree`: the `team` event, `_lembas/team`, `/transcript` (read-only), `/findings`,
-  `/stop`, `subagent` on an approval. Areas `team` (cases changed where a member used to add or
+  `/stop`, `subagent` on an approval. **An agent chat's subagents are the device's** (`subagents.md`
+  §14, `acp.md` *Subagents in an agent chat*): capability `agents` carries the chat's `{ min, max }`
+  down on every turn (and `said`, the person's earlier words, on `session/new`); the tree, progress,
+  approvals, findings and transcripts come up. Areas `team` (cases changed where a member used to add or
   stop, and new ones) and `delegation`.
 
 ## 3.3.0
