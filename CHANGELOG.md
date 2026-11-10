@@ -4,7 +4,7 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.0.0-beta.6] — 2026-11-10
 
 Harness spec 3.4.0 (spec commits 4b8786b, b66891e): one progress vocabulary for every client, and
 subagents organised as the main agent's tree.
