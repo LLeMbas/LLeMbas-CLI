@@ -82,7 +82,7 @@ export interface Pending {
   /** What the model says the call is for. */
   purpose?: string
   /** The subagent (running as a job) that asks, when one does. */
-  source?: { jobId: string; agent: string; description: string }
+  source?: { jobId: string; agent: string; description: string; /** Spec 3.4.0: a subagent of the tree. */ subagent?: { id: string; name: string; position: string } }
   resolve: (r: AskReply) => void
 }
 

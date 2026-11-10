@@ -16,7 +16,7 @@ import type { PlanReply, PlanRequest } from "../tool/plan_submit.ts"
 import type { QuestionReply, QuestionRequest } from "../tool/ask_user.ts"
 import { readLevel } from "../provider/effort.ts"
 import { clampMode, effortOf, markRemote, permissionParams, planParams, planReplyFrom, questionParams, questionReplyFrom, replyFrom, STOP, type PromptResult } from "./agent.ts"
-import { jobList, jobOutput, jobSend, jobStop, jobTranscript } from "./jobs.ts"
+import { jobList, jobOutput, jobSend, jobStop, jobTranscript, teamFindings, teamStop, teamTranscript, teamView, treeOf } from "./jobs.ts"
 import type { SessionContext } from "../app.ts"
 import { sessionTurnFile, sessionTurns, type TurnLog } from "./turns.ts"
 import { dropAttachments, preparePrompt } from "./prompt.ts"
@@ -454,7 +454,7 @@ export class Share {
       return
     }
     if (this.sharedId && this.hub && this.app.engine.sessionId === this.sharedId) {
-      this.hub.notify("hub/event", { sessionId: this.sharedId, event: e })
+      this.hub.notify("hub/event", { sessionId: this.sharedId, event: e.type === "team" ? { ...e, tree: treeOf(this.app) } : e })
       if (e.type === "task" && e.state === "end") this.sendCommands()
     }
   }
@@ -520,6 +520,15 @@ export class Share {
           return jobSend(this.app, p?.id, p?.text)
         case "transcript":
           return jobTranscript(this.app, p?.id)
+        // Spec 3.4.0 (capability tree): the subagent tree, through the hub as the jobs go.
+        case "team":
+          return teamView(this.app, p?.since)
+        case "team_transcript":
+          return teamTranscript(this.app, p?.id)
+        case "team_findings":
+          return teamFindings(this.app, p?.id)
+        case "team_stop":
+          return teamStop(this.app, p?.id)
         default:
           throw new RpcError(INVALID_PARAMS, `no such job operation: ${String(p?.op ?? "")}`)
       }

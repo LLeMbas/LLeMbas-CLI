@@ -5,6 +5,7 @@
 import type { App } from "../app.ts"
 import { jobRegistry, type Job, type JobInfo } from "../jobs/registry.ts"
 import type { Store } from "../session/store.ts"
+import type { TreeInfo } from "../team/team.ts"
 import { historyTurns } from "./agent.ts"
 import { INVALID_PARAMS, RpcError } from "./rpc.ts"
 
@@ -78,4 +79,49 @@ export function storedJobs(store: Store, sessionId: string): JobInfo[] {
     } catch {}
   }
   return [...list.filter((j) => j.state === "running"), ...list.filter((j) => j.state !== "running")]
+}
+
+// ── Spec 3.4.0 (acp.md capability `tree`): the subagent tree of a session ────────────────────
+
+/** The tree (subagents.md §12), or null for a session with no subagents. */
+export function treeOf(app: App): TreeInfo | null {
+  const t = app.team.team
+  if (!t.offered && !t.hasMembers() && !t.ended.length) return null
+  return t.info()
+}
+
+/** `_lembas/team`: the tree and the whole room above `since`. */
+export function teamView(app: App, since: unknown) {
+  const n = typeof since === "number" && since >= 0 ? since : 0
+  const t = app.team.team
+  return { tree: treeOf(app), room: t.room.filter((m) => m.n > n).map((m) => ({ n: m.n, from: m.from, to: m.to, recipients: m.recipients, text: m.text, time: m.time, report: m.report, kind: m.kind })) }
+}
+
+function subagentOf(app: App, id: unknown) {
+  const key = String(id ?? "")
+  const a = app.team.team.find(key)
+  if (!a || a.id !== key || a.id === "lead") throw new RpcError(INVALID_PARAMS, `this session has no subagent ${key}`)
+  return a
+}
+
+/** `_lembas/team/transcript`: a subagent's session, read-only. */
+export function teamTranscript(app: App, id: unknown) {
+  const a = subagentOf(app, id)
+  const job = a.jobId ? app.registry.get(app.jobsSessionId(), a.jobId) : undefined
+  const messages = job?.subagent?.engine.messages ?? (job?.childSessionId && app.store ? app.store.messages(job.childSessionId) : [])
+  return { id: a.id, state: a.state, turns: historyTurns(messages, app.engine.o.toolCtx.cwd) }
+}
+
+/** `_lembas/team/findings`. */
+export function teamFindings(app: App, id: unknown) {
+  const a = subagentOf(app, id)
+  return { id: a.id, findings: a.findings.map((f) => ({ ...f })) }
+}
+
+/** `_lembas/team/stop`: the person stops a live subagent and its subtree. */
+export function teamStop(app: App, id: unknown) {
+  const a = subagentOf(app, id)
+  if (a.endState) throw new RpcError(INVALID_PARAMS, `${a.id} has already ended`)
+  const gone = app.team.personStop(a.name)
+  return { stopped: app.team.team.ended.slice(-gone.length).map((x) => x.id) }
 }

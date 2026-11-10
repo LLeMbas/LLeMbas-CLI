@@ -130,7 +130,7 @@ export interface Asker {
     purpose?: string
     /** Set when a subagent running as a background job asks, so the card can say which — it may
      *  ask while the session itself is idle. */
-    source?: { jobId: string; agent: string; description: string }
+    source?: { jobId: string; agent: string; description: string; /** Spec 3.4.0: a subagent of the tree. */ subagent?: { id: string; name: string; position: string } }
   }): Promise<AskReply>
   /** The ask_user tool. Absent: the tool reports that nobody can be asked. `callId`: the tool call's
    *  id, which keys the card on another screen. */

@@ -647,8 +647,12 @@ export class Engine {
    *  included, as the store keeps them; never a note, a marked message or a machine turn. */
   personSaid(): string[] {
     const all = this.o.store && this.sessionId ? this.o.store.messages(this.sessionId) : this.messages
-    return personTexts(all, this.o.steerMark ?? STEER_MARK)
+    return [...this.saidBefore, ...personTexts(all, this.o.steerMark ?? STEER_MARK)]
   }
+
+  /** Spec 3.4.0 (acp.md, *Subagents in an agent chat*): the person's earlier words in a chat this
+   *  device has not seen, as the client sent them (`said` on session/new). */
+  saidBefore: string[] = []
 
   /** `extra`: attachments (@files, images) and the like — sent to the model after the text, never shown as typed.
    *  `meta`: the turn's id and what was attached, said on the `prompt` event. */

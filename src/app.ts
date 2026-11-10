@@ -546,7 +546,7 @@ export function createApp(o: AppOptions): App {
     let job: Job
     // The asker is the session's; a child's ask says which subagent it comes from.
     const askerFor = (): Asker => ({
-      ask: (req) => o.asker.ask({ ...req, source: { jobId: job.id, agent: spec.name, description } }),
+      ask: (req) => o.asker.ask({ ...req, source: { jobId: job.id, agent: spec.name, description, ...(member ? { subagent: { id: member.id, name: member.name, position: member.role } } : {}) } }),
       get question() {
         return o.asker.question
       },

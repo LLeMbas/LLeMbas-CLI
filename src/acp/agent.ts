@@ -42,7 +42,7 @@ import { CWD_META, REMOTE_META, Store } from "../session/store.ts"
 import type { Message } from "../provider/types.ts"
 import type { Hub } from "./hub.ts"
 import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
-import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs } from "./jobs.ts"
+import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs, teamFindings, teamStop, teamTranscript, teamView, treeOf } from "./jobs.ts"
 import { isNote } from "../session/prefix.ts"
 
 export const ACP_VERSION = 1
@@ -273,6 +273,12 @@ export const CAPABILITIES = [
   // Harness spec 3.0.0: the show tool, offered in a session the client opened when the client
   // said it can show files; the device sends the file with `_lembas/show`.
   "show",
+  // Harness spec 3.4.0: the progress phases (the `phase` event, `progress` in status); the subagent
+  // tree (the `team` event with the tree, `_lembas/team*`, `subagent` on an approval); the chat's
+  // Subagents setting read from `_meta.lembas.agents` (an agent chat's subagents are this device's).
+  "progress",
+  "tree",
+  "agents",
 ] as const
 export const STOP: Record<string, string> = { stop: "end_turn", steps: "max_turn_requests", budget: "max_tokens", cancelled: "cancelled", error: "end_turn" }
 
@@ -306,6 +312,8 @@ export function permissionParams(sessionId: string, req: AskRequest, o: { patien
         ...(o.patient ? { patient: true } : {}),
         // Which subagent asks (capability jobs), so the card can say — it may ask while the session itself is idle.
         ...(req.source ? { job: { id: req.source.jobId, agent: req.source.agent, description: req.source.description } } : {}),
+        // Spec 3.4.0 (capability tree): a subagent of the tree whose call only the person can allow.
+        ...(req.source?.subagent ? { subagent: req.source.subagent } : {}),
       },
     },
   }
@@ -468,6 +476,10 @@ export class AcpAgent {
     peer.handle("_lembas/job/stop", (p) => this.job("stop", p))
     peer.handle("_lembas/job/send", (p) => this.job("send", p))
     peer.handle("_lembas/job/transcript", (p) => this.job("transcript", p))
+    peer.handle("_lembas/team", (p) => this.tree("team", p))
+    peer.handle("_lembas/team/transcript", (p) => this.tree("team_transcript", p))
+    peer.handle("_lembas/team/findings", (p) => this.tree("team_findings", p))
+    peer.handle("_lembas/team/stop", (p) => this.tree("team_stop", p))
     peer.on("_lembas/terminal/input", (p) => this.terminalInput(p))
     peer.on("_lembas/terminal/resize", (p) => this.terminalResize(p))
     peer.on("_lembas/terminal/close", (p) => this.terminalClose(String(p?.terminalId ?? "")))
@@ -675,6 +687,8 @@ export class AcpAgent {
     const effort = effortOf(p?.effort)
     // A level the model does not offer is read as its start level; the answer says the one used.
     if (effort !== undefined) s.app.engine.effort = readLevel(s.app.engine.model, effort)
+    // Spec 3.4.0: the chat's Subagents setting, changed between turns.
+    if (p?.agents) this.takeAgents(s, { agents: p.agents })
     return { model: s.app.engine.model.ref, effort: s.app.engine.effort }
   }
 
@@ -724,6 +738,19 @@ export class AcpAgent {
   private takeContext(s: Session, p: any) {
     const ctx = contextOf(p?._meta)
     if (ctx) s.app.setContext(ctx, this.instanceConnection)
+    this.takeAgents(s, p?._meta?.lembas)
+  }
+
+  /** Spec 3.4.0 (capability agents): the chat's Subagents setting, sent with every turn by the
+   *  instance — absent (an older one, an editor on serve --stdio): the device's own, as before.
+   *  `said`: the person's earlier words in the chat. */
+  private takeAgents(s: Session, m: any) {
+    if (!this.lembas) return
+    const team = s.app.team.team
+    const a = m?.agents
+    if (Number.isInteger(a?.min) && Number.isInteger(a?.max) && a.min >= 1 && a.max >= 1) team.setSetting(Math.min(a.min, a.max), a.max)
+    if (m?.subagents === false) team.subagents = false
+    if (Array.isArray(m?.said) && !s.app.engine.saidBefore.length) s.app.engine.saidBefore = m.said.filter((x: unknown): x is string => typeof x === "string")
   }
 
   /** The session's plan, as a `plan` update — after session/new and after opening from the
@@ -1067,6 +1094,8 @@ export class AcpAgent {
         ...(s.turns.last ? { lastTurnId: s.turns.last } : {}),
         plan: s.app.engine.plan ?? null,
         jobs: jobList(s.app),
+        progress: s.app.engine.progress.current,
+        tree: treeOf(s.app),
       }
     const row = (this.store ??= new Store()).session(id)
     // Not open: the last turn it finished, as kept across a restart, its plan and its jobs as stored.
@@ -1089,6 +1118,24 @@ export class AcpAgent {
     const t = this.terminalFor(p)
     if (t) return t.client.request("hub/job", { sessionId: t.sessionId, op: "list" }, 15_000)
     return { jobs: jobList(this.get(p).app) }
+  }
+
+  /** `_lembas/team`, `/transcript`, `/findings`, `/stop` (spec 3.4.0, capability tree): the
+   *  session's subagent tree — the terminal's through the hub, as the jobs go. */
+  private async tree(op: "team" | "team_transcript" | "team_findings" | "team_stop", p: any) {
+    const t = this.terminalFor(p)
+    if (t) return t.client.request("hub/job", { sessionId: t.sessionId, op, id: p?.id, since: p?.since }, 15_000)
+    const app = this.get(p).app
+    switch (op) {
+      case "team":
+        return teamView(app, p?.since)
+      case "team_transcript":
+        return teamTranscript(app, p?.id)
+      case "team_findings":
+        return teamFindings(app, p?.id)
+      case "team_stop":
+        return teamStop(app, p?.id)
+    }
   }
 
   /** `_lembas/job/output`, `/stop`, `/send`, `/transcript` (acp/jobs.ts): one job of the session. */
@@ -1291,7 +1338,7 @@ export class AcpAgent {
   private forward(s: Session, e: Event) {
     // A model change says whether the model is this link's instance's: its ref is the
     // provider's now (`deepseek/x`), so the ref alone no longer tells.
-    const event = e.type === "model" ? { ...e, instance: this.isInstance(e.connection) } : e
+    const event = e.type === "model" ? { ...e, instance: this.isInstance(e.connection) } : e.type === "team" ? { ...e, tree: treeOf(s.app) } : e
     if (this.lembas) this.peer.notify("_lembas/event", { sessionId: s.id, event })
     switch (e.type) {
       case "text":

@@ -271,8 +271,8 @@ subagents for the chat (the chat says so beside the setting).
   `_lembas/configure` when the person changes it between turns — the chat's setting as the server
   keeps it (`team.md` §2: 1 ≤ min ≤ max ≤ the instance's cap). The device takes the value as the
   session's setting for that turn: a change reaches the main agent as `team.md` §10's note, and
-  nothing else reads the device's own configuration for the chat. Absent (an older server): `{ min:
-  1, max: 1 }` — no subagents. A value the device's own global cap is under is read as `team.md` §2
+  nothing else reads the device's own configuration for the chat. Absent (an older server, or a
+  client that is not LLeMbas): the device's own setting, as before 3.4.0. A value the device's own global cap is under is read as `team.md` §2
   says (lowered, never refused).
 - `subagents: false` in the same `_meta.lembas` when the instance has subagents switched off: the
   device offers none whatever `agents` says.
