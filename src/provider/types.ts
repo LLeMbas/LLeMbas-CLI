@@ -54,7 +54,7 @@ export type StreamEvent =
   | { type: "progress"; total: number; cache: number; processed: number; ms: number }
   | { type: "finish"; reason: string; message: Extract<Message, { role: "assistant" }> }
   /** Something worth telling the user that is not an error, e.g. a retry. */
-  | { type: "notice"; message: string }
+  | { type: "notice"; message: string; retry?: { reason: string; in: number; attempt?: number } }
 
 export interface ChatRequest {
   system: string

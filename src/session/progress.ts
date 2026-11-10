@@ -102,3 +102,139 @@ export function samePhase(a: Progress | null | undefined, b: Omit<Progress, "sin
   if (b.phase === "retrying") return a.attempt === b.attempt && a.reason === b.reason
   return true
 }
+
+/** What a tool call does, in a line (`what` of running_tool): the command, the path, the query. */
+export function callWhat(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined
+  const a = args as Record<string, unknown>
+  for (const k of ["command", "path", "file_path", "pattern", "query", "url", "description", "name"]) if (typeof a[k] === "string" && a[k]) return shortWhat(a[k] as string)
+  return undefined
+}
+
+type BusLike = { on(fn: (e: any) => void): () => void; emit(e: any): void }
+
+/** The progress of one engine, derived from the events it emits (progress.md §4), and said on its
+ *  bus as `phase` events: a new phase at once, a change of its data at most pace_per_second times a
+ *  second. Explicit phases (compacting, waiting for the person or a model, queued) are `set` by
+ *  whoever knows them. */
+export class ProgressTracker {
+  current: Progress | null = null
+  private rate: number | undefined
+  private running = new Map<string, Omit<Progress, "since">>()
+  private lastEmit = 0
+  private pendingTimer: ReturnType<typeof setTimeout> | undefined
+  private error: string | undefined
+  private held: Progress | null = null
+  private off: () => void
+
+  constructor(
+    private bus: BusLike,
+    private now: () => number = Date.now,
+  ) {
+    this.off = bus.on((e) => this.on(e))
+  }
+
+  dispose() {
+    this.off()
+    if (this.pendingTimer) clearTimeout(this.pendingTimer)
+  }
+
+  /** Set the phase (or null). Same phase for the same thing keeps `since`. */
+  set(next: Omit<Progress, "since"> | null) {
+    if (next === null) {
+      if (this.current === null) return
+      this.current = null
+      return this.emit(true)
+    }
+    if (samePhase(this.current, next)) {
+      const merged = { ...this.current!, ...next, since: this.current!.since } as Progress
+      if (JSON.stringify(merged) === JSON.stringify(this.current)) return
+      this.current = merged
+      return this.emit(false)
+    }
+    this.current = { ...next, since: this.now() } as Progress
+    this.emit(true)
+  }
+
+  /** A phase that waits on something outside the turn (the person, a model): set now, and the
+   *  phase before it put back by the function returned. */
+  hold(next: Omit<Progress, "since">): () => void {
+    const before = this.current
+    this.held = before
+    this.set(next)
+    return () => {
+      if (this.current && this.current.phase === next.phase) {
+        this.current = before ? { ...before } : null
+        this.emit(true)
+      }
+      this.held = null
+    }
+  }
+
+  private emit(now: boolean) {
+    const t = this.now()
+    const gap = 1000 / LOOP.progress.pace_per_second
+    if (!now && t - this.lastEmit < gap) {
+      this.pendingTimer ??= setTimeout(() => {
+        this.pendingTimer = undefined
+        this.emit(true)
+      }, gap - (t - this.lastEmit))
+      return
+    }
+    if (this.pendingTimer) {
+      clearTimeout(this.pendingTimer)
+      this.pendingTimer = undefined
+    }
+    this.lastEmit = t
+    this.bus.emit({ type: "phase", progress: this.current ? { ...this.current } : null })
+  }
+
+  private on(e: any) {
+    switch (e.type) {
+      case "task":
+        if (e.state === "start") {
+          this.rate = undefined
+          this.running.clear()
+          this.error = undefined
+        }
+        return
+      case "step":
+        this.running.clear()
+        return this.set({ phase: "reading_prompt" })
+      case "progress":
+        return this.set({ phase: "reading_prompt", done: (e.cache ?? 0) + (e.processed ?? 0), total: e.total })
+      case "reasoning":
+        return this.set({ phase: "thinking" })
+      case "text":
+      case "tool_call_delta":
+        return this.set(this.rate !== undefined ? { phase: "writing", rate: this.rate } : { phase: "writing" })
+      case "usage":
+        if (!e.child && typeof e.rate === "number" && Number.isFinite(e.rate)) this.rate = e.rate
+        return
+      case "tool_start": {
+        const a = (e.args ?? {}) as Record<string, unknown>
+        const p: Omit<Progress, "since"> = e.name === "task" && a.background !== true ? { phase: "waiting_for_subagents", running: 1 } : { phase: "running_tool", tool: e.name, ...(callWhat(e.args) ? { what: callWhat(e.args) } : {}) }
+        this.running.set(e.id, p)
+        if (this.running.size === 1) this.set(p)
+        return
+      }
+      case "tool_end": {
+        this.running.delete(e.id)
+        const next = this.running.values().next()
+        if (!next.done) this.set(next.value)
+        return
+      }
+      case "notice":
+        if (e.retry) this.set({ phase: "retrying", reason: shortWhat(e.retry.reason) ?? "", in: e.retry.in, ...(e.retry.attempt ? { attempt: e.retry.attempt } : {}) })
+        return
+      case "error":
+        this.error = shortWhat(String(e.message ?? "")) ?? "error"
+        return
+      case "done":
+        this.running.clear()
+        if (e.reason === "stop") return this.set(null)
+        if (e.reason === "error") return this.set({ phase: "failed", reason: this.error ?? "error" })
+        return this.set({ phase: "stopped", reason: e.reason === "cancelled" ? "person" : e.reason })
+    }
+  }
+}

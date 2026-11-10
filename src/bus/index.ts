@@ -47,7 +47,7 @@ export type Event =
   | { type: "steered"; texts: string[]; ids?: string[] }
   /** A task — one prompt, with every step and tool it takes — starts or ends; `turnId` as on `prompt`. */
   | { type: "task"; state: "start" | "end"; turnId?: string }
-  | { type: "notice"; message: string; level?: "info" | "warn" }
+  | { type: "notice"; message: string; level?: "info" | "warn"; /** Spec 3.4.0: a request that will be sent again. */ retry?: { reason: string; in: number; attempt?: number } }
   /** Discard the reply streamed so far in this step: it is being retried. */
   | { type: "retract" }
   /** The session's plan was written, changed or cleared (plan_write, plan_update, /new). */
@@ -65,6 +65,9 @@ export type Event =
   /** The session's team changed (spec 3.2.0): a member added, started, finished or stopped, a
    *  message in the room. Read the team itself for what. */
   | { type: "team" }
+  /** Spec 3.4.0 (harness/progress.md): what the session's agent is doing now, or null. A
+   *  subagent's progress is in the tree (`team`). */
+  | { type: "phase"; progress: import("../session/progress.ts").Progress | null }
   /** The permission mode changed from inside a turn (plan approved). */
   | { type: "mode"; mode: Mode }
   /** The session's model or effort changed, for whatever reason — /model, /effort, the settings

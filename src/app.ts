@@ -46,7 +46,8 @@ import { LIBRARY_SERVER, mcpInstructions } from "./mcp/index.ts"
 import type { McpServer } from "./config/schema.ts"
 import { embedderFor } from "./library/embed.ts"
 import { isLevel, levelsFor, readLevel, type Level } from "./provider/effort.ts"
-import { readingBashByDefault, Team, TEAM, TEAM_TOOLS, type Capacity, type TeamAgent } from "./team/team.ts"
+import { memberTools as memberToolsOf, readingBashByDefault, Team, TEAM, TEAM_TOOLS, type Capacity, type TeamAgent } from "./team/team.ts"
+import { whoDecides } from "./team/delegation.ts"
 import { TeamRuntime, type MemberHandle } from "./team/runtime.ts"
 
 export interface AppOptions {
@@ -210,6 +211,8 @@ function modelInfo(m: ResolvedModel): ModelInfo {
 
 /** Tools the spec offers to subagents only (`offered: subagent`): never a session's own model's. */
 export const SUBAGENT_ONLY = new Set(Object.values(TOOL_SPECS).filter((t) => t.offered === "subagent").map((t) => t.name))
+/** Spec 3.4.0: tools the spec offers to the main agent only (`offered: main`): never a subagent's. */
+export const MAIN_ONLY_TOOLS = new Set(Object.values(TOOL_SPECS).filter((t) => t.offered === "main").map((t) => t.name))
 
 const MODE_RANK: Record<Mode, number> = { auto: 0, edit: 1, manual: 2, plan: 3 }
 export function stricterMode(a: Mode | undefined, b: Mode): Mode {
@@ -370,7 +373,7 @@ export function createApp(o: AppOptions): App {
     if (src.instance) named[`Instructions from ${src.instance.name}`] = src.instance.instructions
     return { memory: src.memory ?? "", personality: src.personality ?? "", files: named, mcp: src.mcp, source: src }
   }
-  const system = (m: Mode, current: ResolvedModel, ch: Changing, subagent?: { name: string; instructions: string; report: boolean; skills: boolean; recall: boolean }, at?: { cwd: string; root: string }, plan?: Plan, member?: { name: string; manager: string; role: string; goal: string; lead: boolean }) => {
+  const system = (m: Mode, current: ResolvedModel, ch: Changing, subagent?: { name: string; instructions: string; report: boolean; skills: boolean; recall: boolean }, at?: { cwd: string; root: string }, plan?: Plan, member?: { id: string; name: string; manager: string; role: string; goal: string; lead: boolean }) => {
     const src = ch.source as Source
     return assembleSystem({
       modelRef: current.ref,
@@ -523,13 +526,17 @@ export function createApp(o: AppOptions): App {
         }
       : perm
     // `report` is every subagent's: its way of speaking to the main agent before its final reply.
-    // A team member also has team_send and team_read, and one that may lead team_add and team_stop
-    // (team.md §4); a task subagent has none of them.
-    const memberTools = member ? (member.leads ? [...TEAM_TOOLS] : ["team_read", "team_send"]) : []
+    // A subagent of the tree also has its team tools (spec 3.4.0 §8: whoami, read, send, findings,
+    // finish, and request with request options) — never the main agent's (`offered: main`); a task
+    // subagent has none of them.
+    const memberTools = member ? memberToolsOf(member) : []
+    const isTeamTool = (n: string) => (TEAM_TOOLS as readonly string[]).includes(n)
     const childTools = [
-      ...tools.filter((t) => !NOT_FOR_SUBAGENTS.has(t.name) && (!(TEAM_TOOLS as readonly string[]).includes(t.name) || memberTools.includes(t.name)) && (!spec.tools || spec.tools.includes(t.name) || memberTools.includes(t.name))),
-      ...BUILTIN_TOOLS.filter((t) => SUBAGENT_ONLY.has(t.name)),
+      ...tools.filter((t) => !NOT_FOR_SUBAGENTS.has(t.name) && !MAIN_ONLY_TOOLS.has(t.name) && (!isTeamTool(t.name) || memberTools.includes(t.name)) && (!spec.tools || spec.tools.includes(t.name) || memberTools.includes(t.name))),
+      ...BUILTIN_TOOLS.filter((t) => SUBAGENT_ONLY.has(t.name) && (!isTeamTool(t.name) || memberTools.includes(t.name))),
     ]
+    // Its mode: the one the main agent gave it, made stricter by its agent's own (explore reads).
+    if (member) member.mode = stricterMode(spec.mode, member.mode)
     const description = member ? `${member.name}: ${member.role}` : (opts.description ?? prompt.split("\n")[0]!.slice(0, 60))
     const ownerSession = jobsSessionId()
     const childRow = store?.createSession(at?.root ?? project.root, m.ref, engine.sessionId)
@@ -555,9 +562,9 @@ export function createApp(o: AppOptions): App {
       tools: childTools,
       store,
       sessionId: childRow?.id,
-      // An agent's own mode can make it stricter than its parent, never looser.
-      // A team member's is no looser than its manager's (team.md §4): a sub-manager's own mode.
-      mode: stricterMode(spec.mode, (member?.manager && member.manager !== TEAM.names.lead ? teamRt.handle(member.manager)?.engine.mode : undefined) ?? engine.mode),
+      // An agent's own mode can make it stricter than its parent, never looser. A subagent of the
+      // tree runs in the mode the main agent gave it (spec 3.4.0 §7), set above.
+      mode: member ? member.mode : stricterMode(spec.mode, engine.mode),
       effort: m.ref === engine.model.ref ? engine.effort : startEffort(m),
       maxSteps: loaded.config.limits?.subagent_steps ?? LOOP.jobs.subagent_steps.default,
       compaction,
@@ -574,6 +581,13 @@ export function createApp(o: AppOptions): App {
               fix: () => teamRt.team.offered,
               offered: () => teamRt.team.offered,
               refuse: (tool: Tool, args: unknown) => teamRt.refuse(member.name, tool, args),
+              // Spec 3.4.0 §7: itself, the main agent through a request, or the person.
+              permit: (request, ctx) => {
+                const a = teamRt.team.get(member.name)
+                return whoDecides(request, { ctx, mode: a?.mode ?? member.mode, main: engine.mode, request: a?.request ?? [], grants: a?.grants ?? [], unattended: o.unattended })
+              },
+              contextFull: (used: number, window: number) => (window ? teamRt.contextFull(member.name) : "go"),
+              ended: () => teamRt.hasEnded(member.name),
             },
           }
         : {}),
@@ -596,7 +610,7 @@ export function createApp(o: AppOptions): App {
           },
           at,
           plan,
-          member ? { name: member.name, manager: member.manager ?? TEAM.names.lead, role: member.role, goal: member.goal, lead: member.leads } : undefined,
+          member ? { id: member.id, name: member.name, manager: member.manager ?? TEAM.names.lead, role: member.role, goal: member.goal, lead: member.leads } : undefined,
         ),
     })
     // Its own background commands wake it at its next step while it runs; once it has ended they
@@ -619,7 +633,7 @@ export function createApp(o: AppOptions): App {
       const id = teamRt.team.taskStart(TEAM.names.lead, m.ref)
       return p.finally(() => teamRt.team.taskDone(id))
     }
-    const run = (text: string, machine = false) => counted(child.prompt(text, [], text, machine ? { machine: true } : {}).then(finish, (e) => (job.lastError = (e as Error).message, finish("error"))))
+    const run = (text: string, machine = false, steps?: number) => counted(child.prompt(text, [], text, { ...(machine ? { machine: true as const } : {}), ...(steps ? { maxSteps: steps } : {}) }).then(finish, (e) => (job.lastError = (e as Error).message, finish("error"))))
     const handle: SubagentHandle = {
       bus: childBus,
       engine: child,
@@ -631,15 +645,25 @@ export function createApp(o: AppOptions): App {
     if (member) {
       // A member's turn that ends is its report (team.md §5): the team, not a job note, carries it.
       job.team = member.name
-      const memberRun = (text: string, machine: boolean) => {
+      // Its progress and context use, for the tree (spec 3.4.0 §12).
+      childBus.on((e) => {
+        if (e.type === "phase") {
+          teamRt.team.setProgress(member.name, e.progress)
+          teamRt.notify()
+        } else if (e.type === "usage" && !e.child && e.context) {
+          teamRt.team.setContext(member.name, e.used ?? e.usage.input + e.usage.output, e.context)
+          teamRt.notify()
+        }
+      })
+      const memberRun = (text: string, machine: boolean, steps?: number) => {
         if (job.state !== "running") registry.restartSubagent(job)
-        void run(text, machine).then((r) => {
+        void run(text, machine, steps).then((r) => {
           const leftover = [...child.takeNotes(), ...child.takeInbox()]
           const reason = r.reason === "error" ? `error — ${r.error ?? "unknown"}` : r.reason
           if (r.reason !== "cancelled") teamRt.memberDone(member.name, r.text, reason, leftover)
         })
       }
-      const mh: MemberHandle = { engine: child, run: (text) => memberRun(text, true), cancel: () => child.cancel() }
+      const mh: MemberHandle = { engine: child, run: (text) => memberRun(text, true), cancel: () => child.cancel(), final: (text) => memberRun(text, true, TEAM.context.final_steps) }
       teamRt.attach(member.name, mh)
       memberRun(prompt, false)
       return { id: job.id, done: Promise.resolve({ text: "", steps: 0, tools: 0, reason: "stop" }), member: mh }
@@ -713,6 +737,8 @@ export function createApp(o: AppOptions): App {
       models: usableModels,
       leadState: "idle",
       readingBash: (command) => readingBashByDefault(command, project.root),
+      mode: engine.mode,
+      steps: { main: loaded.config.limits?.steps ?? LOOP.steps.default, sub: loaded.config.limits?.subagent_steps ?? LOOP.jobs.subagent_steps.default },
     })
   const teamRt: TeamRuntime = new TeamRuntime({
     team: newTeam(),
@@ -726,6 +752,7 @@ export function createApp(o: AppOptions): App {
       })
     },
     lead: { note: (text) => engine.note(text), wake: (text) => wake(text, shownLine(text)) },
+    tools: () => tools,
     resolve: (agent, model) => {
       if (!agentList.some((a) => a.name === agent)) return { error: `There is no agent "${agent}". The agents are: ${agentList.map((a) => a.name).join(", ")}.` }
       try {
@@ -740,6 +767,14 @@ export function createApp(o: AppOptions): App {
   })
   // The lead's turn ended: it is idle, and its slot frees (team.md §8).
   bus.on((e) => e.type === "done" && teamRt.leadDone())
+  // Spec 3.4.0: the main agent's mode reaches down the tree; its progress and context are in it.
+  bus.on((e) => {
+    if (e.type === "mode") teamRt.mainMode(e.mode)
+    else if (e.type === "phase") {
+      teamRt.team.setProgress(TEAM.names.lead, e.progress)
+      if (teamRt.team.hasMembers()) teamRt.notify()
+    } else if (e.type === "usage" && !e.child && e.context) teamRt.team.setContext(TEAM.names.lead, e.used ?? e.usage.input + e.usage.output, e.context)
+  })
 
   // MCP tools join the engine's list as servers connect (the engine reads it at each prompt).
   let mcpNames = new Set<string>()

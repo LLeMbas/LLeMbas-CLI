@@ -26,7 +26,7 @@ const yes = { ask: async (): Promise<AskReply> => ({ kind: "once" }) }
 const say = (text: string): Scripted => ({ chunks: [delta({ content: text }, "stop")] })
 const call = (id: string, name: string, args: unknown): Scripted => ({ chunks: [toolCall(0, id, name, JSON.stringify(args)), delta({}, "tool_calls")] })
 const system = (body: any): string => body.messages[0].content
-const isMember = (body: any, name: string) => system(body).includes(`You are "${name}", a member of a team`)
+const isMember = (body: any, name: string) => new RegExp(`You are "${name}" \\(s\\d+\\), a subagent`).test(system(body))
 const lastUser = (body: any): string => {
   const u = [...body.messages].reverse().find((m: any) => m.role === "user")
   return typeof u.content === "string" ? u.content : u.content.map((p: any) => p.text ?? "").join("")
@@ -95,7 +95,7 @@ describe("a team at work (team.md)", () => {
     expect(t.get("parser")!.state).toBe("finished")
     expect(t.isManager("lead")).toBe(true)
     expect(teamLabel(t)).toBe("agents 2/4")
-    expect(teamText(app, "")).toContain("- parser — the parser · finished")
+    expect(teamText(app, "")).toContain("- parser (s1) — the parser · finished")
     expect(await Bun.file(join(dir, "x.txt")).exists()).toBe(false)
     // A member is not a job to the model.
     expect(app.jobs().every((j) => j.team === "parser")).toBe(true)

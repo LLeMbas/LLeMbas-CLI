@@ -52,6 +52,13 @@ import t_team_add from "../harness/tools/team_add.json"
 import t_team_read from "../harness/tools/team_read.json"
 import t_team_send from "../harness/tools/team_send.json"
 import t_team_stop from "../harness/tools/team_stop.json"
+import t_team_assign from "../harness/tools/team_assign.json"
+import t_team_decide from "../harness/tools/team_decide.json"
+import t_team_findings from "../harness/tools/team_findings.json"
+import t_team_finish from "../harness/tools/team_finish.json"
+import t_team_replace from "../harness/tools/team_replace.json"
+import t_team_request from "../harness/tools/team_request.json"
+import t_team_whoami from "../harness/tools/team_whoami.json"
 import t_view_image from "../harness/tools/view_image.json"
 import t_web_fetch from "../harness/tools/web_fetch.json"
 import t_web_search from "../harness/tools/web_search.json"
@@ -76,8 +83,9 @@ export interface ToolSpecDef {
   purpose: string | false
   /** Names each project used before spec v1; a call under one is read as this tool. */
   aliases: { cli: string[]; llembas: string[] }
-  /** `subagent`: offered only to a subagent (report), never to a session's own model. */
-  offered?: "subagent"
+  /** `subagent`: offered only to a subagent (report, team_finish, team_request), never to a
+   *  session's own model; `main` (spec 3.4.0): only to the main agent, never to a subagent. */
+  offered?: "subagent" | "main"
   argument_aliases?: Record<string, string>
   /** Spec 3.0.0: what must hold for it to be offered — `display` (the session is shown where a file
    *  can be opened: over the link, to a client that offers `show`), `page`, `forge` (the chat's);
@@ -293,7 +301,7 @@ export function narrowParameters(parameters: Record<string, unknown>, narrow: Na
 }
 
 export const TOOL_SPECS: Record<string, ToolSpecDef> = Object.fromEntries(
-  ([t_apply_patch, t_ask_user, t_bash, t_branch, t_commit, t_decisions, t_edit, t_glob, t_grep, t_job_list, t_job_output, t_job_send, t_job_stop, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_merge, t_mkdir, t_multiedit, t_mv, t_note_manage, t_note_view, t_notes_search, t_plan_submit, t_plan_update, t_plan_write, t_pr, t_python, t_read, t_recall, t_release, t_report, t_rm, t_search, t_session_search, t_settings, t_show, t_skill_manage, t_skill_view, t_skills_list, t_tag, t_task, t_tasks, t_team_add, t_team_read, t_team_send, t_team_stop, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
+  ([t_apply_patch, t_ask_user, t_bash, t_branch, t_commit, t_decisions, t_edit, t_glob, t_grep, t_job_list, t_job_output, t_job_send, t_job_stop, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_merge, t_mkdir, t_multiedit, t_mv, t_note_manage, t_note_view, t_notes_search, t_plan_submit, t_plan_update, t_plan_write, t_pr, t_python, t_read, t_recall, t_release, t_report, t_rm, t_search, t_session_search, t_settings, t_show, t_skill_manage, t_skill_view, t_skills_list, t_tag, t_task, t_tasks, t_team_add, t_team_assign, t_team_decide, t_team_findings, t_team_finish, t_team_read, t_team_replace, t_team_request, t_team_send, t_team_stop, t_team_whoami, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
 )
 
 /** Whether the spec gives a tool to this CLI: not the server's alone (`scope: llembas`), and

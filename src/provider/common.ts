@@ -54,7 +54,8 @@ export async function* retrying(attempt: () => AsyncGenerator<StreamEvent>, hand
       // Twice: the first at once, the second after a pause (a model still loading, a busy server).
       if ((e.status ?? 0) >= 500 && retried5xx < 2) {
         retried5xx++
-        yield { type: "notice", message: `server error, retrying (${retried5xx} of 2) — ${e.message.split("\n")[0]!.slice(0, 160)}` }
+        const reason = e.message.split("\n")[0]!.slice(0, 160)
+        yield { type: "notice", message: `server error, retrying (${retried5xx} of 2) — ${reason}`, retry: { reason, in: retried5xx === 2 ? 2 : 0, attempt: retried5xx } }
         if (retried5xx === 2) await new Promise((r) => setTimeout(r, 2000))
         continue
       }

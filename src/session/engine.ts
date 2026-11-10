@@ -8,7 +8,7 @@ import { isAbsolute } from "node:path"
 import type { Asker, AttachmentInfo, Bus } from "../bus/index.ts"
 import type { Mode } from "../config/schema.ts"
 import type { Level } from "../provider/effort.ts"
-import { evaluate, shadowsDeny, type Context as PermContext, type Rule } from "../permission/evaluate.ts"
+import { evaluate, shadowsDeny, type Context as PermContext, type PermissionRequest, type Rule } from "../permission/evaluate.ts"
 import { ProviderError, type Client, type ImagePart, type Message, type ResolvedModel, type ToolCallPart, type Usage } from "../provider/types.ts"
 import type { Plan } from "../plan/plan.ts"
 import { LOOP } from "../harness.ts"
@@ -23,6 +23,8 @@ import { duration } from "../duration.ts"
 import { memoryResults, presentIds, ResultContext } from "./results.ts"
 import { render } from "../plan/plan.ts"
 import { personTexts } from "../team/subagents.ts"
+import { ProgressTracker } from "./progress.ts"
+import type { Verdict } from "../team/delegation.ts"
 import { compactAsk, isNote, NO_CHANGING, noteFor, offeredFor, PREFIX_META, summaryOf, today, toldAt, unavailable, type Changing, type Kept, type Now, type Requirement, type Told } from "./prefix.ts"
 
 export interface EngineOptions {
@@ -78,6 +80,15 @@ export interface EngineOptions {
     /** What the lead was told of the team is to be said again: a new prompt, or a rewind. */
     forget?(): void
     beforeTurn?(signal: AbortSignal): Promise<boolean>
+    /** Spec 3.4.0 (subagents.md §7), a subagent: who decides its call — itself, the main agent
+     *  (through a request), or the person. Replaces the plain evaluation. */
+    permit?(request: PermissionRequest, ctx: Omit<PermContext, "mode">): Verdict
+    /** Spec 3.4.0 §9, a subagent: its context reached `pause_at` of its window before a step.
+     *  "stop": its turn ends now (it is paused; its final turn follows); "go": carry on without
+     *  compacting (it is in its final turn). Undefined: not a subagent of the tree. */
+    contextFull?(used: number, window: number): "stop" | "go" | undefined
+    /** Spec 3.4.0, a subagent: it ended by its own call (team_finish): the turn stops after this step. */
+    ended?(): boolean
   }
 }
 
@@ -87,6 +98,8 @@ export interface PromptMeta {
   attachments?: AttachmentInfo[]
   /** The harness started this turn — a job's note — not the person. */
   machine?: true
+  /** Spec 3.4.0: the steps this turn may take, when fewer than the engine's (a subagent's final turn). */
+  maxSteps?: number
 }
 
 const MAX_PARALLEL = LOOP.parallel.max
@@ -187,7 +200,11 @@ export class Engine {
   /** The prompt the team's offer was last decided for. */
   private teamFixed: Kept | undefined
 
+  /** Spec 3.4.0 (harness/progress.md): what this agent is doing, said as `phase` events. */
+  readonly progress: ProgressTracker
+
   constructor(readonly o: EngineOptions) {
+    this.progress = new ProgressTracker(o.bus)
     this.mode = o.mode
     this._effort = o.effort
     this.model = o.model
@@ -464,8 +481,19 @@ export class Engine {
   /** Before a step: past compaction.auto_at of the window, compact. Old tool results are never
    *  pruned in place (harness context.md: nothing already sent is rewritten — it would throw the
    *  prompt cache away from that point); compaction is the one deliberate break. */
-  private async manageContext(signal: AbortSignal) {
+  private async manageContext(signal: AbortSignal): Promise<"stop" | void> {
     const window = contextWindow(this.model)
+    // Spec 3.4.0 §9: a subagent of the tree does not compact; at pause_at it is paused instead.
+    const full = this.o.team?.contextFull
+    if (full && window) {
+      const used = this.contextUsed()
+      if (used !== undefined && used >= window * LOOP.team.context.pause_at) {
+        const r = full(used, window)
+        if (r === "stop") return "stop"
+        if (r === "go") return
+      }
+      if (full(0, 0) !== undefined) return
+    }
     const autoAt = this.o.compaction?.autoAt ?? 0.85
     if (!window || autoAt >= 1) return
     const limit = window * autoAt
@@ -482,6 +510,7 @@ export class Engine {
     }
     this.autoCompactions++
     this.o.bus.emit({ type: "notice", message: `context at ${Math.round((used / window) * 100)}% of ${window}: compacting the conversation` })
+    this.progress.set({ phase: "compacting" })
     try {
       await this.summarise(signal)
       // The task is never left to the summary: the prompt that started this turn comes back word
@@ -508,11 +537,13 @@ export class Engine {
 
   /** Time spent waiting for the user does not count against the wall-clock budget: somebody who
    *  thinks for ten minutes about one command has not spent the agent's time. */
-  private async waiting<T>(p: Promise<T>): Promise<T> {
+  private async waiting<T>(p: Promise<T>, what: "approval" | "question" | "plan" = "approval", tool?: string): Promise<T> {
     const t0 = performance.now()
+    const back = this.progress.hold({ phase: "waiting_for_person", what, ...(tool ? { tool } : {}) })
     try {
       return await p
     } finally {
+      back()
       this.turnWaitedMs += performance.now() - t0
     }
   }
@@ -626,13 +657,13 @@ export class Engine {
     this.busy = true
     this.o.bus.emit({ type: "prompt", text: shown, ...(meta.turnId ? { turnId: meta.turnId } : {}), ...(meta.attachments?.length ? { attachments: meta.attachments } : {}), ...(meta.machine ? { machine: true as const } : {}) })
     try {
-      return await this.run(text, [...this.pendingContext.splice(0), ...extra], meta.turnId, meta.machine)
+      return await this.run(text, [...this.pendingContext.splice(0), ...extra], meta.turnId, meta.machine, meta.maxSteps)
     } finally {
       this.busy = false
     }
   }
 
-  private async run(text: string, extra: (string | ImagePart)[], turnId?: string, machine?: true): Promise<"stop" | "steps" | "budget" | "cancelled" | "error"> {
+  private async run(text: string, extra: (string | ImagePart)[], turnId?: string, machine?: true, stepCap?: number): Promise<"stop" | "steps" | "budget" | "cancelled" | "error"> {
     const { bus } = this.o
     this.abort = new AbortController()
     const signal = this.abort.signal
@@ -656,7 +687,7 @@ export class Engine {
     this.turnSteers = []
     this.autoCompactions = 0
     const toolMap = new Map(this.o.tools.map((t) => [t.name, t]))
-    const maxSteps = this.o.maxSteps ?? LOOP.steps.default
+    const maxSteps = Math.min(this.o.maxSteps ?? LOOP.steps.default, stepCap ?? Infinity)
     const started = performance.now()
     this.turnWaitedMs = 0
     this.turnOutputBytes = 0
@@ -674,7 +705,10 @@ export class Engine {
         if (ranOut) bus.emit({ type: "notice", message: `stopped ${ranOut.said} — the model answers from what it has; send a message to carry on` })
       }
       const wrapUp = step > maxSteps || ranOut !== undefined
-      if (!wrapUp) await this.manageContext(signal)
+      if (!wrapUp && (await this.manageContext(signal)) === "stop") {
+        bus.emit({ type: "done", reason: "stop" })
+        return "stop"
+      }
       // After compacting, so what was just sent is never folded into a summary.
       if (!wrapUp) this.deliverInbox()
       bus.emit({ type: "step", n: step })
@@ -817,11 +851,11 @@ export class Engine {
         ...this.o.toolCtx,
         signal,
         backgroundNow: bgNow.signal,
-        question: this.o.asker.question ? (req, id) => this.waiting(this.o.asker.question!(req, id)) : undefined,
+        question: this.o.asker.question ? (req, id) => this.waiting(this.o.asker.question!(req, id), "question") : undefined,
         plan: {
           get: () => this.plan,
           set: (p) => this.setPlan(p, "model"),
-          ask: this.o.asker.plan ? (req, id) => this.waiting(this.o.asker.plan!(req, id)) : undefined,
+          ask: this.o.asker.plan ? (req, id) => this.waiting(this.o.asker.plan!(req, id), "plan") : undefined,
         },
         setMode: (m) => {
           this.mode = m
@@ -881,6 +915,11 @@ export class Engine {
       // No dialect takes an image inside a tool result the same way; a user turn right after the
       // results works everywhere.
       if (images.length) this.push({ role: "user", parts: [{ type: "text", text: "The image(s) you asked to view:" }, ...images], turn: false })
+      // Spec 3.4.0: a subagent that called team_finish has ended — nothing runs after that call.
+      if (this.o.team?.ended?.()) {
+        bus.emit({ type: "done", reason: "stop" })
+        return "stop"
+      }
       if (signal.aborted) {
         bus.emit({ type: "done", reason: "cancelled" })
         return "cancelled"
@@ -951,6 +990,13 @@ export class Engine {
     let edited: string | undefined
     const ctx: PermContext = { ...this.o.perm, mode: this.mode, rules: [...this.o.perm.rules, ...this.sessionRules] }
     let decision = evaluate(request, ctx)
+    // Spec 3.4.0 (subagents.md §7): a subagent of the tree — itself, the main agent, or the person.
+    if (team?.permit) {
+      const { mode: _m, ...rest } = ctx
+      const v = team.permit(request, rest)
+      if (v.answer === "refused") return { result: { output: v.text, isError: true }, denied: true }
+      decision = { ...v.decision, action: v.answer === "run" ? "allow" : "ask" }
+    }
 
     // Doom-loop guard: the same call three times running is asked about, whatever the mode.
     const key = `${call.name} ${JSON.stringify(args)}`
@@ -967,7 +1013,7 @@ export class Engine {
           (diff) => ({ diff }),
           (e) => ({ error: (e as Error).message }),
         )
-      const reply = await this.waiting(this.o.asker.ask({ tool: tool.name, args, request, decision, preview, purpose }))
+      const reply = await this.waiting(this.o.asker.ask({ tool: tool.name, args, request, decision, preview, purpose }), "approval", tool.name)
       if (reply.kind === "deny" && looping)
         return {
           result: {

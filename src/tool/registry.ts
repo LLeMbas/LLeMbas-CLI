@@ -11,7 +11,7 @@ import { planSubmitTool } from "./plan_submit.ts"
 import { planUpdateTool } from "./plan_update.ts"
 import { planWriteTool } from "./plan_write.ts"
 import { taskTool } from "./task.ts"
-import { teamAddTool, teamReadTool, teamSendTool, teamStopTool } from "./team_tools.ts"
+import { teamAddTool, teamAssignTool, teamDecideTool, teamFindingsTool, teamFinishTool, teamReadTool, teamReplaceTool, teamRequestTool, teamSendTool, teamStopTool, teamWhoamiTool } from "./team_tools.ts"
 import { decisionsTool, tasksTool } from "./project_tools.ts"
 import { webFetchTool, webSearchTool } from "./web.ts"
 import { memoryTool } from "./memory.ts"
@@ -46,6 +46,14 @@ export const BUILTIN_TOOLS: Tool[] = [
   teamSendTool,
   teamReadTool,
   teamStopTool,
+  // Spec 3.4.0 (subagents.md §8).
+  teamWhoamiTool,
+  teamFindingsTool,
+  teamFinishTool,
+  teamRequestTool,
+  teamDecideTool,
+  teamAssignTool,
+  teamReplaceTool,
   planWriteTool,
   planUpdateTool,
   tasksTool,

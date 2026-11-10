@@ -20,6 +20,7 @@ import blockSubagent from "../../harness/prompts/blocks/subagent.md" with { type
 import blockContext from "../../harness/prompts/blocks/context.md" with { type: "text" }
 import blockTeamLead from "../../harness/prompts/blocks/team_lead.md" with { type: "text" }
 import blockTeamMember from "../../harness/prompts/blocks/team_member.md" with { type: "text" }
+import blockTeamSubmanager from "../../harness/prompts/blocks/team_submanager.md" with { type: "text" }
 import agentExplore from "../../harness/prompts/agents/explore.md" with { type: "text" }
 import agentGeneral from "../../harness/prompts/agents/general.md" with { type: "text" }
 import modeManual from "../../harness/prompts/modes/manual.md" with { type: "text" }
@@ -61,6 +62,7 @@ const BUILTIN: Record<string, string> = {
   "blocks/context.md": blockContext,
   "blocks/team_lead.md": blockTeamLead,
   "blocks/team_member.md": blockTeamMember,
+  "blocks/team_submanager.md": blockTeamSubmanager,
   "agents/explore.md": agentExplore,
   "agents/general.md": agentGeneral,
   "modes/manual.md": modeManual,
@@ -236,9 +238,9 @@ export interface PromptContext {
   /** Set for a subagent: who it is and what it is for; replaces the mode's own instructions.
    *  `report`: it has the report tool. */
   subagent?: { name: string; instructions: string; report?: boolean }
-  /** Spec 3.2.0 (team.md §4): a team member — blocks/team_member.md in place of blocks/subagent.md,
-   *  with the whole of blocks/team_lead.md for one that may lead. */
-  member?: { name: string; manager: string; role: string; goal: string; lead: boolean }
+  /** Spec 3.2.0 (team.md §4), 3.4.0: a subagent of the tree — blocks/team_member.md in place of
+   *  blocks/subagent.md, with blocks/team_submanager.md for a sub-manager. */
+  member?: { id: string; name: string; manager: string; role: string; goal: string; lead: boolean }
   /** Spec 3.2.0 (team.md §10): the team tools are offered to this session's agent (the lead):
    *  blocks/team_lead.md is in its prompt. */
   teamLead?: boolean
@@ -391,12 +393,14 @@ export function assembleSystem(ctx: PromptContext): string {
     sections.push(
       fillPrompt(promptText("blocks/team_member.md"), {
         name: ctx.member.name,
+        id: ctx.member.id,
         manager: ctx.member.manager,
         role: ctx.member.role,
         goal: ctx.member.goal,
         instructions: ctx.subagent.instructions,
         read_only: ctx.mode === "plan" ? SUBAGENT_READ_ONLY : "",
-        lead: ctx.member.lead ? promptText("blocks/team_lead.md") : "",
+        // Spec 3.4.0: a sub-manager directs; it no longer gets the whole lead block.
+        lead: ctx.member.lead ? promptText("blocks/team_submanager.md") : "",
       })
         .replace(/\n{3,}/g, "\n\n")
         .trim(),

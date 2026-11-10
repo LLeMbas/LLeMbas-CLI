@@ -28,7 +28,7 @@ import { compactAsk, noteFor, offeredFor, toldAt, unavailable, type Now, type Re
 import { envLines, promptText } from "../src/prompt/assemble.ts"
 import { absPath, type ToolContext } from "../src/tool/tool.ts"
 import { LOOP, TOOL_SPECS } from "../src/harness.ts"
-import { Team, TEAM_TOOLS, type Capacity } from "../src/team/team.ts"
+import { LEAD_TOOLS, memberTools, Team, TEAM_TOOLS, type Capacity } from "../src/team/team.ts"
 import { noteBlock } from "../src/session/prefix.ts"
 import { offer, subagentModel, type ModelInfo } from "../src/team/subagents.ts"
 import { progressLine, progressText, type Progress } from "../src/session/progress.ts"
@@ -260,9 +260,12 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
   // Teams (team.md): one lead session's team, step by step, through the CLI's own rules
   // (team/team.ts); the app drives the same class from real turns.
   team: (c) => {
-    const start = c.start as { min: number; max: number; subagents?: boolean; capacity: Capacity }
+    const start = c.start as { min: number; max: number; subagents?: boolean; capacity: Capacity; mode?: Mode }
     let capacity = start.capacity
-    const team = new Team({ min: start.min, max: start.max, subagents: start.subagents, model: "m", capacity: () => capacity })
+    const team = new Team({ min: start.min, max: start.max, subagents: start.subagents, model: "m", capacity: () => capacity, mode: start.mode ?? "edit", steps: { main: 200, sub: 50 } })
+    // What each agent's turn was started with (a brief, or the messages that woke it).
+    const started: Record<string, string> = {}
+    team.effects = { start: (n, t) => void (started[n] = t), deliver: () => {}, stop: () => {} }
     const delivered = () => {
       const out: Record<string, string[]> = {}
       for (const d of team.delivered.splice(0)) (out[d.name] ??= []).push(d.text)
@@ -273,8 +276,8 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
       switch (st.op) {
         case "offered": {
           const a = team.get(by)!
-          const tools = !team.offered ? [] : a.leads ? [...TEAM_TOOLS] : ["team_read", "team_send"]
-          return { tools: tools.sort(), setting: team.offered }
+          const tools = !team.offered ? [] : by === "lead" ? [...LEAD_TOOLS] : memberTools(a)
+          return { tools: [...tools].sort(), setting: team.offered }
         }
         case "call": {
           const args = st.args as Record<string, any>
@@ -284,9 +287,18 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
             const room = no ? [] : team.readRoom(by, args.since ?? 0).messages.map((m) => ({ n: m.n, from: m.from, to: m.to.join(", ") }))
             return { room, delivered: delivered() }
           }
-          if (st.tool === "team_add") result = team.add(by, args as any).text
+          const first = (TEAM_TOOLS as readonly string[]).includes(st.tool) ? team.refusal(by, st.tool, args) : undefined
+          if (first) result = first
+          else if (st.tool === "team_add") result = team.add(by, args as any).text
           else if (st.tool === "team_send") result = team.send(by, args as any)
           else if (st.tool === "team_stop") result = team.stopCmd(by, args.name)
+          else if (st.tool === "team_assign") result = team.assign(by, args as any)
+          else if (st.tool === "team_replace") result = team.replace(by, args as any).text
+          else if (st.tool === "team_finish") result = team.finishTask(by, args.report)
+          else if (st.tool === "team_whoami") result = team.whoami(by)
+          else if (st.tool === "team_findings") result = args.action === "write" ? team.noteFinding(by, args.text ?? "") : team.readFindings(by, args.of)
+          else if (st.tool === "team_request") result = team.request(by, args as any, TOOL_SPECS[args.tool]?.risk as any)
+          else if (st.tool === "team_decide") result = team.decide(by, args as any)
           else {
             result = team.refusal(by, st.tool, args) ?? null
             if (st.tool === "task" && result === null && team.offered) team.taskStart(by)
@@ -313,6 +325,23 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
         }
         case "state":
           return team.state()
+        // Spec 3.4.0.
+        case "context":
+          team.setContext(by, st.used, st.window)
+          return null
+        case "context_full":
+          team.pause(by)
+          return { delivered: delivered() }
+        case "started":
+          return { text: started[by] ?? null }
+        case "tree": {
+          const t = team.info()
+          const row = (a: (typeof t.agents)[number]) => ({ id: a.id, name: a.name, parent: a.parent, state: a.state, mode: a.mode, request: a.request })
+          return { size: t.size, open_slots: t.open_slots, agents: t.agents.map(row), ended: t.ended.map((a) => ({ id: a.id, name: a.name, state: a.state })) }
+        }
+        case "main_mode":
+          team.setMainMode(st.mode)
+          return null
       }
       throw new Error(`team: unknown op ${String(st.op)}`)
     })

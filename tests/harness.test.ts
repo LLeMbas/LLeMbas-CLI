@@ -153,7 +153,7 @@ test("spec 3.0.0: every tool says where it is offered; the CLI's are the agent's
   // plan_write's former name rather than a tool.
   expect(TOOL_SPECS.todo).toBeUndefined()
   expect(TOOL_SPECS.plan_write!.aliases.cli).toEqual(["todo"])
-  const shared = ["ask_user", "edit", "glob", "grep", "job_list", "job_output", "job_send", "job_stop", "list", "memory", "plan_submit", "plan_update", "plan_write", "read", "recall", "report", "session_search", "show", "skill_manage", "skill_view", "skills_list", "task", "team_add", "team_read", "team_send", "team_stop", "web_fetch", "web_search", "write"]
+  const shared = ["ask_user", "edit", "glob", "grep", "job_list", "job_output", "job_send", "job_stop", "list", "memory", "plan_submit", "plan_update", "plan_write", "read", "recall", "report", "session_search", "show", "skill_manage", "skill_view", "skills_list", "task", "team_add", "team_assign", "team_decide", "team_findings", "team_finish", "team_read", "team_replace", "team_request", "team_send", "team_stop", "team_whoami", "web_fetch", "web_search", "write"]
   expect(Object.values(TOOL_SPECS).filter((t) => t.scope === "shared").map((t) => t.name).sort()).toEqual(shared.sort())
 })
 
