@@ -129,6 +129,8 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   const sendToJob = (text: string) => {
     const id = entered()!
     const job = app.registry.get(app.jobsSessionId(), id)
+    // Spec 3.4.0 §11: a subagent of the tree is read-only; the person speaks through the main agent.
+    if (job?.team) return view.info(`${id} is ${job.team}, a subagent of the main agent: its session is read-only — tell the main agent, or /team stop ${job.team}`, "warn")
     if (!job?.subagent) return view.info(`${id} cannot be messaged any more — an earlier process ran it`, "warn")
     if (job.state === "running") {
       job.subagent.send(text)

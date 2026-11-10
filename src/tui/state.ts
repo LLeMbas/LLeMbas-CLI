@@ -120,6 +120,8 @@ export interface ViewState {
   progress?: { total: number; done: number; processed: number; ms: number }
   /** The session's background jobs (the registry's list, kept from `job` events), running first. */
   jobs: TrackedJob[]
+  /** Spec 3.4.0 (harness/progress.md): what the agent is doing now — the spinner line. */
+  now?: import("../session/progress.ts").Progress | null
 }
 
 // What the model was given beside the words typed — attachments, and a session note
@@ -284,6 +286,9 @@ export function createView(bus: Bus) {
         case "task":
           if (e.state === "start") startTask()
           else inTask = false
+          break
+        case "phase":
+          set("now", e.progress ? { ...e.progress } : null)
           break
         case "sub_tool":
           set(

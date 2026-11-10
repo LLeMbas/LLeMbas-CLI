@@ -1,11 +1,18 @@
 import { createSignal, For, onCleanup } from "solid-js"
 import { duration } from "../../duration.ts"
+import { progressLine } from "../../session/progress.ts"
 import { useTui } from "../context.ts"
 import { fmtTokens } from "./status.tsx"
 
 /** "reading the prompt 64% · 90k of 140k · ~2m left": the server's own count (llama.cpp's
  *  return_progress). The time left is guessed from the reading so far, once there is enough of it;
  *  a long prompt reads slower towards its end, so it is a floor more than a promise. */
+/** How long the rest of the prompt will take, from the server's pace so far; "" until it is known. */
+export function etaOf(p: { total: number; done: number; processed: number; ms: number }): string {
+  if (p.processed >= 2048 && p.ms >= 2000 && p.done < p.total) return `~${duration(((p.total - p.done) / p.processed) * p.ms, true)} left`
+  return ""
+}
+
 export function reading(p: { total: number; done: number; processed: number; ms: number }): string {
   const pct = Math.floor((p.done / p.total) * 100)
   const parts = [`reading the prompt ${pct}%`, `${fmtTokens(p.done)} of ${fmtTokens(p.total)}`]
@@ -34,6 +41,16 @@ export function Spinner() {
   }
   const what = () => {
     const s = view.state
+    // Spec 3.4.0: the phase the engine says, drawn as every client draws it (progress.md §3).
+    if (s.now) {
+      tick()
+      // The CLI's own look around the shared line: how long the rest of the prompt will take.
+      // The server's counts as they come (the phase event is paced for the link; the screen is not).
+      const reading = s.now.phase === "reading_prompt" && s.progress
+      const now = reading ? { ...s.now, done: s.progress!.done, total: s.progress!.total } : s.now
+      const eta = reading ? etaOf(s.progress!) : ""
+      return `${progressLine(now)}${eta ? ` · ${eta}` : ""}`
+    }
     if (s.preparing) return `preparing ${s.preparing}`
     if (s.phase === "waiting" && s.progress) return reading(s.progress)
     if (s.phase === "thinking") return pick(sp().verbs, 30)
@@ -45,9 +62,9 @@ export function Spinner() {
     <box paddingLeft={1} height={1}>
       <text wrapMode="none" truncate>
         <span style={{ fg: theme().colors.accent }}>{pick(sp().frames, 1)} </span>
-        <span style={{ fg: theme().colors.muted }}>{what()}… </span>
+        <span style={{ fg: theme().colors.muted }}>{what()}{view.state.now ? " · " : "… "}</span>
         <span style={{ fg: theme().colors.dim }}>
-          {elapsed()} · {tokens()} · esc to stop
+          {view.state.now ? `turn ${elapsed()}` : elapsed()} · {tokens()} · esc to stop
         </span>
       </text>
     </box>

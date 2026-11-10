@@ -12,6 +12,7 @@ import { instructionFiles } from "../prompt/assemble.ts"
 import { addDecision, readBoard, readDecisions, renderBoard } from "../project/board.ts"
 import { contextBreakdown, renderBreakdown } from "../session/context.ts"
 import { SUBAGENTS } from "../team/subagents.ts"
+import { TEAM } from "../team/team.ts"
 import { changelogPrompt, initPrompt, reviewPrompt, teamText } from "../session/commands.ts"
 import { git } from "../git/run.ts"
 import { branches, deleteBranch, switchBranch } from "../git/branch.ts"
@@ -262,12 +263,29 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "team",
-    args: "[size [<min> <max>] | stop [<name>]]",
-    description: "subagents: the team and the room; how many; stop one",
+    args: "[size [<min> <max>] | stop [<name>] | open [<name>] | findings <name>]",
+    description: "subagents: the tree and the room; how many; stop one; their findings",
     run(c, arg) {
       // The tree and the room as the lead sees them — the person sees everything (team.md §5).
       const words = arg.trim().split(/\s+/).filter(Boolean)
       if (words[0] === "size" && words.length === 1) return openTeamSize(c)
+      // Spec 3.4.0 §11: a subagent's session, read-only, live or after it ended.
+      if (words[0] === "open") {
+        const t = c.app.team.team
+        const all = [...t.tree().filter((a) => a.manager !== null), ...t.ended]
+        const open = (key: string) => {
+          const a = t.find(key)
+          if (!a?.jobId) return c.view.info(`no subagent ${key} with a session here — /team lists them`, "warn")
+          c.enterJob(a.jobId)
+        }
+        if (words[1]) return open(words[1])
+        if (!all.length) return c.view.info("no subagents yet")
+        return c.openDialog({
+          title: "A subagent's session — read-only",
+          options: all.map((a) => ({ label: `${a.name} (${a.id})`, value: a.id, description: `${a.role} · ${TEAM.read.states[a.state]}` })),
+          onSelect: open,
+        })
+      }
       if (words[0] === "stop" && words.length === 1) {
         const members = c.app.team.team.tree().filter((a) => a.manager !== null)
         if (!members.length) return c.view.info("the team has no members")
@@ -708,8 +726,24 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "context",
-    description: "where the context window goes",
-    run(c) {
+    args: "[<subagent>]",
+    description: "where the context window goes — the session's, or a subagent's",
+    run(c, arg) {
+      // Spec 3.4.0 §12: a subagent's context, by its name or id.
+      const who = arg.trim()
+      if (who) {
+        const t = c.app.team.team
+        const a = t.find(who)
+        if (!a) return c.view.info(`no subagent ${who} — /team lists them`, "warn")
+        const h = c.app.team.handle(a.name)
+        if (!h || a.endState) {
+          const u = a.context
+          return c.view.info(u ? `${a.name} (${a.id}): ${u.used} of ${u.window} tokens (${Math.floor((u.used * 100) / u.window)}%) when it ${a.endState ? TEAM.read.states[a.state] : "last said"}` : `${a.name} (${a.id}): no context use known yet`)
+        }
+        const se = h.engine
+        const sys = se.systemPrompt()
+        return c.view.info(`${a.name} (${a.id}) — ${a.role}\n${renderBreakdown(contextBreakdown(se, sys, [], undefined, se.o.tools))}`)
+      }
       const e = c.app.engine
       // The prompt the session sends (made now if no request has gone yet).
       const system = e.systemPrompt()

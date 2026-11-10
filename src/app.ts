@@ -645,6 +645,7 @@ export function createApp(o: AppOptions): App {
     if (member) {
       // A member's turn that ends is its report (team.md §5): the team, not a job note, carries it.
       job.team = member.name
+      member.jobId = job.id
       // Its progress and context use, for the tree (spec 3.4.0 §12).
       childBus.on((e) => {
         if (e.type === "phase") {

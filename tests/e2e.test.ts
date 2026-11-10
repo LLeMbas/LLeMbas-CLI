@@ -54,7 +54,7 @@ describe("end to end", () => {
     expect(fake!.requests[0].messages[0].content).toContain("Permission mode: edit")
     // knowledge_search/get are offered once any knowledge base has documents, and the suite shares
     // one LEMBAS_HOME: another file's base must not decide this list (found in the full run).
-    expect(fake!.requests[0].tools.map((t: any) => t.function.name).filter((n: string) => !n.startsWith("knowledge_"))).toEqual(["read", "write", "edit", "multiedit", "apply_patch", "glob", "grep", "list", "bash", "job_output", "job_list", "job_stop", "job_send", "web_search", "web_fetch", "task", "team_add", "team_send", "team_read", "team_stop", "plan_write", "plan_update", "ask_user", "plan_submit", "memory", "session_search", "notes_search", "note_view", "note_manage", "skills_list", "skill_view", "skill_manage", "settings", "recall"])
+    expect(fake!.requests[0].tools.map((t: any) => t.function.name).filter((n: string) => !n.startsWith("knowledge_"))).toEqual(["read", "write", "edit", "multiedit", "apply_patch", "glob", "grep", "list", "bash", "job_output", "job_list", "job_stop", "job_send", "web_search", "web_fetch", "task", "team_add", "team_send", "team_read", "team_stop", "team_whoami", "team_findings", "team_decide", "team_assign", "team_replace", "plan_write", "plan_update", "ask_user", "plan_submit", "memory", "session_search", "notes_search", "note_view", "note_manage", "skills_list", "skill_view", "skill_manage", "settings", "recall"])
     const ends = events.filter((e) => e.type === "tool_end")
     expect(ends.map((e) => e.type === "tool_end" && e.result.title)).toEqual(["hello.txt · 1–1 of 1", "hello.txt +1 −1"])
     const sid = store.sessions(1)[0]!.id

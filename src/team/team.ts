@@ -104,6 +104,8 @@ export interface TeamAgent {
   endedAt?: number
   /** The sub-manager it was under before that one ended (team_replace puts it back). */
   movedFrom?: string
+  /** The device's job that runs it (its transcript, read-only). */
+  jobId?: string
 }
 
 export interface RoomMessage {
@@ -883,6 +885,7 @@ export class Team {
       movedFrom: undefined,
       ended: undefined,
       waitSince: undefined,
+      jobId: undefined,
     }
     this.agents.set(fresh.name, fresh)
     for (const c of this.agents.values())

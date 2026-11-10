@@ -372,14 +372,14 @@ test("thinking is one line — its text is not shown; the provider's count of it
   expect(await t.until("SECRET-INNER-STEP")).toBe(true)
 })
 
-test("while it thinks: the thought says only Thinking…; the line at the bottom has the verb, the task's time and tokens", async () => {
+test("while it thinks: the thought says only Thinking…; the line at the bottom has the phase (progress.md), the task's time and tokens", async () => {
   t = await tui([{ gapMs: 1500, chunks: [delta({ reasoning_content: "Weighing it up: HIDDEN-WHILE-THINKING and more words here." }), delta({ content: "Done thinking." })] }])
   await t.input.typeText("go")
   t.input.pressEnter()
   expect(await t.until("~15 tokens")).toBe(true)
   const frame = t.frame()
   expect(frame).toMatch(/^\s*Thinking\.{1,3}\s*$/m)
-  expect(frame).toMatch(/(pondering|contemplating|musing|cogitating|ruminating|deliberating|mulling|reflecting|reasoning|analyzing|synthesizing|formulating)… \d+s · ~15 tokens · esc to stop/)
+  expect(frame).toMatch(/Thinking · \d+s · turn \d+s · ~15 tokens · esc to stop/)
   expect(frame).not.toContain("HIDDEN-WHILE-THINKING")
   expect(await t.until("Done thinking.")).toBe(true)
   expect(t.frame()).toMatch(/Thought for \d\.\ds · ~15 tokens/)
@@ -397,7 +397,7 @@ test("the line at the bottom counts the whole task: the clock and the tokens go 
   // The spinner line redraws on its own tick, slower than the reply's text: on a slow machine the
   // frame that first shows "Half" can still carry the line from before. The 1.2 s gap holds this
   // state, so wait for the line within it rather than reading the first frame.
-  const counted = /writing… \d+s · ~4\d tokens · esc to stop/
+  const counted = /Writing(: [\d.]+ tok\/s)? · \d+s · turn \d+s · ~4\d tokens · esc to stop/
   for (let i = 0; i < 20 && !counted.test(t.frame()); i++) await Bun.sleep(50), await t.settle()
   expect(t.frame()).toMatch(counted)
   expect(await t.until("way.")).toBe(true)
@@ -922,10 +922,12 @@ test("while the server reads a long prompt: the line at the bottom says how far 
   t = await tui([{ gapMs: 500, chunks: [pp(0, 0), pp(80000, 160000), delta({ content: "Read it all." }, "stop")] }])
   await t.input.typeText("go")
   t.input.pressEnter()
-  expect(await t.until("reading the prompt 64% · 90k of 140k · ~1m 40s left")).toBe(true)
+  // At 100 columns the line is cut in its middle; its start and its end are what is checked.
+  expect(await t.until("~1m 40s left")).toBe(true)
+  expect(t.frame()).toContain("Reading the prompt: 90000 / 140000 tokens (64%")
   expect(await t.until("Read it all.")).toBe(true)
   await t.settle()
-  expect(t.frame()).not.toContain("reading the prompt")
+  expect(t.frame()).not.toContain("Reading the prompt")
 })
 
 test("a mouse wheel that arrives as a burst of ↑ scrolls the transcript; one ↑ still walks history", async () => {

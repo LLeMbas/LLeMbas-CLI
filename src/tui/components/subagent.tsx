@@ -27,7 +27,7 @@ export function SubagentView(p: { id: string; view: View; scrollRef?: (r: Scroll
     const j = job()
     if (!j) return `subagent · ${p.id} · gone · esc back`
     const state = j.state === "running" ? `running ${duration(Date.now() - j.started, true)}` : jobWords(j)
-    const message = j.subagent ? "type to message" : "cannot be messaged (an earlier process ran it)"
+    const message = j.team ? `read-only: ${j.team} works for the main agent` : j.subagent ? "type to message" : "cannot be messaged (an earlier process ran it)"
     return [`subagent ${j.agent ?? ""}`.trimEnd(), j.id, state, "esc back", message].join(" · ")
   }
   const what = () => job()?.description ?? ""

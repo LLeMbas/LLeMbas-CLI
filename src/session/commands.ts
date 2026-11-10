@@ -18,6 +18,8 @@ import { skillMessage, slug, type Skill } from "../skill/index.ts"
 import { CONTINUE_PROMPT } from "./engine.ts"
 import { TEAM, Team } from "../team/team.ts"
 import { SUBAGENTS } from "../team/subagents.ts"
+import { progressLine } from "./progress.ts"
+import { fillPrompt } from "../prompt/fill.ts"
 
 export type CommandKind = "custom" | "skill" | "builtin"
 
@@ -49,7 +51,7 @@ export const SHARED_BUILTINS: { name: string; description: string; hint?: string
   { name: "init", description: "make or update the project's AGENTS.md from what the repository says", hint: "what to focus on" },
   { name: "continue", description: "carry on — after esc stopped it, or when it should keep going (ctrl+g)" },
   { name: "agents", description: "subagents: list them, make one, or hand one a task", hint: "name" },
-  { name: "team", description: "subagents: the team and the room; how many; stop one", hint: "size <min> <max> | stop <name>" },
+  { name: "team", description: "subagents: the tree and the room; how many; stop one; their findings", hint: "size <min> <max> | stop <name> | findings <name>" },
 ]
 
 /** The status bar's word for a team with members: its size of the most it may have, and how many
@@ -58,6 +60,34 @@ export function teamLabel(team: Team): string {
   if (!team.hasMembers()) return ""
   const n = team.active()
   return `agents ${team.size()}/${team.max}${n ? ` · ${n} subagent${n === 1 ? "" : "s"} working` : ""}`
+}
+
+/** Spec 3.4.0 (subagents.md §12): the tree as the person sees it — every agent with its position,
+ *  state, model, mode, context use, progress line and messages; open slots; the ended ones. */
+export function treeText(team: Team, now = Date.now()): string {
+  const info = team.info()
+  const R = TEAM.read
+  const depth = (a: { parent: string | null }): number => (a.parent ? 1 + depth(info.agents.find((x) => x.name === a.parent) ?? { parent: null }) : 0)
+  const lines = [`${SUBAGENTS.setting.label} (${info.size} of ${info.max} agents; ${SUBAGENTS.setting.min} ${info.min}, ${SUBAGENTS.setting.max} ${info.max}):`]
+  for (const a of info.agents) {
+    const bits = [
+      `${"  ".repeat(depth(a))}- ${a.name}${a.id === a.name ? "" : ` (${a.id})`} — ${a.position}`,
+      R.states[a.state],
+      a.model,
+      a.request.length ? `${a.mode} + ${a.request.join(", ")}` : a.mode,
+      a.context && a.context.window ? `${Math.floor((a.context.used * 100) / a.context.window)}% context` : "",
+      a.progress ? progressLine(a.progress, now) : "",
+      a.messages ? `${a.messages} message${a.messages === 1 ? "" : "s"}` : "",
+      a.findings ? `${a.findings} finding${a.findings === 1 ? "" : "s"}` : "",
+    ].filter(Boolean)
+    lines.push(bits.join(" · "))
+  }
+  if (info.open_slots) lines.push(fillPrompt(R.slots, { n: String(info.open_slots) }))
+  if (info.ended.length) {
+    lines.push(R.ended)
+    for (const a of info.ended) lines.push(`- ${a.name} (${a.id}) — ${a.position} · ${R.states[a.state]}${a.findings ? ` · ${a.findings} finding${a.findings === 1 ? "" : "s"}` : ""}`)
+  }
+  return lines.join("\n")
 }
 
 /** `/team [size <min> <max> | stop <name>]`: the team's tree and room, as the lead sees them (the
@@ -83,6 +113,11 @@ export function teamText(app: App, arg: string): string {
     }
     return `${S.label}: ${S.min} ${t.min}, ${S.max} ${t.max} — ${S.short}. Set for this session; the agent is told with your next message.`
   }
+  if (verb === "findings") {
+    const name = rest[0]
+    if (!name) return "/team findings <name or id>"
+    return t.readFindings("lead", name)
+  }
   if (verb === "stop") {
     const name = rest[0]
     if (!name) return "/team stop <name> — a member and everything under it"
@@ -95,7 +130,10 @@ export function teamText(app: App, arg: string): string {
       : "No subagents in this session: they are switched off (subagents: false)."
   const since = Math.max(0, t.room.length - TEAM.read_max)
   const own = t.couldServe().own ? "" : `\n${S.own}`
-  return `${t.read("lead", since)}\n\n${S.label}: ${S.min} ${t.min}, ${S.max} ${t.max} — ${S.short} (/team size <min> <max>); /team stop <name> stops a member.${own}`
+  // The tree as the person sees it (spec 3.4.0 §12), then the room as team_read shows it.
+  const read = t.read("lead", since)
+  const room = read.slice(read.indexOf("\n\n") + 2)
+  return `${treeText(t)}\n\n${room}\n\n${S.label}: ${S.min} ${t.min}, ${S.max} ${t.max} — ${S.short} (/team size <min> <max>); /team stop <name> stops a subagent; /team open <name> shows its session, read-only; /team findings <name>; /context <name>.${own}`
 }
 
 /** `/agents [name]`: the subagents the task tool offers, or one of them — the text both the TUI and
