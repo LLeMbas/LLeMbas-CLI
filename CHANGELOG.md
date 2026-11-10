@@ -6,6 +6,46 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+Harness spec 3.4.0 (spec commits 4b8786b, b66891e): one progress vocabulary for every client, and
+subagents organised as the main agent's tree.
+
+### Added
+
+- **Progress phases.** The line under the conversation says what the agent is doing in the words
+  every LLeMbas client uses — *Queued*, *Waiting for {model}*, *Reading the prompt: n / total
+  tokens (p%)*, *Thinking*, *Writing: n tok/s*, *Running {tool}: {what}*, *Waiting for you*,
+  *Waiting for subagents*, *Compacting the conversation*, *Retrying in n s*, *Stopped*, *Failed* —
+  with how long it has lasted, then the turn's time and tokens. The CLI keeps its own estimate of
+  how long the rest of a long prompt will take. Over the link each phase is a `phase` event and is
+  in the session's status (capability `progress`).
+- **The main agent and its subagents.** Only the main agent adds, reassigns (`team_assign`),
+  replaces (`team_replace`), stops and decides; a subagent added with `lead: true` is a
+  sub-manager that directs the subagents placed under it (`parent`) and adds none. Each subagent
+  has an id (`s1`, `s2`, …), a name, a position, a parent, a task, a mode and a model, and can ask
+  `team_whoami`. With Min above 1 the main agent starts with Min − 1 open slots to fill.
+- **Permissions only go down.** A subagent's mode is its parent's or stricter. A narrowed one may
+  be given request options (read, write, execute) and ask the main agent with `team_request`; the
+  main agent decides with `team_decide`, and never allows more than its own mode would. What
+  nobody in the tree could allow — a `bash` call in an all-Edit tree — is put to you, on an
+  approval card that names the subagent.
+- **A subagent's end.** It reports and ends with `team_finish`. Its findings (`team_findings`) are
+  kept after it ends. When its context fills it does not compact: it is paused, gets one last
+  turn of at most 8 steps to save its findings and tell its parent, and ends; the main agent
+  replaces it or uses what it found.
+- **Seeing the tree.** `/team` draws every agent with its position, state, model, mode, context
+  use, current phase and messages, the open slots and the subagents that ended; `/team open
+  <name>` shows a subagent's session read-only, live or after it ended; `/team findings <name>`;
+  `/context <name>` for a subagent's context.
+- **An agent chat's subagents run on this device.** The chat's Min and Max come with every turn
+  (capability `agents`) and the tree, progress, findings and transcripts go back to the server
+  (capability `tree`: the `team` event with the tree, `_lembas/team`, `/transcript`, `/findings`,
+  `/stop`).
+
+### Changed
+
+- A subagent can no longer add subagents of its own or start a `task`; it asks the main agent.
+  `team_stop` is the main agent's alone.
+
 ## [2.0.0-beta.5] — 2026-11-09
 
 Harness spec 3.3.0 (spec commit 02c7282): subagents run on your model unless you name another,
