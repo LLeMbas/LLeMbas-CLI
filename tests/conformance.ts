@@ -31,6 +31,9 @@ import { LOOP, TOOL_SPECS } from "../src/harness.ts"
 import { Team, TEAM_TOOLS, type Capacity } from "../src/team/team.ts"
 import { noteBlock } from "../src/session/prefix.ts"
 import { offer, subagentModel, type ModelInfo } from "../src/team/subagents.ts"
+import { progressLine, progressText, type Progress } from "../src/session/progress.ts"
+import { checkMode, requestRefusal, tighten, whoDecides, type Grant } from "../src/team/delegation.ts"
+import { fillPrompt as fillText } from "../src/prompt/fill.ts"
 
 type Case = Record<string, unknown>
 
@@ -313,6 +316,44 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
       }
       throw new Error(`team: unknown op ${String(st.op)}`)
     })
+  },
+  // Progress (progress.md, spec 3.4.0): the text and the line a client draws.
+  progress: (c) => {
+    const p = c.progress as Progress
+    return { text: progressText(p, c.now as number), line: progressLine(p, c.now as number) }
+  },
+  // Delegation (subagents.md §7, spec 3.4.0): the mode check, who decides a call, team_request's
+  // check, and tightening down the tree.
+  delegation: (c) => {
+    if (c.op === "add") {
+      const r = checkMode(c.parent_mode as Mode, c.mode as Mode | undefined, c.request as string[] | undefined)
+      return "error" in r ? { result: r.error, mode: null } : { result: null, mode: r.mode }
+    }
+    if (c.op === "call") {
+      const call = c.call as { tool: string; line?: string; path?: string }
+      const req: PermissionRequest =
+        call.tool === "bash"
+          ? { permission: "bash", class: "execute", patterns: [call.line!], command: call.line!, paths: ["/project"] }
+          : { permission: call.tool === "read" ? "read" : "edit", class: call.tool === "read" ? "read" : "write", patterns: [call.path!], paths: [`/project/${call.path}`] }
+      const v = whoDecides(req, {
+        ctx: { rules: toRules(DEFAULT_RULES, "default"), hardline: BUILTIN_HARDLINE, root: "/project", planDir: "/project/.agent/plans", projectDir: "/project/.agent" },
+        mode: c.mode as Mode,
+        main: c.main_mode as Mode,
+        request: (c.request as string[] | undefined) ?? [],
+        grants: (c.grants as Grant[] | undefined) ?? [],
+        unattended: c.unattended === true,
+      })
+      // The text is compared unless the case says the reason is each project's own.
+      return v.answer === "refused" && c.own_reason !== true ? { answer: v.answer, text: v.text } : { answer: v.answer }
+    }
+    if (c.op === "request") {
+      const cls = TOOL_SPECS[c.tool as string]?.risk as "read" | "write" | "execute" | undefined
+      return { result: requestRefusal(c.tool as string, cls, c.request as string[]) ?? fillText(LOOP.team.texts.requested, { id: `${LOOP.team.request.id_prefix}1` }) }
+    }
+    if (c.op === "switch") {
+      return tighten(c.main_to as Mode, c.agents as { name: string; parent: string; mode: Mode }[])
+    }
+    throw new Error(`delegation: unknown op ${String(c.op)}`)
   },
   library_scope: (c) => resolveBase(c.bases as { id: string; name: string }[], c.base as string | null),
   toolcall_index: (c) => {

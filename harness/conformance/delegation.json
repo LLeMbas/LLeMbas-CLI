@@ -1,5 +1,5 @@
 {
-  "about": "Delegation (subagents.md §7, spec 3.4.0): a subagent's mode and request options, and who decides its calls. The project root is /project, nothing named exists on disk, and only the default rules apply (permission/defaults.json). `add` — team_add's mode check for a parent in `parent_mode` with `mode` and `request` as given → `{result, mode}`: the refusal word for word, or null and the mode the subagent gets. `call` — a subagent in `mode` with `request` options and `grants` (rules {tool, pattern} the main agent allowed) under a main agent in `main_mode`, calling `call` (`bash` with a `line`, or a file tool with a `path` relative to the root) → `{answer, text?}`: `run`, `person` (an approval card to the person), or `refused` with its text where the case gives one (a hardline's reason is each project's). `unattended`: nobody can answer. `request` — team_request for `tool` by a subagent with `request` options, its first → `{result}`. `switch` — the main agent's mode changes from `main_from` to `main_to` with these subagents (each with its parent and mode) → each one's mode after. LLeMbas: services/team.py; CLI: team/delegation.ts.",
+  "about": "Delegation (subagents.md §7, spec 3.4.0): a subagent's mode and request options, and who decides its calls. The project root is /project, nothing named exists on disk, and only the default rules apply (permission/defaults.json). `add` — team_add's mode check for a parent in `parent_mode` with `mode` and `request` as given → `{result, mode}`: the refusal word for word, or null and the mode the subagent gets. `call` — a subagent in `mode` with `request` options and `grants` (rules {tool, pattern} the main agent allowed) under a main agent in `main_mode`, calling `call` (`bash` with a `line`, or a file tool with a `path` relative to the root) → `{answer, text?}`: `run`, `person` (an approval card to the person), or `refused` with its text, word for word — except where the case says `own_reason` (a hardline's, a mode's or the unattended refusal's reason is each project's), when only the answer is compared. `unattended`: nobody can answer. `request` — team_request for `tool` by a subagent with `request` options, its first → `{result}`. `switch` — the main agent's mode changes from `main_from` to `main_to` with these subagents (each with its parent and mode) → each one's mode after. LLeMbas: services/team.py; CLI: team/delegation.ts.",
   "cases": [
     {
       "about": "No mode given: the parent's.",
@@ -315,9 +315,9 @@
         "tool": "bash",
         "line": "rm -rf build"
       },
+      "own_reason": true,
       "expect": {
-        "answer": "refused",
-        "text": "Plan mode: nothing changes but the plan. Put what this would do into the plan with plan_write or plan_update; it can be done once the person approves the plan."
+        "answer": "refused"
       }
     },
     {
@@ -342,6 +342,7 @@
         "tool": "bash",
         "line": "rm -rf /"
       },
+      "own_reason": true,
       "expect": {
         "answer": "refused"
       }
@@ -356,6 +357,7 @@
         "tool": "bash",
         "line": "git push origin main"
       },
+      "own_reason": true,
       "expect": {
         "answer": "refused"
       }

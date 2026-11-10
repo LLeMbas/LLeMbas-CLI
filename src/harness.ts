@@ -128,13 +128,52 @@ export const LOOP: {
   /** Teams (spec 3.2.0, harness/team.md): the size setting, names, marks, texts. */
   team: {
     agents: { min: number; max: number; cap: number }
-    names: { pattern: string; lead: string; reserved: string[] }
-    marks: { message: string; report: string }
+    names: { pattern: string; lead: string; reserved: string[]; parent: string; id_prefix: string }
+    marks: { message: string; report: string; assignment: string; request: string; decision: string; context_full: string }
     unavailable: { one_agent: string; one_request: string }
     work: { write: string[]; execute: string[]; kept: string[] }
     read_max: number
-    texts: Record<"added" | "added_waiting" | "sent" | "stopped" | "manager" | "full" | "bad_name" | "all_name" | "taken" | "no_goal" | "unknown" | "self" | "nobody" | "not_yours" | "nobody_to_stop" | "no_report" | "ended", string>
-    read: { tree: string; agent: string; lead_role: string; states: Record<"working" | "waiting" | "finished" | "idle", string>; active: string; room: string; message: string; report: string; none: string; more: string }
+    texts: Record<
+      | "added" | "added_waiting" | "sent" | "stopped" | "manager" | "full" | "bad_name" | "all_name" | "taken" | "no_goal" | "unknown" | "self" | "nobody" | "not_yours" | "nobody_to_stop" | "no_report" | "ended"
+      // Spec 3.4.0 (subagents.md §5–§13).
+      | "only_main" | "not_manager" | "wider" | "request_not_narrower" | "request_kind" | "requestable" | "not_delegated" | "not_requestable" | "requested" | "no_request" | "decided" | "allowed" | "refused" | "decision_allowed" | "decision_refused" | "no_parent" | "finished" | "has_ended" | "cycle" | "assigned" | "replaced" | "replace_brief" | "no_findings" | "noted" | "not_yours_findings" | "context_full" | "gone" | "request_body",
+      string
+    >
+    read: {
+      tree: string
+      agent: string
+      lead_role: string
+      states: Record<"working" | "waiting" | "finished" | "idle" | "paused" | "done" | "out_of_context" | "stopped", string>
+      active: string
+      room: string
+      message: string
+      report: string
+      none: string
+      more: string
+      slots: string
+      ended: string
+      ended_agent: string
+      context: string
+      request: string
+    }
+    /** Spec 3.4.0. */
+    main_only: { tools: string[] }
+    context: { pause_at: number; final_steps: number }
+    request: { kinds: string[]; id_prefix: string }
+    whoami: { lines: Record<"who" | "parent" | "task" | "mode" | "request" | "model" | "limits" | "spawn_yes" | "spawn_no" | "context", string> }
+    findings: { header: string; item: string }
+  }
+  /** Progress (spec 3.4.0, harness/progress.md): the phases, their texts, the line. */
+  progress: {
+    phases: string[]
+    texts: Record<string, string>
+    reason: Record<string, string>
+    what: Record<string, string>
+    stopped_reason: Record<string, string>
+    line: string
+    no_elapsed: string[]
+    what_max: number
+    pace_per_second: number
   }
   /** Context hygiene (spec 3.0.0, harness/context.md): the result ids, the texts of a read's
    *  header, a stub, the elided line, recall; the output cap; what is deduplicated; the table
