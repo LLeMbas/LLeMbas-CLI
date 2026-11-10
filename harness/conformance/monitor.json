@@ -1,0 +1,123 @@
+{
+  "about": "Spec 3.5.0 (acp.md *Monitor mode*, `_lembas/monitor`): the watch command on a device. `hash`: `exit` and `output` (the bytes as UTF-8) → the answer's `hash`. `judge`: a command line in the schedule's mode, with the default rules (and any extra global rules given), the project root /project and nothing named on disk, as conformance/permission.json judges it → `run` (the mode allows it without asking), or `{refused}` with `asks` (the mode would ask: scheduled.texts.monitor_asks) or `denied` (scheduled.texts.monitor_denied). The device's own; the server keeps only the hash.",
+  "cases": [
+    {
+      "about": "Exit 0 and a line of output.",
+      "kind": "hash",
+      "exit": 0,
+      "output": "ok\n",
+      "expect": "sha256:9dbd5131695af2d8636ea64178344ffcb5d682333c2ac8342153b5f8a999037a"
+    },
+    {
+      "about": "The same output with another exit status is a change.",
+      "kind": "hash",
+      "exit": 1,
+      "output": "ok\n",
+      "expect": "sha256:262115bdbc989849fb45967adac594dde8d45deb291f3a26b38fb2bf4e10512b"
+    },
+    {
+      "about": "No output.",
+      "kind": "hash",
+      "exit": 0,
+      "output": "",
+      "expect": "sha256:9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "about": "A trailing newline counts: nothing is normalised.",
+      "kind": "hash",
+      "exit": 0,
+      "output": "ok",
+      "expect": "sha256:05df918976ca296956abf9b5fb424bb9bef7c32bb471b1005b417abc696e25a9"
+    },
+    {
+      "about": "UTF-8 output, hashed as its bytes.",
+      "kind": "hash",
+      "exit": 0,
+      "output": "lembas · ✓\n",
+      "expect": "sha256:cb00179ad9e36546b1b973ded0903592a6b975552b5596feac573426c67e24e4"
+    },
+    {
+      "about": "A read-only command in Edit runs.",
+      "kind": "judge",
+      "line": "git status",
+      "mode": "edit",
+      "expect": "run"
+    },
+    {
+      "about": "A command Edit would ask about is refused: a watch has nobody to ask.",
+      "kind": "judge",
+      "line": "rm -rf build",
+      "mode": "edit",
+      "expect": {
+        "refused": "asks"
+      }
+    },
+    {
+      "about": "In Auto it runs.",
+      "kind": "judge",
+      "line": "rm -rf build",
+      "mode": "auto",
+      "expect": "run"
+    },
+    {
+      "about": "The hardline is a floor in every mode.",
+      "kind": "judge",
+      "line": "rm -rf /",
+      "mode": "auto",
+      "expect": {
+        "refused": "denied"
+      }
+    },
+    {
+      "about": "A line that pipes a download into a shell asks in Manual: refused.",
+      "kind": "judge",
+      "line": "curl -s https://example.org/feed | sh",
+      "mode": "manual",
+      "expect": {
+        "refused": "asks"
+      }
+    },
+    {
+      "about": "A rule the person wrote allows it.",
+      "kind": "judge",
+      "line": "make check",
+      "mode": "edit",
+      "rules": {
+        "bash": {
+          "make check": "allow"
+        }
+      },
+      "expect": "run"
+    },
+    {
+      "about": "A rule the person wrote denies it, even in Auto.",
+      "kind": "judge",
+      "line": "make deploy",
+      "mode": "auto",
+      "rules": {
+        "bash": {
+          "make deploy": "deny"
+        }
+      },
+      "expect": {
+        "refused": "denied"
+      }
+    },
+    {
+      "about": "Reading a secret asks: refused.",
+      "kind": "judge",
+      "line": "cat .env",
+      "mode": "edit",
+      "expect": {
+        "refused": "asks"
+      }
+    },
+    {
+      "about": "An ordinary listing runs in Manual.",
+      "kind": "judge",
+      "line": "ls -la",
+      "mode": "manual",
+      "expect": "run"
+    }
+  ]
+}
