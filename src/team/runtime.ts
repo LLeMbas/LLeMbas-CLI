@@ -29,7 +29,7 @@ export interface RuntimeOptions {
   /** Make a member's engine (attached here with `attach`) and start its first turn with `text`. */
   spawnMember(member: TeamAgent, text: string): void
   /** The lead: a message at its next step (`note`), or — idle — a turn of its own (`wake`). */
-  lead: { note(text: string): void; wake(text: string): void }
+  lead: { note(text: string): void; wake(text: string): void; /** Spec 3.4.0: its progress while it waits for a slot. */ waiting?(model: string): void }
   /** An unknown agent or model, answered as task answers it; undefined when both are known. The
    *  model's ref as the session knows it. */
   resolve?(agent: string, model: string | undefined): { error: string } | { model: string }
@@ -74,17 +74,24 @@ export class TeamRuntime {
 
   /** Said on the lead's bus as `team`, at most four times a second (acp.md `team` event). */
   private changed() {
-    if (this.pace) return
+    // A change inside the pace window is said once at its end, so the last state always goes out.
+    if (this.pace) return void (this.trailing = true)
     this.o.bus.emit({ type: "team" })
     this.pace = setTimeout(() => {
       this.pace = undefined
+      if (this.trailing) {
+        this.trailing = false
+        this.changed()
+      }
     }, 1000 / 4)
   }
+  private trailing = false
 
   /** Something changed that a reader must see now (the tools' answers, tests): said at once. */
   private changedNow() {
     if (this.pace) clearTimeout(this.pace)
     this.pace = undefined
+    this.trailing = false
     this.o.bus.emit({ type: "team" })
   }
 
@@ -206,6 +213,7 @@ export class TeamRuntime {
       return true
     }
     this.o.bus.emit({ type: "notice", message: `waiting for a free slot: the model serves ${parallelFrom(this.team.capacityOf(this.team.model))} requests at once and the team's members hold them` })
+    this.o.lead.waiting?.(this.team.model)
     this.changed()
     return await new Promise<boolean>((resolve) => {
       const onAbort = () => {

@@ -752,7 +752,11 @@ export function createApp(o: AppOptions): App {
         teamRt.memberDone(member.name, "", `error — ${(e as Error).message}`, [])
       })
     },
-    lead: { note: (text) => engine.note(text), wake: (text) => wake(text, shownLine(text)) },
+    lead: {
+      note: (text) => engine.note(text),
+      wake: (text) => wake(text, shownLine(text)),
+      waiting: (model) => engine.progress.set({ phase: "waiting_for_model", model: engine.model.spec.name ?? model, reason: "slots" }),
+    },
     tools: () => tools,
     resolve: (agent, model) => {
       if (!agentList.some((a) => a.name === agent)) return { error: `There is no agent "${agent}". The agents are: ${agentList.map((a) => a.name).join(", ")}.` }
