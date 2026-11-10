@@ -999,6 +999,64 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: "schedule",
+    aliases: ["schedules"],
+    args: "[list | new <words> | pause|resume|run|history <id or title>]",
+    description: "your schedules on the LLeMbas server: list, create from words, pause, resume, run now, history",
+    async run(c, arg) {
+      const S = await import("../lembas/schedules.ts")
+      const [sub = "list", ...rest] = arg.trim().split(/\s+/).filter(Boolean)
+      const words = arg.trim().slice(sub.length).trim()
+      const say = (lines: string[], level?: "warn") => c.view.info(lines.join("\n"), level)
+      try {
+        if (sub === "list" || sub === "ls") return say(S.listLines(await S.listSchedules()))
+        if (sub === "new" || sub === "create" || sub === "add") {
+          if (!words) return say(["usage: /schedule new <what, and when> — e.g. /schedule new every weekday at 8:30 summarise the open issues"], "warn")
+          c.view.info("working out what that means…")
+          const compiled = await S.compileWords(words)
+          const preview = S.previewLines(compiled)
+          if (!Object.keys(compiled.rule ?? {}).length) return say([...preview, "", "No schedule made: say when it should run (\"every Monday at 9\", \"tomorrow at 7\")."], "warn")
+          const cwd = c.app.engine.o.toolCtx.cwd
+          const { coveredBy, remoteState } = await import("../config/remote.ts")
+          const here = S.canRunHere() && coveredBy(cwd, remoteState().roots) !== undefined
+          c.openDialog({
+            title: preview[0]!,
+            options: [
+              { label: "Create it", value: "server", description: preview.slice(1).join(" · ") || "runs on the server" },
+              ...(here ? [{ label: "Create it, to run on this computer", value: "here", description: `as an agent turn in ${cwd}, in Edit` }] : []),
+              { label: "Cancel", value: "cancel" },
+            ],
+            onSelect: (v) => {
+              if (v === "cancel") return c.view.info("no schedule made")
+              void S.createSchedule(compiled, words, v === "here" ? { cwd } : undefined)
+                .then((made) => c.view.info(`made ${made.title} (${made.id}) — next ${S.when(made.next_run)}`))
+                .catch((e) => c.view.info(`/schedule: ${(e as Error).message}`, "warn"))
+            },
+          })
+          return
+        }
+        if (["pause", "resume", "run", "history", "runs"].includes(sub)) {
+          const found = S.findSchedule(await S.listSchedules(), rest.join(" "))
+          if (typeof found === "string") return say([found], "warn")
+          if (sub === "pause") return say([`paused ${(await S.pauseSchedule(found.id)).title}`])
+          if (sub === "resume") {
+            const s = await S.resumeSchedule(found.id)
+            return say([`resumed ${s.title} — next ${S.when(s.next_run)}`])
+          }
+          if (sub === "run") {
+            const r = await S.runSchedule(found.id)
+            return say([`${found.title}: started now (${r.id}) — the next scheduled run stays as it was; /schedule history ${found.id}`])
+          }
+          const h = await S.scheduleRuns(found.id)
+          return say(S.historyLines(found, h.runs, h.more))
+        }
+        say([`usage: /schedule ${COMMANDS.find((x) => x.name === "schedule")!.args}`], "warn")
+      } catch (e) {
+        say([`/schedule: ${(e as Error).message}`], "warn")
+      }
+    },
+  },
+  {
     name: "logout",
     args: "[connection]",
     description: "sign out of a LLeMbas instance, and remove the connection login wrote",

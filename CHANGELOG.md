@@ -28,6 +28,12 @@ Harness spec 3.5.0: scheduled work on a linked computer.
   the model runs only when the output changed. A command the schedule's mode would ask about is
   refused rather than run.
 
+- **`/schedule`**: your schedules on the LLeMbas server from the terminal — the list with each
+  one's next run and last result, `new <words>` (the server works out the rule; you see what it
+  understood and the next runs before anything is made, and may have it run on this computer in
+  the current folder), `pause`, `resume`, `run` (now, without using up the next scheduled run) and
+  `history`. It uses this computer's sign-in; a server too old to allow that says so.
+
 ### Changed
 
 - `team_add` under a sub-manager says where the report goes: "Its report goes to <sub-manager>

@@ -107,6 +107,16 @@ async function call(url: string, init: RequestInit, tls: Tls | undefined, timeou
   }
 }
 
+/** One request to the instance with the device's token, its JSON answer and status (spec 3.5.0:
+ *  the schedule routes of /api/v2). A body that is not JSON is null. */
+export async function apiCall(base: string, token: string, tls: Tls | undefined, method: string, path: string, body?: unknown, timeoutMs = 30_000): Promise<{ status: number; json: any }> {
+  const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: "application/json" }
+  if (body !== undefined) headers["content-type"] = "application/json"
+  const res = await call(`${base}${path}`, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }, tls, timeoutMs)
+  const json = res.status === 204 ? null : await res.json().catch(() => null)
+  return { status: res.status, json }
+}
+
 /** What a person typed, as a base address: a scheme added (https unless they said http), the path
  *  and a trailing slash dropped. */
 export function normalise(address: string): string {
