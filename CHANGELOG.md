@@ -4,6 +4,17 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Harness spec 3.6.0: phone actions.** The spec now describes `phone_action`, the LLeMbas
+  server's tool for doing something on the person's phone when they write from the LLeMbas app on
+  it — alarms and timers, calendar events, SMS and email drafts, the dialer, routes (start one,
+  add a stop, search nearby, stop), opening an app or an address, media, the torch, settings
+  panels and automations — confirmed on the phone every time (`harness/phone.md`). The server's
+  alone: the CLI does not offer it, and its conformance area is the server's.
+
 ## [2.0.0-beta.7] — 2026-11-10
 
 Harness spec 3.5.0: scheduled work on a linked computer.

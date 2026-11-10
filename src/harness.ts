@@ -28,6 +28,7 @@ import t_mv from "../harness/tools/mv.json"
 import t_note_manage from "../harness/tools/note_manage.json"
 import t_note_view from "../harness/tools/note_view.json"
 import t_notes_search from "../harness/tools/notes_search.json"
+import t_phone_action from "../harness/tools/phone_action.json"
 import t_plan_submit from "../harness/tools/plan_submit.json"
 import t_plan_update from "../harness/tools/plan_update.json"
 import t_plan_write from "../harness/tools/plan_write.json"
@@ -91,8 +92,10 @@ export interface ToolSpecDef {
    *  can be opened: over the link, to a client that offers `show`), `page`, `forge` (the chat's);
    *  `plan` (3.1.0): plan mode. From 3.1.0 one that can come and go during a session does not
    *  leave the tool out: it is offered and answers `unavailable` while unmet (context.md §10).
-   *  `team` (3.2.0): the team setting allows more than one agent (harness/team.md §2). */
-  requires?: ("display" | "page" | "forge" | "plan" | "team")[]
+   *  `team` (3.2.0): the team setting allows more than one agent (harness/team.md §2). `phone`
+   *  (3.6.0): a message came from the LLeMbas app on the person's phone (harness/phone.md) — the
+   *  server's alone. */
+  requires?: ("display" | "page" | "forge" | "plan" | "team" | "phone")[]
   /** What a call answers, word for word, when a requirement went away after the offer. */
   unavailable?: string
   /** `always`: put to the person in every mode, auto included; never remembered. */
@@ -313,7 +316,7 @@ export function narrowParameters(parameters: Record<string, unknown>, narrow: Na
 }
 
 export const TOOL_SPECS: Record<string, ToolSpecDef> = Object.fromEntries(
-  ([t_apply_patch, t_ask_user, t_bash, t_branch, t_commit, t_decisions, t_edit, t_glob, t_grep, t_job_list, t_job_output, t_job_send, t_job_stop, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_merge, t_mkdir, t_multiedit, t_mv, t_note_manage, t_note_view, t_notes_search, t_plan_submit, t_plan_update, t_plan_write, t_pr, t_python, t_read, t_recall, t_release, t_report, t_rm, t_search, t_session_search, t_settings, t_show, t_skill_manage, t_skill_view, t_skills_list, t_tag, t_task, t_tasks, t_team_add, t_team_assign, t_team_decide, t_team_findings, t_team_finish, t_team_read, t_team_replace, t_team_request, t_team_send, t_team_stop, t_team_whoami, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
+  ([t_apply_patch, t_ask_user, t_bash, t_branch, t_commit, t_decisions, t_edit, t_glob, t_grep, t_job_list, t_job_output, t_job_send, t_job_stop, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_merge, t_mkdir, t_multiedit, t_mv, t_note_manage, t_note_view, t_notes_search, t_phone_action, t_plan_submit, t_plan_update, t_plan_write, t_pr, t_python, t_read, t_recall, t_release, t_report, t_rm, t_search, t_session_search, t_settings, t_show, t_skill_manage, t_skill_view, t_skills_list, t_tag, t_task, t_tasks, t_team_add, t_team_assign, t_team_decide, t_team_findings, t_team_finish, t_team_read, t_team_replace, t_team_request, t_team_send, t_team_stop, t_team_whoami, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
 )
 
 /** Whether the spec gives a tool to this CLI: not the server's alone (`scope: llembas`), and
