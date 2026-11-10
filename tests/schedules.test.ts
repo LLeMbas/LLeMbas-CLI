@@ -50,7 +50,7 @@ function server(o: { appOnly?: boolean } = {}) {
     async fetch(req) {
       const u = new URL(req.url)
       if (req.headers.get("authorization") !== "Bearer lmb_key") return new Response("no", { status: 401 })
-      const body = req.method === "GET" ? null : await req.json().catch(() => null)
+      const body: any = req.method === "GET" ? null : await req.json().catch(() => null)
       seen.push({ method: req.method, path: u.pathname + u.search, body })
       // An older server: /api/v2 for an app's token only.
       if (o.appOnly) return Response.json({ detail: "This token does not have the app scope." }, { status: 403 })

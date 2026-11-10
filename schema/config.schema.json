@@ -56,6 +56,10 @@
       "description": "false: leave the mouse to the terminal — its own selection and Ctrl+Shift+C work without Shift, and the wheel no longer scrolls the transcript (pgup/pgdn do). Default true.",
       "type": "boolean"
     },
+    "notify": {
+      "description": "When a reply finishes, or the agent waits for you, while the terminal is not focused: ring the bell and ask the terminal for a desktop notification (OSC 9) naming the session — never what the reply says. Default true; false: neither.",
+      "type": "boolean"
+    },
     "icons": {
       "description": "emoji (default), or plain: one-column symbols for a terminal font that has no emoji.",
       "type": "string",

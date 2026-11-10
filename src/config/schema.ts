@@ -241,6 +241,7 @@ export const Config = z.strictObject({
   skin: z.string().optional().describe("The old name of `theme`; still read when `theme` is not set."),
   busy_input: z.enum(["steer", "queue"]).optional().describe("A message sent while the agent works: steer (default) — it goes in at the next step, after the running tools finish, and the agent carries on with it; queue — it is sent as the next prompt once the task is done."),
   mouse: z.boolean().optional().describe("false: leave the mouse to the terminal — its own selection and Ctrl+Shift+C work without Shift, and the wheel no longer scrolls the transcript (pgup/pgdn do). Default true."),
+  notify: z.boolean().optional().describe("When a reply finishes, or the agent waits for you, while the terminal is not focused: ring the bell and ask the terminal for a desktop notification (OSC 9) naming the session — never what the reply says. Default true; false: neither."),
   icons: z.enum(["emoji", "plain"]).optional().describe("emoji (default), or plain: one-column symbols for a terminal font that has no emoji."),
   personality: z
     .enum(PERSONALITIES)

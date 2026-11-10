@@ -51,7 +51,7 @@ const line = (r: Row, n: number) => {
 }
 const header = (s: SessionRow) => `${s.id} · ${when(s.created)} · ${s.root}${s.title ? ` · "${s.title}"` : ""} · ${s.model}`
 
-function snippet(text: string, query: string): string {
+export function snippet(text: string, query: string): string {
   const terms = (query.match(/"[^"]*"|\S+/g) ?? []).map((t) => t.replace(/^"|"$|\*$/g, "").toLowerCase()).filter((t) => t && !/^(and|or|not)$/.test(t))
   const low = text.toLowerCase()
   const at = Math.max(0, Math.min(...terms.map((t) => low.indexOf(t)).filter((i) => i >= 0), text.length))
@@ -63,6 +63,25 @@ function around(rows: Row[], id: number, window: number): Row[] {
   const i = rows.findIndex((r) => r.id === id)
   if (i < 0) throw new ToolError(`That session has no message #${id}.`)
   return rows.slice(Math.max(0, i - window), i + window + 1)
+}
+
+/** `/search`: the sessions whose messages match `query` (FTS5, the person's words made safe; all
+ *  of them, else any), the best hit of each, ranked. `root`: this project's only. */
+export function searchSessions(store: Store, query: string, o: { root?: string; exclude?: string[]; limit?: number } = {}): { id: string; title: string; updated: number; model: string; role: string; snippet: string }[] {
+  let match = ftsQuery(query)
+  if (!match) return []
+  const find = (m: string) => store.hits(m, { exclude: o.exclude, root: o.root, perSession: true, limit: o.limit ?? 20 })
+  let hits = find(match)
+  if (!hits.length && anyOf(match)) {
+    match = anyOf(match)!
+    hits = find(match)
+  }
+  return hits.flatMap((h) => {
+    const s = store.session(h.session_id)
+    if (!s) return []
+    const m = readable(h.json)
+    return [{ id: s.id, title: s.title, updated: s.updated, model: s.model, role: m.role, snippet: snippet(m.text, match) }]
+  })
 }
 
 export const sessionSearchTool = defineTool({

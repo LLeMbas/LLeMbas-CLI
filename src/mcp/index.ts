@@ -371,6 +371,16 @@ export class McpManager {
     return r.contents.map((x) => ("text" in x && typeof x.text === "string" ? x.text : "")).join("\n").trim()
   }
 
+  /** A tool called directly (not by the model): `/memory` changing the LLeMbas server's memory.
+   *  The text it answered; a tool error is thrown with its text. */
+  async callText(server: string, tool: string, args: Record<string, unknown>, scope?: string): Promise<string> {
+    const c = await this.clientOf(server)
+    const r = (await c.callTool({ name: tool, arguments: args, ...(scope ? { _meta: { lembas: { scope } } } : {}) })) as { content?: { type: string; text?: string }[]; isError?: boolean }
+    const text = (r.content ?? []).map((x) => (x.type === "text" && typeof x.text === "string" ? x.text : "")).join("\n").trim()
+    if (r.isError) throw new Error(text || `${tool} failed`)
+    return text
+  }
+
   /** Every connected server's tools as LLeMbas CLI tools, and list/read tools for resources. */
   tools(): Tool[] {
     const out: Tool[] = []

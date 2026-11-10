@@ -34,6 +34,16 @@ Harness spec 3.5.0: scheduled work on a linked computer.
   the current folder), `pause`, `resume`, `run` (now, without using up the next scheduled run) and
   `history`. It uses this computer's sign-in; a server too old to allow that says so.
 
+- **A notice when a reply finishes** — or when the agent waits for your answer — while the
+  terminal is not focused: the bell, and a desktop notification (OSC 9, in terminals that show
+  one) naming the session, never what the reply says. `notify: false` (or `/settings`) turns it
+  off.
+- **`/rename <title>`** names this session — in `/sessions`, and in the web UI when it is shared.
+- **`/search <words>`** finds a past session in this project by what was said in it (add `all`
+  for every project) and resumes the one you pick.
+- **`/memory` shows the server's memory** when the server keeps it (`library: lembas`): its
+  entries beside this machine's files, each one to change or forget, through the server.
+
 ### Changed
 
 - `team_add` under a sub-manager says where the report goes: "Its report goes to <sub-manager>

@@ -17,6 +17,7 @@ import { PlanPanel } from "./components/plan.tsx"
 import { JobView } from "./components/jobview.tsx"
 import { SubagentView } from "./components/subagent.tsx"
 import { Bus } from "../bus/index.ts"
+import { FocusWatch, noticeSequence, noticeText } from "./notify.ts"
 import { Prompt, type PaletteEntry } from "./components/prompt.tsx"
 import { FileIndex } from "../project/files.ts"
 import { attachmentsFor } from "../project/attach.ts"
@@ -79,6 +80,22 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   // model switched with git.
   app.bus.on((e) => (e.type === "mode" || e.type === "done" || e.type === "team") && refresh())
   app.bus.on((e) => e.type === "flash" && flash(e.text, 6000))
+  // The finished-reply notice (notify.ts): a reply that ends, or an answer the agent waits for,
+  // while the terminal is not focused — the bell and a desktop notification naming the session.
+  const focus = new FocusWatch((ev, fn) => renderer.on(ev, fn))
+  const notice = (what: "finished" | "waiting" | "failed") => {
+    if (focus.focused || app.loaded.config.notify === false) return
+    const id = app.engine.sessionId
+    const title = id ? app.store?.session(id)?.title : undefined
+    const seq = noticeSequence(noticeText(title, what))
+    const r = renderer as unknown as { writeOut?: (s: string) => void }
+    try {
+      if (r.writeOut) r.writeOut(seq)
+      else process.stdout.write(seq)
+    } catch {}
+  }
+  app.bus.on((e) => e.type === "done" && e.reason !== "cancelled" && notice(e.reason === "error" ? "failed" : "finished"))
+  createEffect(() => (view.state.pending || view.state.question || view.state.plan) && notice("waiting"))
   // A setting changed by the agent, /settings or a command: show it. Theme and icons are drawn here.
   app.bus.on((e) => {
     if (e.type !== "setting") return

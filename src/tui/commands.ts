@@ -516,6 +516,59 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: "rename",
+    args: "<title>",
+    description: "name this session (here, in /sessions, and in the web UI when it is shared)",
+    run(c, arg) {
+      const title = arg.trim().replace(/\s+/g, " ").slice(0, 200)
+      const id = c.app.engine.sessionId
+      const now = (id && c.app.store?.session(id)?.title) || ""
+      if (!id) return c.view.info("nothing to name yet: this session has no messages", "warn")
+      if (!title) return c.view.info(`usage: /rename <title>${now ? ` — now "${now}"` : ""}`, "warn")
+      c.app.rename(title)
+      c.view.info(`named "${title}"`)
+      c.refresh()
+    },
+  },
+  {
+    name: "search",
+    args: "<words> [all]",
+    description: "find a past session by what was said in it (this project's; add `all` for every project) and resume it",
+    async run(c, arg) {
+      const store = c.app.store
+      if (!store) return c.view.info("sessions are not being recorded here", "warn")
+      const words = arg.trim().split(/\s+/).filter(Boolean)
+      const everywhere = words.at(-1) === "all"
+      const query = (everywhere ? words.slice(0, -1) : words).join(" ")
+      if (!query) return c.view.info('usage: /search <words> [all] — plain words, "a phrase", OR, NOT', "warn")
+      const { searchSessions } = await import("../tool/session_search.ts")
+      let found: ReturnType<typeof searchSessions>
+      try {
+        found = searchSessions(store, query, { root: everywhere ? undefined : c.app.project.root, exclude: c.app.engine.sessionId ? [c.app.engine.sessionId] : [] })
+      } catch (e) {
+        return c.view.info(`/search: that could not be searched (${(e as Error).message}) — use plain words, "quoted phrases", OR and NOT`, "warn")
+      }
+      if (!found.length) return c.view.info(`nothing found for "${query}"${everywhere ? "" : " in this project's sessions — /search " + query + " all looks in every project"}`)
+      const other = (id: string) => store.session(id)?.root !== c.app.project.root
+      c.openDialog({
+        title: `${found.length} session${found.length === 1 ? "" : "s"} for "${query}"`,
+        width: 100,
+        options: found.map((f) => ({
+          label: f.title || firstUserLine(c, f.id) || f.id,
+          value: f.id,
+          description: `${new Date(f.updated).toISOString().slice(0, 16).replace("T", " ")}${other(f.id) ? ` · ${store.session(f.id)?.root}` : ""} · ${f.role}: ${f.snippet}`,
+        })),
+        onSelect: async (id) => {
+          if (other(id)) return c.view.info(`that session is in ${store.session(id)?.root} — resume it there (lembas -c, /sessions)`, "warn")
+          const why = await (c.share?.release(id) ?? Promise.resolve(undefined))
+          if (why) return c.view.info(`not resumed: ${why}`, "warn")
+          c.view.load(c.app.resume(id))
+          c.view.info(`resumed ${id}`)
+        },
+      })
+    },
+  },
+  {
     name: "delete",
     description: "delete this session (here and in the web UI) and start a new one",
     run(c) {
@@ -767,24 +820,63 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "memory",
-    description: "what is remembered across sessions — pick an entry to change or forget it",
-    run(c) {
+    description: "what is remembered across sessions — the server's memory when it keeps it, and this machine's files — pick an entry to change or forget it",
+    async run(c) {
       const stores = [
         { key: "user", title: "user", store: c.app.memory, target: "user" as const },
         { key: "memory", title: "notes", store: c.app.memory, target: "memory" as const },
         ...(c.app.projectMemory ? [{ key: "project", title: "project", store: c.app.projectMemory, target: "memory" as const }] : []),
       ]
-      const entries = stores.flatMap((s) => s.store.entries(s.target).map((text, i) => ({ s, text, value: `${s.key}:${i}` })))
+      // library: lembas — the account's memory on the server (harness acp.md *Memory*), read
+      // through its /mcp as the prompt reads it, and changed with its memory tool.
+      const { LIBRARY_SERVER } = await import("../mcp/index.ts")
+      const { MEMORY_RESOURCE } = await import("../app.ts")
+      const onServer = c.app.mcp.servers.has(LIBRARY_SERVER)
+      const scope = c.app.engine.o.toolCtx.libraryScope
+      let server: string[] = []
+      let serverError = ""
+      if (onServer) {
+        try {
+          server = serverEntries(await c.app.mcp.readResource(LIBRARY_SERVER, MEMORY_RESOURCE, scope))
+        } catch (e) {
+          serverError = (e as Error).message
+        }
+      }
+      type Entry = { title: string; text: string; value: string; change: (op: { action: "replace" | "remove"; content?: string }) => Promise<string> | string }
+      const local: Entry[] = stores.flatMap((s) =>
+        s.store.entries(s.target).map((text, i) => ({
+          title: s.title,
+          text,
+          value: `${s.key}:${i}`,
+          change: (op: { action: "replace" | "remove"; content?: string }) => {
+            const r = s.store.apply(s.target, [{ ...op, old_text: text }])
+            if (!r.ok) throw new Error(r.message)
+            return r.usage
+          },
+        })),
+      )
+      const remote: Entry[] = server.map((text, i) => ({
+        title: "server",
+        text,
+        value: `server:${i}`,
+        change: (op: { action: "replace" | "remove"; content?: string }) => c.app.mcp.callText(LIBRARY_SERVER, "memory", { target: "user", action: op.action, old_text: text, ...(op.content !== undefined ? { content: op.content } : {}) }, scope),
+      }))
+      const entries = [...remote, ...local]
       const files = stores.map((s) => `${s.title}: ${s.store.file(s.target)} (${s.store.usage(s.target)})`).join("\n")
-      if (!entries.length) return c.view.info(`nothing remembered yet — the agent saves facts with its memory tool, or tell it "remember that …"\n${files}`)
-      const change = (e: (typeof entries)[number], op: { action: "replace" | "remove"; content?: string }) => {
-        const r = e.s.store.apply(e.s.target, [{ ...op, old_text: e.text }])
-        c.view.info(r.ok ? `${e.s.title}: ${op.action === "remove" ? "forgotten" : "changed"} — the agent sees it from the next session (${r.usage})` : r.message, r.ok ? "info" : "warn")
+      const where = onServer ? `the server's memory (${serverError ? `could not be read: ${serverError}` : `${server.length} entr${server.length === 1 ? "y" : "ies"}`}) is what sessions here use; this machine's files:\n${files}` : `the files, which you can also edit by hand (entries are separated by a line with §):\n${files}`
+      if (!entries.length) return c.view.info(`nothing remembered yet — the agent saves facts with its memory tool, or tell it "remember that …"\n${where}`)
+      const change = async (e: Entry, op: { action: "replace" | "remove"; content?: string }) => {
+        try {
+          const said = await e.change(op)
+          c.view.info(`${e.title}: ${op.action === "remove" ? "forgotten" : "changed"} — the agent sees it from the next session${said && e.title !== "server" ? ` (${said})` : ""}`)
+        } catch (err) {
+          c.view.info(`${e.title}: ${(err as Error).message}`, "warn")
+        }
       }
       c.openDialog({
         title: "Memory — enter to change or forget",
         filter: true,
-        options: entries.map((e) => ({ label: `[${e.s.title}] ${e.text.replace(/\s+/g, " ").slice(0, 90)}`, value: e.value })),
+        options: entries.map((e) => ({ label: `[${e.title}] ${e.text.replace(/\s+/g, " ").slice(0, 90)}`, value: e.value })),
         onSelect: (v) => {
           const e = entries.find((x) => x.value === v)!
           c.openDialog({
@@ -793,12 +885,12 @@ export const COMMANDS: Command[] = [
               { label: "Forget it", value: "remove" },
               { label: "Keep it", value: "keep" },
             ],
-            onSelect: (a) => a === "remove" && change(e, { action: "remove" }),
-            custom: { label: "replace with", onSubmit: (text) => change(e, { action: "replace", content: text }) },
+            onSelect: (a) => void (a === "remove" && change(e, { action: "remove" })),
+            custom: { label: "replace with", onSubmit: (text) => void change(e, { action: "replace", content: text }) },
           })
         },
       })
-      c.view.info(`the files, which you can also edit by hand (entries are separated by a line with §):\n${files}`)
+      c.view.info(where)
     },
   },
   {
@@ -1367,6 +1459,19 @@ export function findCommand(name: string): Command | undefined {
 /** The sessions /sessions offers: this project's, newest first, not the one open here — and only
  *  those somebody said something in, as `lembas sessions` and the web UI list them: every
  *  start and /new makes one, and the empty ones crowded out the rest as rows named by their id. */
+/** The server's memory block (`lembas://memory`) as entries: each `- ` line starts one, and the
+ *  lines under it belong to it; the block's own "(…N more" line is not an entry. */
+export function serverEntries(block: string): string[] {
+  const out: string[] = []
+  for (const line of block.split("\n")) {
+    if (line.startsWith("- ")) {
+      if (/^- \(…\d+ more/.test(line)) continue
+      out.push(line.slice(2))
+    } else if (out.length && line.trim()) out[out.length - 1] += `\n${line}`
+  }
+  return out.map((e) => e.trim()).filter(Boolean)
+}
+
 function otherSessions(c: CommandCtx) {
   return c.app.store?.sessions(40, c.app.project.root, true).filter((s) => s.id !== c.app.engine.sessionId) ?? []
 }

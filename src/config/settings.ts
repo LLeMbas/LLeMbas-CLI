@@ -60,6 +60,7 @@ export const SETTINGS: SettingDef[] = [
   { key: "theme_background", kind: "enum", values: ["theme", "terminal"], agent: true, scopes: USER, fallback: "theme" },
   { key: "busy_input", kind: "enum", values: ["steer", "queue"], agent: true, scopes: USER, fallback: "steer" },
   { key: "icons", kind: "enum", values: ["emoji", "plain"], agent: true, scopes: USER, fallback: "emoji" },
+  { key: "notify", kind: "boolean", agent: true, scopes: USER, fallback: "true", hint: "bell and desktop notification when a reply finishes or the agent waits for you while the terminal is not focused" },
   { key: "mouse", kind: "boolean", agent: true, scopes: ["global"], reload: true, fallback: "true" },
   { key: "compaction.auto_at", kind: "number", agent: true, scopes: ALL, fallback: "0.85" },
   { key: "search.order", kind: "list", values: ["searxng", "firecrawl", "ddg"], agent: true, scopes: ALL, fallback: "those configured, then ddg" },
