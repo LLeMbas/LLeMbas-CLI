@@ -2,7 +2,7 @@ import { RGBA, SyntaxStyle, type PasteEvent, type TextareaRenderable } from "@op
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { paths } from "../../config/paths.ts"
-import { cleanPastedImages, clipboardImage, CLIPBOARD_TYPES, imageFromText, isImage, savePastedImage, type ClipboardImage } from "../../project/image.ts"
+import { cleanPastedImages, clipboardImage, CLIPBOARD_TYPES, imageFromText, imageWhole, isImage, savePastedImage, sniffImage, type ClipboardImage } from "../../project/image.ts"
 import { kittyClipboardLikely, kittyReadImage, type KittyRead, type OscTerminal } from "../kitty-clipboard.ts"
 import { escapeMention } from "../../project/attach.ts"
 import fuzzysort from "fuzzysort"
@@ -201,6 +201,17 @@ export function Prompt(p: {
    *  `ssh -X` forwards, and a terminal that hands its clipboard over itself (kitty). When neither
    *  does, one line says what does. */
   let reading = false
+  // While the terminal sends its clipboard, nothing typed or pasted reaches the box: what would
+  // arrive is a reply that came apart on the way (kitty-clipboard.ts), and it is counted.
+  let held: number | undefined
+  const holdInput = () => {
+    held = 0
+    return () => {
+      const n = held ?? 0
+      held = undefined
+      return n
+    }
+  }
   const pasteClipboardImage = async () => {
     if (reading || !area) return
     reading = true
@@ -209,11 +220,16 @@ export function Prompt(p: {
       let r: ClipboardImage | KittyRead = { status: "unsupported" }
       if (!remote) r = await clipboardImage()
       else if (process.env.DISPLAY) r = await clipboardImage({ env: { DISPLAY: process.env.DISPLAY } })
-      if (r.status !== "read" && remote && p.terminal && kittyClipboardLikely()) {
+      // The terminal's own clipboard (kitty), only where it was turned on: see kitty-clipboard.ts.
+      if (r.status !== "read" && remote && p.terminal && app.loaded.config.kitty_clipboard === true && kittyClipboardLikely()) {
         p.note?.("asking the terminal for the image on its clipboard…")
-        r = await kittyReadImage(p.terminal, { types: CLIPBOARD_TYPES, password: CLIPBOARD_PASSWORD, name: "LLeMbas CLI" })
+        r = await kittyReadImage(
+          { ...p.terminal, holdInput },
+          { types: CLIPBOARD_TYPES, password: CLIPBOARD_PASSWORD, name: "LLeMbas CLI", whole: (bytes) => { const mime = sniffImage(bytes); return mime && imageWhole(bytes, mime) ? mime : undefined } },
+        )
       }
       if (r.status === "read") return insertImage(savePastedImage(CLIP_DIR, r.bytes, r.mime))
+      if (r.status === "garbled") return p.note?.("the image did not arrive whole from the terminal (the connection stalled) — nothing was pasted; try again, or paste it as a data URL or use @path", true)
       if (r.status === "too-large") return p.note?.("the image on the clipboard is too large to paste — save it and use @path", true)
       if (r.status === "denied") return p.note?.("the terminal did not allow reading its clipboard", true)
       p.note?.(remote ? REMOTE_IMAGE_HINT : r.status === "unsupported" ? "no clipboard to read an image from here (install wl-clipboard or xclip), or use @path" : "no image on the clipboard")
@@ -237,13 +253,19 @@ export function Prompt(p: {
 
   const onPaste = (e: PasteEvent) => {
     if (!area) return
+    if (held !== undefined) {
+      held++
+      return e.preventDefault()
+    }
     const text = new TextDecoder().decode(e.bytes).replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-    // Some terminals hand over an image-only clipboard as an empty bracketed paste.
-    if (!text.trim()) {
+    // Some terminals hand over an image-only clipboard as an empty bracketed paste. (A paste of
+    // white space — a newline — is a paste of white space.)
+    if (!text) {
       e.preventDefault()
       void pasteClipboardImage()
       return
     }
+    if (!text.trim()) return
     // An image pasted as text — a data URL, or base64 of one: the way through a terminal that
     // cannot hand over a clipboard image (over SSH).
     const data = imageFromText(text)
@@ -275,6 +297,7 @@ export function Prompt(p: {
   const submit = () => {
     if (!area) return
     // What is sent is the text in full; what the transcript shows is what the box showed.
+    marks?.repair()
     const value = full()
     const shown = area.plainText
     if (!value.trim()) return
@@ -334,12 +357,20 @@ export function Prompt(p: {
             { name: "return", meta: true, action: "newline" },
             { name: "j", ctrl: true, action: "newline" },
           ]}
-          onContentChange={compute}
+          onContentChange={() => {
+            // After this change has settled: a placeholder that lost part of its label goes whole.
+            queueMicrotask(() => marks?.repair())
+            compute()
+          }}
           onCursorChange={compute}
           onSubmit={submit}
           onPaste={onPaste}
           onKeyDown={(e) => {
             if (!area) return
+            if (held !== undefined) {
+              held++
+              return e.preventDefault()
+            }
             if (e.ctrl && e.name === "v" && !e.shift && !e.meta) {
               void pasteClipboardImage()
               return e.preventDefault()

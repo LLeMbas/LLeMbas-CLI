@@ -243,6 +243,7 @@ export const Config = z.strictObject({
   mouse: z.boolean().optional().describe("false: leave the mouse to the terminal — its own selection and Ctrl+Shift+C work without Shift, and the wheel no longer scrolls the transcript (pgup/pgdn do). Default true."),
   notify: z.boolean().optional().describe("When a reply finishes, or the agent waits for you, while the terminal is not focused: ring the bell and ask the terminal for a desktop notification (OSC 9) naming the session — never what the reply says. Default true; false: neither."),
   paste: z.enum(["placeholder", "full"]).optional().describe("A long paste into the prompt box (3 lines or more, or over 150 characters) and a pasted image: placeholder (default) — shown as [Pasted text 40 lines] or [Image 1], sent in full; full — the text itself, and an image as its @path."),
+  kitty_clipboard: z.boolean().optional().describe("true: over SSH in the kitty terminal, ctrl+v asks the terminal itself for the image on its clipboard (kitty's clipboard protocol, OSC 5522; kitty asks you to allow it). Default false: on a connection that stalls the image may not arrive whole — it is then refused, never saved broken — so it is opt-in."),
   icons: z.enum(["emoji", "plain"]).optional().describe("emoji (default), or plain: one-column symbols for a terminal font that has no emoji."),
   personality: z
     .enum(PERSONALITIES)

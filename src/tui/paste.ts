@@ -46,13 +46,14 @@ export interface BoxSnapshot {
   marks: { start: number; end: number; item: Placeholder }[]
 }
 
-type Area = Pick<TextareaRenderable, "plainText" | "cursorOffset" | "insertText" | "getTextRange" | "extmarks" | "setText" | "setSelection" | "getSelection" | "hasSelection">
+type Area = Pick<TextareaRenderable, "plainText" | "cursorOffset" | "insertText" | "getTextRange" | "extmarks" | "setText" | "setSelection" | "getSelection" | "hasSelection" | "deleteSelection">
 
 /** Beyond any text a prompt box holds: `getTextRange` clamps it to the end. */
 const END = 0x3fffffff
 
 export class Placeholders {
   private items = new Map<number, Placeholder>()
+  private repairing = false
   private typeId: number
 
   constructor(
@@ -79,12 +80,43 @@ export class Placeholders {
     return this.items.size > 0 && this.live().length > 0
   }
 
-  /** Put a placeholder at the cursor, with a space after it. */
+  /** Put a placeholder at the cursor — in place of what is selected — with a space after it. */
   insert(item: Placeholder) {
-    const start = this.area.cursorOffset
     this.area.insertText(`${item.label} `)
-    // A label is ASCII: its width is its length.
-    this.mark(start, start + item.label.length, item)
+    // Where it went is read off the cursor after the insert, not before it: with a selection
+    // the text goes in at the selection's start, wherever the cursor was. A label is ASCII, so
+    // its width is its length.
+    const end = this.area.cursorOffset - 1
+    this.mark(end - item.label.length, end, item)
+  }
+
+  /** A placeholder is one thing: when part of its label has been deleted (a selection that cut
+   *  into it, a kill to the end of the line), the rest of the label goes too — never a stump of
+   *  it left as text, with what it stood for silently gone. Returns how many were removed. */
+  repair(): number {
+    if (this.repairing || !this.items.size) return 0
+    this.repairing = true
+    let removed = 0
+    try {
+      // From the end, so removing one does not move those before it.
+      const broken = this.area.extmarks
+        .getAllForTypeId(this.typeId)
+        .filter((m) => this.items.has(m.id) && this.area.getTextRange(m.start, m.end) !== this.items.get(m.id)!.label)
+        .sort((a, b) => b.start - a.start)
+      for (const m of broken) {
+        const cursor = this.area.cursorOffset
+        this.area.extmarks.delete(m.id)
+        if (m.end > m.start) {
+          this.area.setSelection(m.start, m.end)
+          this.area.deleteSelection()
+          this.area.cursorOffset = cursor <= m.start ? cursor : Math.max(m.start, cursor - (m.end - m.start))
+        }
+        removed++
+      }
+    } finally {
+      this.repairing = false
+    }
+    return removed
   }
 
   private mark(start: number, end: number, item: Placeholder) {
@@ -122,12 +154,14 @@ export class Placeholders {
     return this.expandedRange(Math.min(sel.start, sel.end), Math.max(sel.start, sel.end))
   }
 
-  /** A placeholder that ends at the cursor (or one space before it) and stands for exactly
-   *  `content` is replaced by the content itself — pasting the same thing again right after its
-   *  placeholder shows it whole. */
+  /** The one gesture that opens a placeholder: pasting the same text again with the cursor where
+   *  the first paste left it — directly after the placeholder, or after the one space that was
+   *  inserted with it — and nothing selected. The placeholder (and that space) becomes the text
+   *  itself. Anywhere else, and after anything typed in between, the same paste is a second copy. */
   expandAtCursor(content: string): boolean {
+    if (this.area.hasSelection()) return false
     const cursor = this.area.cursorOffset
-    const m = this.live().find((x) => x.item.kind === "text" && x.item.content === content && (x.end === cursor || x.end + 1 === cursor))
+    const m = this.live().find((x) => x.item.kind === "text" && x.item.content === content && (x.end === cursor || (x.end + 1 === cursor && this.area.getTextRange(x.end, cursor) === " ")))
     if (!m) return false
     for (const e of this.area.extmarks.getAllForTypeId(this.typeId)) if (e.start === m.start && e.end === m.end) this.area.extmarks.delete(e.id)
     this.area.setSelection(m.start, cursor)

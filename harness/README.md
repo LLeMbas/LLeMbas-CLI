@@ -105,6 +105,8 @@ Written ahead of the implementations; the CLI carries it in the same round (`dis
   situations. `unavailable` is now only *no page of this chat is open* and says where to open
   it; `texts.no_answer` — a page is open but did not answer; `texts.timeout` — the run passed
   its `{{seconds}}`. Conformance area **`python`** (the server's).
+- **The approval card keeps its own title** (`acp.md` `session/request_permission`): the whole
+  command, or the tool's name — not the short title — and `_meta.lembas.tool` names the tool.
 - Conformance area **`display`** (titles, durations, hunk counts, facts, the end line, drawn
   blocks); `progress` gains the `budget` stop.
 

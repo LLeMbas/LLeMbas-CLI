@@ -2,7 +2,7 @@
 // are shown as a placeholder and sent in full.
 import { afterEach, expect, test } from "bun:test"
 import { TextareaRenderable } from "@opentui/core"
-import { readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { paths } from "../../src/config/paths.ts"
 import { nextImageNumber, pasteLabel } from "../../src/tui/paste.ts"
@@ -238,22 +238,29 @@ async function withEnv(vars: Record<string, string | undefined>, fn: () => Promi
 }
 const NOT_REMOTE = { SSH_CONNECTION: undefined, SSH_TTY: undefined, SSH_CLIENT: undefined }
 
-test("an image pasted as a data URL is saved and shown as [Image 1]; a broken one is said, not pasted", async () => {
+test("an image pasted as a data URL is saved and shown as [Image 1]; a data URL that is no image is pasted as the text it is", async () => {
   t = await tui([{ chunks: [delta({ content: "Seen." }), usage(100, 5)] }])
   const a = box(t.setup.renderer.root)
   await t.input.typeText("what is this ")
   await t.input.pasteBracketedText(`data:image/png;base64,${PNG_B64}`)
   await t.settle()
   expect(a.plainText).toBe("what is this [Image 1] ")
-  await t.input.pasteBracketedText(`data:image/png;base64,${Buffer.from("this is certainly not a picture").toString("base64")}`)
+  const notOne = `data:image/png;base64,${Buffer.from("this is certainly not a picture").toString("base64")}`
+  await t.input.pasteBracketedText(notOne)
   await t.settle()
-  expect(a.plainText).toBe("what is this [Image 1] ")
-  expect(t.frame()).toContain("not a PNG, JPEG, WebP or GIF image")
+  expect(a.plainText).toBe(`what is this [Image 1] ${notOne}`)
+  // A long one gets the placeholder any long text gets, and is sent as its text.
+  const long = `data:image/png;base64,${Buffer.from("not a picture either, ".repeat(12)).toString("base64")}`
+  a.insertText(" ")
+  await t.input.pasteBracketedText(long)
+  await t.settle()
+  expect(a.plainText).toBe(`what is this [Image 1] ${notOne} [Pasted text ${long.length} chars] `)
   t.input.pressEnter()
   expect(await t.until("Seen.")).toBe(true)
   // Sent as the @path of the copy kept under the state directory.
   const m = /@(\S+clipboard\/paste-[\w-]+\.png)/.exec(JSON.parse(sent()) as string)
   expect(m).not.toBeNull()
+  expect(JSON.parse(sent()) as string).toContain(long)
   expect(readFileSync(m![1]!).toString("base64")).toBe(PNG_B64)
   expect(m![1]!.startsWith(join(paths.state, "clipboard"))).toBe(true)
 })
@@ -282,7 +289,7 @@ test("ctrl+v with no image: said in a word, the box stays usable; over SSH one l
 
 test("over SSH in kitty: ctrl+v asks the terminal for its clipboard, and the image arrives as [Image 1]", async () => {
   await withEnv({ SSH_CONNECTION: "192.0.2.1 50000 192.0.2.2 22", DISPLAY: undefined, WAYLAND_DISPLAY: undefined, TERM: "xterm-kitty", TMUX: undefined, STY: undefined, ZELLIJ: undefined }, async () => {
-    t = await tui([])
+    t = await tui([], undefined, "kitty_clipboard: true\n")
     const a = box(t.setup.renderer.root)
     const r = t.setup.renderer as any
     const b64 = (s: string) => Buffer.from(s).toString("base64")
@@ -328,4 +335,172 @@ test("what is dictated is added after a placeholder, which still stands for its 
   } finally {
     void stt.stop(true)
   }
+})
+
+// ---- found in review ----
+
+test("a paste over a selection: the placeholder goes where the text went, and still stands for it — text and image", async () => {
+  t = await tui([{ chunks: [delta({ content: "ok" }), usage(100, 5)] }, { chunks: [delta({ content: "ok2" }), usage(100, 5)] }])
+  const a = box(t.setup.renderer.root)
+  // Shift+Right from the start: the cursor ends up after the selection, the text goes in before it.
+  await t.input.typeText("hello world")
+  a.cursorOffset = 0
+  for (let i = 0; i < 5; i++) t.input.pressArrow("right", { shift: true })
+  await t.settle()
+  expect(a.hasSelection()).toBe(true)
+  await t.input.pasteBracketedText(LONG)
+  await t.settle()
+  expect(a.plainText).toContain("[Pasted text 4 lines] ")
+  t.input.pressEnter()
+  expect(await t.until("ok")).toBe(true)
+  expect(sent()).toContain("first line\\nsecond line\\nthird line\\nfourth line")
+  expect(sent()).not.toContain("[Pasted text")
+  // A mouse drag over the box, then an image pasted in its place.
+  const png = join(t.cwd, "pic.png")
+  writeFileSync(png, Buffer.from(PNG_B64, "base64"))
+  await t.input.typeText("hello world")
+  await t.settle()
+  const lines = t.frame().split("\n")
+  const y = lines.findIndex((l) => l.includes("❯ hello world"))
+  const x = lines[y]!.indexOf("hello world")
+  await t.setup.mockMouse.drag(x, y, x + 5, y)
+  await t.settle()
+  expect(a.hasSelection()).toBe(true)
+  await t.input.pasteBracketedText(png)
+  await t.settle()
+  expect(a.plainText).toContain("[Image 1] ")
+  t.input.pressEnter()
+  expect(await t.until("ok2")).toBe(true)
+  expect(sent(1)).toContain(`@${png}`)
+  expect(sent(1)).not.toContain("[Image 1]")
+})
+
+test("the same paste twice is two copies unless it is the opening gesture: the cursor where the first paste left it", async () => {
+  t = await tui([{ chunks: [delta({ content: "ok" }), usage(100, 5)] }])
+  const a = box(t.setup.renderer.root)
+  await t.input.pasteBracketedText(LONG)
+  await t.settle()
+  // Something typed in between — even in place of the space — and it is a second copy; the
+  // typed character stays.
+  t.input.pressBackspace()
+  await t.input.typeText("Q")
+  await t.input.pasteBracketedText(LONG)
+  await t.settle()
+  expect(a.plainText).toBe("[Pasted text 4 lines]Q[Pasted text 4 lines] ")
+  // Elsewhere in the box: a copy, not the gesture.
+  a.cursorOffset = 0
+  await t.input.pasteBracketedText(LONG)
+  await t.settle()
+  expect(a.plainText).toBe("[Pasted text 4 lines] [Pasted text 4 lines]Q[Pasted text 4 lines] ")
+  t.input.pressEnter()
+  expect(await t.until("ok")).toBe(true)
+  expect(sent()).toStartWith(JSON.stringify(`${LONG} ${LONG}Q${LONG}`).slice(0, -1))
+})
+
+test("a placeholder is one thing: cutting into it removes all of it, never a stump with its text silently gone", async () => {
+  t = await tui([{ chunks: [delta({ content: "ok" }), usage(100, 5)] }])
+  const a = box(t.setup.renderer.root)
+  await t.input.typeText("pre ")
+  await t.input.pasteBracketedText(LONG)
+  await t.settle()
+  // A selection from inside "pre" into the middle of the label, deleted.
+  a.setSelection(2, 10)
+  await t.settle()
+  t.input.pressBackspace()
+  await t.settle()
+  expect(a.plainText).toBe("pr ")
+  // Undo brings the whole placeholder back, and it still stands for its text.
+  a.undo()
+  a.undo()
+  await t.settle()
+  if (!a.plainText.includes("[Pasted text 4 lines]")) a.undo()
+  await t.settle()
+  expect(a.plainText).toContain("[Pasted text 4 lines]")
+  // Kill to the end of the line from inside the text before it takes the placeholder whole.
+  a.setText("")
+  await t.input.typeText("one two ")
+  await t.input.pasteBracketedText(LONG)
+  await t.settle()
+  a.cursorOffset = 4
+  t.input.pressKey("k", { ctrl: true })
+  await t.settle()
+  expect(a.plainText).toBe("one ")
+  await t.input.typeText("three")
+  t.input.pressEnter()
+  expect(await t.until("ok")).toBe(true)
+  expect(sent()).toStartWith('"one three\\n')
+})
+
+test("a paste of white space is white space, not a clipboard read", async () => {
+  t = await tui([])
+  const a = box(t.setup.renderer.root)
+  await t.input.typeText("x")
+  await t.input.pasteBracketedText("\n")
+  await t.settle(300)
+  expect(a.plainText).toBe("x\n")
+  expect(t.frame()).not.toMatch(/clipboard|no image/)
+})
+
+test("a session whose first prompt is a paste is titled by its words, and the prompt event carries them; only this transcript shows the label", async () => {
+  t = await tui([{ chunks: [delta({ content: "ok" }), usage(100, 5)] }], undefined, "titles: prompt\n", { store: true })
+  const prompts: { text: string }[] = []
+  t.app.bus.on((e) => void (e.type === "prompt" && prompts.push(e)))
+  const pasted = `Please review this function carefully and say what is wrong with it, in order of importance\nfunction a() {}\nfunction b() {}\nfunction c() {}`
+  await t.input.pasteBracketedText(pasted)
+  await t.settle()
+  t.input.pressEnter()
+  expect(await t.until("ok")).toBe(true)
+  await t.settle(200)
+  expect(t.frame()).toContain("┃ [Pasted text 4 lines]")
+  expect(prompts[0]!.text).toBe(pasted)
+  const title = t.app.store!.session(t.app.engine.sessionId!)!.title
+  expect(title).toStartWith("Please review this function carefully")
+  expect(title).not.toContain("[Pasted")
+  expect(title).not.toContain("function a")
+  expect(title.length).toBeLessThanOrEqual(80)
+})
+
+test("over SSH in kitty: off unless turned on; a reply that stalls inside a packet types nothing into the box and saves nothing", async () => {
+  const SSH = { SSH_CONNECTION: "192.0.2.1 50000 192.0.2.2 22", DISPLAY: undefined, WAYLAND_DISPLAY: undefined, TERM: "xterm-kitty", TMUX: undefined, STY: undefined, ZELLIJ: undefined }
+  const b64 = (s: string) => Buffer.from(s).toString("base64")
+  await withEnv(SSH, async () => {
+    // Off by default: the terminal is never asked, and the line says what works.
+    t = await tui([], { width: 220, height: 30 })
+    let asked = 0
+    ;(t.setup.renderer as any).writeOut = (seq: string) => void (seq.startsWith("\x1b]5522;") && asked++)
+    t.input.pressKey("v", { ctrl: true })
+    expect(await t.until("no image reached this terminal over SSH")).toBe(true)
+    expect(asked).toBe(0)
+    t.stop()
+
+    t = await tui([], { width: 220, height: 30 }, "kitty_clipboard: true\n")
+    const a = box(t.setup.renderer.root)
+    const r = t.setup.renderer as any
+    const before = existsSync(join(paths.state, "clipboard")) ? readdirSync(join(paths.state, "clipboard")).length : 0
+    r.writeOut = (seq: string) => {
+      if (!seq.startsWith("\x1b]5522;")) return
+      const id = /id=([^:;]+)/.exec(seq)![1]
+      const want = Buffer.from(seq.slice(seq.lastIndexOf(";") + 1).replace("\x1b\\", ""), "base64").toString()
+      const emit = (s: string) => r.stdin.emit("data", Buffer.from(s))
+      const reply = (meta: string, payload = "") => `\x1b]5522;type=read:status=${meta}:id=${id}${payload ? `;${payload}` : ""}\x1b\\`
+      setTimeout(async () => {
+        emit(reply("OK"))
+        if (want === ".") return void (emit(reply(`DATA:mime=${b64(".")}`, b64("text/plain image/png"))), emit(reply("DONE")))
+        // The packet stops arriving half-way for longer than the input parser waits.
+        const whole = reply(`DATA:mime=${b64("image/png")}`, PNG_B64)
+        emit(whole.slice(0, 60))
+        await Bun.sleep(80)
+        emit(whole.slice(60))
+        emit(reply("DONE"))
+      }, 5)
+    }
+    await t.input.typeText("see ")
+    t.input.pressKey("v", { ctrl: true })
+    expect(await t.until("did not arrive whole")).toBe(true)
+    expect(a.plainText).toBe("see ")
+    expect(existsSync(join(paths.state, "clipboard")) ? readdirSync(join(paths.state, "clipboard")).length : 0).toBe(before)
+    // The box takes input again once the read is over.
+    await t.input.typeText("now")
+    expect(a.plainText).toBe("see now")
+  })
 })

@@ -5,7 +5,7 @@ import { expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { cleanPastedImages, clipboardCommands, clipboardImage, imageFromText, MAX_PASTE_BYTES, savePastedImage, sniffImage } from "../src/project/image.ts"
+import { cleanPastedImages, clipboardCommands, clipboardImage, imageFromText, imageWhole, MAX_PASTE_BYTES, savePastedImage, sniffImage } from "../src/project/image.ts"
 import { kittyClipboardLikely, kittyReadImage, parse5522, type OscTerminal } from "../src/tui/kitty-clipboard.ts"
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64")
@@ -36,7 +36,7 @@ test("pasted text that is an image: a data URL, base64 with line breaks, bare ba
   expect(imageFromText(WEBP.toString("base64"))).toMatchObject({ mime: "image/webp" })
 })
 
-test("pasted text that is not an image stays text; a data URL that is not one is refused in words", () => {
+test("pasted text that is not an image stays text — a data URL of something else too; only one too large is refused", () => {
   expect(imageFromText("hello there, this is a perfectly ordinary sentence")).toBeUndefined()
   // Starts as a PNG would, but is prose.
   expect(imageFromText("iVBORw0KGgo is how a PNG starts in base64, did you know?")).toBeUndefined()
@@ -44,7 +44,7 @@ test("pasted text that is not an image stays text; a data URL that is not one is
   expect(imageFromText(Buffer.from("just some bytes, nothing more than that").toString("base64"))).toBeUndefined()
   expect(imageFromText("data:text/plain;base64,aGVsbG8gd29ybGQsIGhlbGxvIHdvcmxk")).toBeUndefined()
   expect(imageFromText(`data:image/svg+xml;base64,${Buffer.from("<svg/>".repeat(8)).toString("base64")}`)).toBeUndefined()
-  expect(imageFromText(`data:image/png;base64,${Buffer.from("not an image at all, only text").toString("base64")}`)).toEqual({ error: "the pasted data URL is not a PNG, JPEG, WebP or GIF image" })
+  expect(imageFromText(`data:image/png;base64,${Buffer.from("not an image at all, only text").toString("base64")}`)).toBeUndefined()
   const huge = `data:image/png;base64,${"A".repeat(Math.ceil((MAX_PASTE_BYTES * 4) / 3) + 8)}`
   expect(imageFromText(huge)).toMatchObject({ error: expect.stringContaining("over 20 MB") })
 })
@@ -194,6 +194,46 @@ test("kitty's clipboard protocol: a terminal that says nothing does not speak it
   const handlers = new Set<(s: string) => void>()
   const other: OscTerminal = { subscribeOsc: (h) => (handlers.add(h), () => void handlers.delete(h)), write: () => queueMicrotask(() => handlers.forEach((h) => h("\x1b]5522;type=read:status=DONE:id=someone-else\x1b\\"))) }
   expect(await kittyReadImage(other, { types: TYPES, listTimeoutMs: 80 })).toEqual({ status: "unsupported" })
+})
+
+test("an image is whole by its own structure: a piece missing anywhere fails it", () => {
+  expect(imageWhole(PNG, "image/png")).toBe(true)
+  expect(imageWhole(PNG.subarray(0, PNG.length - 5), "image/png")).toBe(false)
+  // A piece lost from the middle: the chunks no longer run to IEND.
+  expect(imageWhole(Buffer.concat([PNG.subarray(0, 40), PNG.subarray(44)]), "image/png")).toBe(false)
+  expect(imageWhole(Buffer.concat([PNG, Buffer.from("x")]), "image/png")).toBe(false)
+  const jpeg = Buffer.concat([JPEG, Buffer.from([0xff, 0xd9])])
+  expect(imageWhole(jpeg, "image/jpeg")).toBe(true)
+  expect(imageWhole(JPEG, "image/jpeg")).toBe(false)
+  expect(imageWhole(Buffer.concat([GIF, Buffer.from([0x3b])]), "image/gif")).toBe(true)
+  expect(imageWhole(GIF, "image/gif")).toBe(false)
+  const webp = Buffer.concat([Buffer.from("RIFF"), Buffer.from([16, 0, 0, 0]), Buffer.from("WEBPVP8 "), Buffer.alloc(8)])
+  expect(imageWhole(webp, "image/webp")).toBe(true)
+  expect(imageWhole(webp.subarray(0, 20), "image/webp")).toBe(false)
+  expect(imageWhole(PNG, "text/plain")).toBe(false)
+})
+
+test("kitty's clipboard protocol: what arrives is believed by its bytes; input during the read means a lost packet", async () => {
+  const whole = (bytes: Uint8Array) => {
+    const mime = sniffImage(bytes)
+    return mime && imageWhole(bytes, mime) ? mime : undefined
+  }
+  // Asked for as PNG, a JPEG in fact: saved as what it is.
+  const jpeg = Buffer.concat([JPEG, Buffer.from([0xff, 0xd9])])
+  expect(await kittyReadImage(kitty({ "image/png": jpeg }).term, { types: TYPES, whole })).toMatchObject({ status: "read", mime: "image/jpeg" })
+  // Not an image at all, and an image missing its end: refused, never handed on.
+  expect(await kittyReadImage(kitty({ "image/png": Buffer.from("#!/bin/sh\necho not a picture\n") }).term, { types: TYPES, whole })).toEqual({ status: "garbled" })
+  expect(await kittyReadImage(kitty({ "image/png": PNG.subarray(0, PNG.length - 6) }).term, { types: TYPES, whole })).toEqual({ status: "garbled" })
+  // The box's input is held for the whole read and let go after it; keys that arrived meanwhile
+  // are a reply that came apart, so even a read that looks complete is not believed.
+  let holds = 0
+  let released = 0
+  const k = kitty({ "image/png": PNG })
+  const quiet = { ...k.term, holdInput: () => (holds++, () => (released++, 0)) }
+  expect(await kittyReadImage(quiet, { types: TYPES, whole })).toMatchObject({ status: "read", mime: "image/png" })
+  expect([holds, released]).toEqual([1, 1])
+  const leaky = { ...kitty({ "image/png": PNG }).term, holdInput: () => () => 37 }
+  expect(await kittyReadImage(leaky, { types: TYPES, whole })).toEqual({ status: "garbled" })
 })
 
 test("which terminals are asked: kitty, also through ssh; never inside a multiplexer", () => {

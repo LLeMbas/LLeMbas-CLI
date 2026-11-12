@@ -43,6 +43,8 @@ export type Item =
       facts?: string[]
       /** A failed call's error, or why a call was denied: its first line. */
       note?: string
+      /** A `!` command the person ran themselves: not a call of the turn. */
+      own?: boolean
       ms?: number
       output?: string
       diff?: string
@@ -361,7 +363,8 @@ export function createView(bus: Bus) {
               s.preparing = undefined
               s.progress = undefined
               // A call still running when the turn ended never got its result: failed, not spinning.
-              for (const it of s.items) if (it.kind === "tool" && it.status === "running" && !it.jobId) it.status = "error"
+              // (Not the person's own `!command`, which is no part of the turn and runs on.)
+              for (const it of s.items) if (it.kind === "tool" && it.status === "running" && !it.jobId && !it.own) it.status = "error"
               const end = endItem(e.reason, failure)
               if (end) s.items.push(end)
             }),
@@ -463,7 +466,7 @@ export function createView(bus: Bus) {
     /** A `!` command the user ran: shown like a tool call, without touching the phase. */
     shellStart(command: string): string {
       const id = nextId()
-      set(produce((s) => void s.items.push({ kind: "tool", id, name: "bash", args: { command }, status: "running", title: `! ${command.split("\n")[0]}` })))
+      set(produce((s) => void s.items.push({ kind: "tool", id, name: "bash", args: { command }, status: "running", title: `! ${command.split("\n")[0]}`, own: true })))
       return id
     },
     shellEnd(id: string, r: { output: string; title?: string; isError?: boolean; meta?: Record<string, unknown> }, ms: number) {
@@ -507,6 +510,7 @@ export function createView(bus: Bus) {
     load(messages: Message[], ended?: { reason: string; error?: string }) {
       const items: Item[] = []
       const tools = new Map<string, Extract<Item, { kind: "tool" }>>()
+      const answered = new Set<string>()
       for (const m of messages) {
         if (m.role === "user" && m.parts[0]?.type === "text" && m.parts[0].text === CONTINUE_PROMPT)
           items.push({ kind: "user", id: nextId(), text: "↻ continue" })
@@ -539,6 +543,7 @@ export function createView(bus: Bus) {
           }
         } else {
           const t = tools.get(m.callId)
+          answered.add(m.callId)
           if (t) {
             t.status = m.isError ? "error" : "done"
             t.output = m.content
@@ -547,6 +552,9 @@ export function createView(bus: Bus) {
           }
         }
       }
+      // A stored call whose result never came (the turn was stopped, the process ended) failed:
+      // it is not drawn as done (display.md §2).
+      for (const [id, t] of tools) if (!answered.has(id)) t.status = "error"
       const end = ended ? endItem(ended.reason, ended.error) : undefined
       if (end) items.push(end)
       set({ items, usage: undefined, used: undefined })

@@ -59,6 +59,31 @@ export function sniffImage(b: Uint8Array): (typeof CLIPBOARD_TYPES)[number] | un
   return undefined
 }
 
+/** Whether these bytes are the whole of an image of this kind, by its own structure: a PNG's
+ *  chunks run exactly to its IEND, a JPEG ends with its end marker, a GIF with its trailer, a
+ *  WebP is as long as its header says. Bytes lost on the way (a transfer cut or missing a piece)
+ *  fail it. */
+export function imageWhole(b: Uint8Array, mime: string): boolean {
+  const n = b.length
+  if (mime === "image/png") {
+    let at = 8
+    let last = ""
+    while (at + 12 <= n) {
+      const len = ((b[at]! << 24) | (b[at + 1]! << 16) | (b[at + 2]! << 8) | b[at + 3]!) >>> 0
+      last = String.fromCharCode(b[at + 4]!, b[at + 5]!, b[at + 6]!, b[at + 7]!)
+      at += 12 + len
+    }
+    return at === n && last === "IEND"
+  }
+  if (mime === "image/jpeg") return n >= 4 && b[n - 2] === 0xff && b[n - 1] === 0xd9
+  if (mime === "image/gif") return n >= 14 && b[n - 1] === 0x3b
+  if (mime === "image/webp") {
+    const size = (b[4]! | (b[5]! << 8) | (b[6]! << 16) | (b[7]! << 24)) >>> 0
+    return size + 8 === n || size + 9 === n
+  }
+  return false
+}
+
 let saved = 0
 /** Save pasted image bytes under `dir` (made if missing), named by time and kind. */
 export function savePastedImage(dir: string, bytes: Uint8Array, mime: string): string {
@@ -70,8 +95,8 @@ export function savePastedImage(dir: string, bytes: Uint8Array, mime: string): s
 
 /** Pasted text that is an image: a `data:image/(png|jpeg|webp|gif);base64,…` URL, or bare base64
  *  that decodes to an image's signature — the way an image gets through a terminal that cannot
- *  hand over a clipboard image (over SSH). The bytes, a reason it is refused, or undefined when
- *  the text is not an image at all. */
+ *  hand over a clipboard image (over SSH). The bytes; a reason it is refused (too large); or
+ *  undefined when the text does not decode to an image — it is then ordinary pasted text. */
 export function imageFromText(text: string): { mime: string; bytes: Uint8Array } | { error: string } | undefined {
   let t = text.trim()
   if (t.length < 24) return undefined
@@ -85,7 +110,9 @@ export function imageFromText(text: string): { mime: string; bytes: Uint8Array }
   if (Math.floor((t.length * 3) / 4) > MAX_PASTE_BYTES) return { error: `the pasted image is over ${MAX_PASTE_BYTES / 1e6} MB — copy the file over and use @path` }
   const bytes = new Uint8Array(Buffer.from(t, "base64"))
   const mime = sniffImage(bytes)
-  if (!mime) return url ? { error: "the pasted data URL is not a PNG, JPEG, WebP or GIF image" } : undefined
+  // Not an image after all (a data URL of something else, base64 that only began like one): it
+  // is text, and is pasted as text.
+  if (!mime) return undefined
   return { mime, bytes }
 }
 

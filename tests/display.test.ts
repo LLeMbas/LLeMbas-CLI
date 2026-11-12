@@ -93,9 +93,14 @@ test("what a finished call adds after its title", () => {
   expect(resultFacts("tool", undefined, {})).toEqual([])
 })
 
-test("over the link an approval's title is the call's title; how a turn ended, as the spec's progress", () => {
+test("over the link an approval card keeps the whole command as its title and names the tool; how a turn ended, as the spec's progress", () => {
   const p = permissionParams("s1", { tool: "bash", args: { command: "rm -rf build\necho done", description: "Clean" }, request: { command: "rm -rf build\necho done", patterns: [] }, decision: { reason: "asks", always: [] } } as never)
-  expect(p.toolCall.title).toBe("rm -rf build")
+  // A card is read before it is answered: the whole command, not the call's short title.
+  expect(p.toolCall.title).toBe("rm -rf build\necho done")
+  expect(p._meta.lembas.tool).toBe("bash")
+  // No command: the tool's name, as before — and the name is in _meta.lembas either way.
+  const q = permissionParams("s1", { tool: "edit", args: { path: "a.txt", old: "a", new: "b" }, request: { patterns: ["a.txt"] }, decision: { reason: "asks", always: [] } } as never)
+  expect([q.toolCall.title, q._meta.lembas.tool]).toEqual(["edit", "edit"])
   expect(endOf("stop")).toBeUndefined()
   expect(endOf("cancelled")).toEqual({ phase: "stopped", reason: "person" })
   expect(endOf("steps")).toEqual({ phase: "stopped", reason: "steps" })

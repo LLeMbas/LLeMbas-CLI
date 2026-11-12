@@ -77,3 +77,75 @@ test("a session shown again from the store says how its last reply ended", async
   await t.settle()
   expect(t.frame()).toContain("■ Stopped: by you")
 })
+
+// ---- found in review ----
+
+test("the stored end belongs to its turn: /undo takes it away; a reply that finished is never drawn stopped", async () => {
+  t = await tui(
+    [{ chunks: [delta({ content: "Fine." }), usage(100, 5)] }, { chunks: [delta({ content: "Half" }), delta({ content: " more" }), delta({ content: " more" }), delta({ content: " more" })], gapMs: 400 }],
+    undefined,
+    "titles: prompt\n", // no second request for a title
+    { store: true },
+  )
+  await t.input.typeText("one")
+  t.input.pressEnter()
+  expect(await t.until("Fine.")).toBe(true)
+  await t.input.typeText("two")
+  t.input.pressEnter()
+  expect(await t.until("Half")).toBe(true)
+  t.input.pressEscape()
+  expect(await t.until("■ Stopped: by you")).toBe(true)
+  await t.settle()
+  expect(t.app.engine.storedEnd()).toEqual({ reason: "cancelled" })
+  await t.input.typeText("/undo")
+  t.input.pressEnter()
+  await t.settle(300)
+  // The stopped turn is gone from the conversation: so is how it ended.
+  expect(t.app.engine.storedEnd()).toBeUndefined()
+  const id = t.app.engine.sessionId!
+  t.view.load(t.app.resume(id), t.app.engine.storedEnd())
+  await t.settle()
+  expect(t.frame()).toContain("Fine.")
+  expect(t.frame()).not.toContain("Stopped")
+})
+
+test("a call whose result never came is drawn failed when the session is shown again; the person's own !command is not the turn's", async () => {
+  t = await tui([{ chunks: [delta({ content: "Slow" }), delta({ content: "ly" }), delta({ content: " said." }), usage(100, 5)], gapMs: 300 }])
+  // A stored conversation that ends in a call with no result (the process went away mid-call).
+  t.view.load([
+    { role: "user", parts: [{ type: "text", text: "run it" }] },
+    { role: "assistant", parts: [{ type: "tool_call", id: "c1", name: "bash", args: '{"command":"make all"}' }, { type: "tool_call", id: "c2", name: "read", args: '{"path":"a.txt"}' }] },
+    { role: "tool", callId: "c2", content: "1: hello", isError: false },
+  ] as never)
+  await t.settle()
+  const items = t.view.state.items.filter((i) => i.kind === "tool") as { id: string; status: string; title?: string }[]
+  expect(items.map((i) => [i.id, i.status, i.title])).toEqual([
+    ["c1", "error", "make all"],
+    ["c2", "done", "a.txt"],
+  ])
+  expect(t.frame()).toMatch(/bash   make all.*✗/)
+  // A `!` command still running when a turn ends stays running: it was never part of the turn.
+  const own = t.view.shellStart("sleep 30")
+  await t.input.typeText("go")
+  t.input.pressEnter()
+  expect(await t.until("ly said.")).toBe(true)
+  await t.settle()
+  const mine = t.view.state.items.find((i) => i.kind === "tool" && i.id === own) as { status: string }
+  expect(mine.status).toBe("running")
+})
+
+test("a refused call is titled from its arguments as a call that runs gets them, not the model's raw JSON", async () => {
+  t = await tui(
+    [{ chunks: [toolCall(0, "c1", "bash", '{"command":"git push origin main","purpose":"Publish the branch"}')] }, { chunks: [delta({ content: "Not pushed." }), usage(100, 5)] }],
+    undefined,
+    "mode: auto\npermission:\n  bash:\n    'git push *': deny\n",
+  )
+  const denied: { args?: unknown; title?: string }[] = []
+  t.app.bus.on((e) => void (e.type === "tool_denied" && denied.push(e)))
+  await t.input.typeText("push")
+  t.input.pressEnter()
+  expect(await t.until("Not pushed.")).toBe(true)
+  expect(denied[0]!.title).toBe("git push origin main")
+  // `purpose` is the harness's own argument, taken off before the tool sees the call.
+  expect(denied[0]!.args).toEqual({ command: "git push origin main" })
+})

@@ -304,7 +304,9 @@ export function permissionParams(sessionId: string, req: AskRequest, o: { patien
     sessionId,
     toolCall: {
       toolCallId: o.toolCallId ?? crypto.randomUUID(),
-      title: callTitle(req.args) ?? req.request.command ?? req.tool,
+      // The card's title is the whole command, or the tool's name: a card is read before it is
+      // answered. The call's short title (display.md §1) belongs on tool_call, not here.
+      title: req.request.command ?? req.tool,
       kind: toolKind(req.tool),
       status: "pending",
       rawInput: req.args,
@@ -317,6 +319,7 @@ export function permissionParams(sessionId: string, req: AskRequest, o: { patien
     ],
     _meta: {
       lembas: {
+        tool: req.tool,
         reason: req.decision.reason,
         purpose: req.purpose,
         always: req.decision.always ?? req.request.always,
@@ -1453,7 +1456,6 @@ export class AcpAgent {
           content: [{ type: "content", content: { type: "text", text: e.result.output.slice(0, 20_000) } }],
         })
       case "tool_denied":
-        // Refused, not run: `failed` to a plain ACP client, `denied` to one that reads _meta.lembas.
         // Refused, not run: `failed` to a plain ACP client, `denied` to one that reads _meta.lembas.
         // A refused call never started, so no tool_call announced it (the approval card, if one
         // was shown, has an id of its own): this is the call's first and only update, and an

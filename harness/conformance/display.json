@@ -340,6 +340,24 @@
       }
     },
     {
+      "about": "What would round to 60.0s is a minute.",
+      "show": "duration",
+      "state": "done",
+      "ms": 59960,
+      "expect": {
+        "duration": "1m 00s"
+      }
+    },
+    {
+      "about": "The last tenth under a minute.",
+      "show": "duration",
+      "state": "done",
+      "ms": 59949,
+      "expect": {
+        "duration": "59.9s"
+      }
+    },
+    {
       "about": "From a minute: minutes and whole seconds.",
       "show": "duration",
       "state": "done",

@@ -68,6 +68,10 @@
         "full"
       ]
     },
+    "kitty_clipboard": {
+      "description": "true: over SSH in the kitty terminal, ctrl+v asks the terminal itself for the image on its clipboard (kitty's clipboard protocol, OSC 5522; kitty asks you to allow it). Default false: on a connection that stalls the image may not arrive whole — it is then refused, never saved broken — so it is opt-in.",
+      "type": "boolean"
+    },
     "icons": {
       "description": "emoji (default), or plain: one-column symbols for a terminal font that has no emoji.",
       "type": "string",

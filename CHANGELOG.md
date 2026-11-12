@@ -24,8 +24,8 @@ Harness spec 3.7.0: one display in every client.
 - **Paste placeholders in the prompt box.** A paste of three lines or more, or of more than 150
   characters, shows as `[Pasted text 40 lines]` (or `[Pasted text 300 chars]`), and an image as
   `[Image 1]`, `[Image 2]`…; what is sent is the text itself and the image. One backspace removes
-  a placeholder and what it stands for; pasting the same text again right after its placeholder
-  opens it. The transcript shows the placeholder; prompt history, `/undo` and copying from the box
+  a placeholder and what it stands for — cutting into one removes all of it; pasting the same
+  text again right after its placeholder opens it. The transcript shows the placeholder; prompt history, `/undo` and copying from the box
   give the text in full. `paste: full` in the config (or `/settings`) shows pastes whole, as
   before.
 
@@ -36,8 +36,10 @@ Harness spec 3.7.0: one display in every client.
 - **Images over SSH.** A terminal cannot hand over the clipboard image of the machine you sit at,
   so: an image pasted as text — a `data:image/png;base64,…` URL, or the base64 itself — is
   recognised, saved and shown as `[Image N]`; with `ssh -X` the forwarded X clipboard is read; in
-  kitty the terminal itself is asked for its clipboard (its clipboard protocol, OSC 5522 — it asks
-  you once); and when nothing came through, one line names what works: the data URL, `@path` after
+  kitty, with `kitty_clipboard: true`, the terminal itself is asked for its clipboard (its
+  clipboard protocol, OSC 5522 — it asks you once). That one is off by default: on a connection
+  that stalls, part of the image can be lost on the way, and it is then refused with a line —
+  never saved broken, never typed into the box. And when nothing came through, one line names what works: the data URL, `@path` after
   copying the file over, or attaching it to the same chat in the web, Desktop or Android app.
 
 ### Changed
@@ -66,6 +68,9 @@ Harness spec 3.7.0: one display in every client.
 - **Completing an `@file` or moving through the prompt box now counts columns as the box does**:
   with a wide character (CJK, an emoji) before the cursor, the `@` list could replace the wrong
   part of the line.
+- **An approval card over the link names its tool** (`_meta.lembas.tool`); its title stays the
+  whole command, or the tool's name.
+- **A duration just under a minute** is `1m 00s`, not `60.0s`.
 - **A refused tool call reaches a plain ACP client** (an editor): it was sent as an update of a
   call the client had never been told about, which a client drops; it is now announced as a failed
   call, with its title and the reason.

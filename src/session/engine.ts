@@ -28,18 +28,6 @@ import { callTitle } from "./display.ts"
 import type { Verdict } from "../team/delegation.ts"
 import { compactAsk, isNote, NO_CHANGING, noteFor, offeredFor, PREFIX_META, summaryOf, today, toldAt, unavailable, type Changing, type Kept, type Now, type Requirement, type Told } from "./prefix.ts"
 
-/** A refused call's arguments and title, for those who draw it: the arguments as the model wrote
- *  them, when they are an object at all. */
-function deniedTitle(raw: string): { args?: unknown; title?: string } {
-  try {
-    const args: unknown = raw.trim() ? JSON.parse(raw) : {}
-    const title = callTitle(args)
-    return { args, ...(title ? { title } : {}) }
-  } catch {
-    return {}
-  }
-}
-
 export interface EngineOptions {
   bus: Bus
   asker: Asker
@@ -226,8 +214,17 @@ export class Engine {
     o.bus.on((e) => {
       if (e.type === "error") failure = e.message
       if (e.type !== "done") return
-      if (this.o.store && this.sessionId) this.o.store.setMeta(this.sessionId, END_META, e.reason === "stop" ? null : { reason: e.reason, ...(e.reason === "error" && failure ? { error: failure } : {}) })
+      const said = failure
       failure = undefined
+      const id = this.sessionId
+      if (!this.o.store || !id) return
+      if (e.reason === "stop") return this.o.store.setMeta(id, END_META, null)
+      // Written once the turn's last message is in: `at` ties the end to the conversation as it
+      // stood, so an /undo, a rewind or a compaction that takes the turn away takes its end too
+      // (and a /redo that brings the turn back brings it back).
+      queueMicrotask(() => {
+        if (this.sessionId === id) this.o.store?.setMeta(id, END_META, { reason: e.reason, at: this.messages.length, ...(e.reason === "error" && said ? { error: said } : {}) })
+      })
     })
     this.mode = o.mode
     this._effort = o.effort
@@ -377,11 +374,33 @@ export class Engine {
     return new ResultContext(this.o.store && sessionId ? this.o.store.results(sessionId) : memoryResults(), () => presentIds(this.messages))
   }
 
+  /** A refused call's arguments and title, for those who draw it: the arguments as a call that
+   *  runs gets them — the tool found under its former names, `purpose` taken off, parsed by the
+   *  tool's schema (its defaults and conversions) — and as the model wrote them only when they do
+   *  not parse. */
+  private deniedTitle(call: ToolCallPart, toolMap: Map<string, Tool>): { args?: unknown; title?: string } {
+    let args: unknown
+    try {
+      const written: unknown = call.args.trim() ? JSON.parse(call.args) : {}
+      const resolved = resolveCall(call.name, written)
+      const tool = toolMap.get(resolved.name) ?? toolMap.get(call.name)
+      const own = tool ? splitPurpose(tool, resolved.raw).args : resolved.raw
+      const parsed = tool?.schema.safeParse(own)
+      args = parsed?.success ? parsed.data : own
+    } catch {
+      return {}
+    }
+    const title = callTitle(args)
+    return { args, ...(title ? { title } : {}) }
+  }
+
   /** How this session's last turn ended, when it did not finish — from the store. */
   storedEnd(): { reason: string; error?: string } | undefined {
     if (!this.o.store || !this.sessionId) return undefined
-    const e = this.o.store.meta<{ reason?: unknown; error?: unknown } | null>(this.sessionId, END_META)
-    return e && typeof e.reason === "string" ? { reason: e.reason, ...(typeof e.error === "string" ? { error: e.error } : {}) } : undefined
+    const e = this.o.store.meta<{ reason?: unknown; error?: unknown; at?: unknown } | null>(this.sessionId, END_META)
+    // Only while the conversation still ends where that turn ended.
+    if (!e || typeof e.reason !== "string" || e.at !== this.messages.length) return undefined
+    return { reason: e.reason, ...(typeof e.error === "string" ? { error: e.error } : {}) }
   }
 
   /** The plan the store holds for this session, if any. */
@@ -874,7 +893,7 @@ export class Engine {
         const decided = await this.decide(call, toolMap, cut)
         if ("result" in decided) {
           results.set(call.id, decided.result)
-          if (decided.denied) bus.emit({ type: "tool_denied", id: call.id, name: call.name, reason: decided.result.output, ...deniedTitle(call.args) })
+          if (decided.denied) bus.emit({ type: "tool_denied", id: call.id, name: call.name, reason: decided.result.output, ...this.deniedTitle(call, toolMap) })
         } else {
           runnable.push({ call, ...decided })
           argsOf.set(call.id, decided.args)

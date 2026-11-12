@@ -324,11 +324,14 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
    *  `attachFrom`: where @references are read from, when not all of `text` is the user's — an MCP
    *  server's prompt or a skill must not attach ~/.ssh/… by naming it. `given`: a prompt from the web
    *  UI, its attachments read already and its turn id its own. */
-  const send = (text: string, shown = text, attachFrom = text, given?: Pick<SharedPrompt, "extra" | "attachments" | "turnId">): Promise<string> => {
+  const send = (text: string, shown = text, attachFrom = text, given?: Pick<SharedPrompt, "extra" | "attachments" | "turnId">, drawn = shown): Promise<string> => {
     voice.stopSpeaking()
     const atts = given ? [] : attachmentsFor(attachFrom, app.engine.o.toolCtx, app.engine.model.spec.vision === true)
     for (const a of atts) files.used(a.path)
-    view.user(shown)
+    // `drawn`: what this transcript shows — the box as it looked, a paste placeholder in place of
+    // its text. Only here: the session's title, the `prompt` event and everything a server
+    // mirrors get `shown`, which holds the words themselves.
+    view.user(drawn)
     if (atts.length) view.info(`attached ${atts.map((a) => (a.image ? `${a.path} (image)` : a.text.includes("not attached") ? `${a.path} (not attached: ${/not attached: ([^)]*)/.exec(a.text)?.[1]})` : a.path)).join(", ")}`)
     if (given?.attachments.length) view.info(`attached ${given.attachments.map((a) => a.name).join(", ")}`)
     scroll?.scrollTo(scroll.scrollHeight)
@@ -479,8 +482,9 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     // While a task runs, a message joins it: at the next step, or after it (queue).
     if (app.turns.steer(t)) return
     if (busy()) return (view.info("still working — esc stops the current reply", "warn"), false)
-    // `shown`: the box as it looked, paste placeholders in place of what they stand for.
-    void send(t, shown?.trim() || t)
+    // `shown`: the box as it looked, paste placeholders in place of what they stand for — for
+    // this transcript alone.
+    void send(t, t, t, undefined, shown?.trim() || t)
   }
 
   /** The messages waiting to go in, for ↑ in the box. */

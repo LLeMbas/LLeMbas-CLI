@@ -35,6 +35,11 @@ directory; a `bash` by its command, not its description; `phone_action` by its `
 tool's own name (or the client's label for it — `Bash`, `Search files`; a client's own table) is
 drawn beside the title and is not part of it.
 
+The short title is for a call **as it is listed**. The approval card (§5) is not titled by it: a
+card shows what is asked in full — the whole command, the change — and names the tool
+(`acp.md` `session/request_permission`: `toolCall.title` the whole command or the tool's name,
+`_meta.lembas.tool` the tool).
+
 A tool the spec marks `block: plan` or `block: hidden` is not drawn as a call at all (§3).
 
 ## 2. A call's states
@@ -55,7 +60,8 @@ ended, the device went away), is drawn `failed` once that is known — never lef
 
 **The duration** of a finished call is the time from its start to its result, as the
 implementation that ran it measured it, written the one way (`display.duration`): under a minute
-in seconds with one decimal (`0.4s`, `8.4s`); from a minute `1m 05s`; from an hour `2h 03m` —
+in seconds with one decimal (`0.4s`, `8.4s`) — a time that would round to `60.0s` is a minute,
+`1m 00s`; from a minute `1m 05s`; from an hour `2h 03m` —
 `progress.md`'s elapsed form with tenths under a minute. A duration is not a locale number (§6):
 it is written with `.` everywhere. A stored call whose duration was not kept shows none.
 
