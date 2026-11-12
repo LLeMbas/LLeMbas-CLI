@@ -301,6 +301,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     share: undefined as Share | undefined,
     continueTask: () => continueTask(),
     sendAs: (prompt: string, shown: string, opts?: { model?: string; mode?: string }) => void sendAs(prompt, shown, opts),
+    runLine: (line: string) => submit(line),
     setInput(text: string) {
       input?.setText(text)
       input?.gotoBufferEnd()

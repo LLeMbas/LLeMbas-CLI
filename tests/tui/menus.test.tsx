@@ -169,3 +169,34 @@ test("without a menu the same commands are plain text: /permissions and /status 
   expect(s).toMatch(/- trusted: no: .*\(needs attention\)/)
   expect(s).toContain("- servers: none configured")
 })
+
+test("a command chosen in a menu goes through the same guard as one typed: not while a reply runs", async () => {
+  const { delta, usage } = await import("../fake-provider.ts")
+  t = await tui([{ chunks: [delta({ content: "Slow" }), delta({ content: "ly" }), delta({ content: " going" }), delta({ content: " on" }), delta({ content: " and on." }), usage(100, 5)], gapMs: 500 }], { width: 110, height: 40 })
+  await t.input.typeText("go")
+  t.input.pressEnter()
+  expect(await t.until("Slow")).toBe(true)
+  const session = t.app.engine.sessionId
+  const messages = t.app.engine.messages.length
+  // /help → /new, while the reply streams.
+  await t.input.typeText("/help")
+  t.input.pressEnter()
+  expect(await t.until("Help — commands and keys")).toBe(true)
+  for (const ch of "/new") t.input.pressKey(ch)
+  await t.settle()
+  t.input.pressEnter()
+  expect(await t.until("wait for the reply to finish (esc stops it)")).toBe(true)
+  expect(t.app.engine.sessionId).toBe(session)
+  expect(t.app.engine.messages.length).toBeGreaterThanOrEqual(messages)
+  // /status → the model row → /model, likewise.
+  await t.input.typeText("/status")
+  t.input.pressEnter()
+  expect(await t.until("This program")).toBe(true)
+  for (let i = 0; i < 2; i++) t.input.pressArrow("down")
+  await t.settle()
+  t.input.pressEnter()
+  await t.settle(150)
+  expect(t.frame()).not.toContain("fake/other") // the model picker did not open
+  expect(t.frame().split("wait for the reply to finish").length - 1).toBe(2)
+  expect(await t.until("and on.")).toBe(true)
+}, 30_000)

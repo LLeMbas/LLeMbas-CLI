@@ -50,6 +50,9 @@ export interface CommandCtx extends Ctx {
   /** Send a prompt shown as `shown`, with a model/mode for this prompt only. */
   sendAs?(prompt: string, shown: string, opts?: { model?: string; mode?: string; attachFrom?: string }): void
   openDialog(spec: DialogSpec): void
+  /** Run a line as if it had been typed and sent — a command chosen in a menu goes through the
+   *  same checks as one typed (not mid-reply, and so on). false: refused. */
+  runLine(line: string): boolean | void
   setMode(m: Mode): void
   setEffort(e: Level): void
   setTheme(name: string): void
@@ -191,7 +194,8 @@ export const COMMANDS: Command[] = [
     name: "help",
     description: "commands and keys",
     run(c) {
-      openHelp(c, COMMANDS, HELP_KEYS, (cmd) => void cmd.run(c, ""))
+      // Through the same door as a typed line: what may not start mid-reply is refused there.
+      openHelp(c, COMMANDS, HELP_KEYS, (cmd) => void c.runLine(`/${cmd.name}`))
     },
   },
   {
@@ -203,10 +207,7 @@ export const COMMANDS: Command[] = [
     name: "status",
     description: "everything in one place: the server and login, the session, the project, the MCP servers, this terminal",
     run(c) {
-      openStatus(c, (line) => {
-        const [name = "", ...rest] = line.split(" ")
-        void findCommand(name)?.run(c, rest.join(" "))
-      })
+      openStatus(c, (line) => void c.runLine(`/${line}`))
     },
   },
   {
