@@ -30,6 +30,7 @@ import { listPrototypes } from "../prototype/store.ts"
 import { keyMatcher } from "../voice/index.ts"
 import { PLAYER_NAMES, playerFor, recorderFor } from "../voice/audio.ts"
 import { duration } from "../duration.ts"
+import { openMcpMenu, openMcpServer, runAction } from "./mcpmenu.ts"
 import type { Job, JobInfo } from "../jobs/registry.ts"
 
 export interface CommandCtx extends Ctx {
@@ -82,8 +83,6 @@ const HELP_KEYS = [
   "pgup/pgdn scroll half a screen · ctrl+↑/↓ three lines · the mouse wheel · ↑ in an empty box takes back a message waiting to go in",
 ]
 
-/** A sign-in waiting for the user to paste the redirect address (/mcp code). */
-const pendingCodes = new Map<string, (text: string) => void>()
 
 const AGENT_TEMPLATE = (name: string) => `---
 description: what ${name} is for — the model reads this when it picks a subagent
@@ -996,49 +995,17 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "mcp",
-    args: "[reconnect|on|off|auth|code|logout <server>]",
-    description: "MCP servers: status and tools; sign in; switch one on or off",
+    args: "[<server> | reconnect|on|off|auth|code|logout <server>]",
+    description: "MCP servers: a menu of them — state, tools and what each may do, sign in, switch one on or off",
     async run(c, arg) {
       const mcp = c.app.mcp
       const [sub = "", name = "", ...rest] = arg.trim().split(/\s+/)
-      if (!sub) {
-        if (!mcp.servers.size) return c.view.info("no MCP servers — add them under mcp: in ~/.config/lembas/config.yaml")
-        const mark = { connected: "●", connecting: "…", disabled: "○", failed: "✗", needs_auth: c.theme().icons.locked } as const
-        const lines = [...mcp.servers.values()].map((s) => {
-          const head = `${mark[s.status]} ${s.name}  ${s.cfg.command !== undefined ? "local" : s.cfg.url}${s.cfg.source === "project" ? " · project" : ""} — ${s.status}${s.error ? `: ${s.error}` : ""}`
-          const tools = s.status === "connected" ? s.tools.map((t) => `    ${t.name}${t.annotations?.readOnlyHint ? " (read-only)" : ""}`) : []
-          const prompts = s.status === "connected" ? s.prompts.map((pr) => `    /${s.name}:${pr.name}`) : []
-          return [head, ...tools, ...prompts].join("\n")
-        })
-        return c.view.info(`${lines.join("\n\n")}\n\nTools are named mcp__<server>__<tool> and ask before they run unless a permission rule allows them.`)
-      }
+      // No word: the menu. A server's name: that server.
+      if (!sub) return openMcpMenu(c)
+      if (mcp.servers.has(sub) && !name) return openMcpServer(c, sub)
+      if (!["reconnect", "on", "off", "auth", "code", "logout"].includes(sub)) return c.view.info(`no MCP server "${sub}" — ${[...mcp.servers.keys()].join(", ") || "none are configured"}`, "warn")
       if (!name || !mcp.servers.has(name)) return c.view.info(`usage: /mcp ${sub} <server> — servers: ${[...mcp.servers.keys()].join(", ") || "(none)"}`, "warn")
-      try {
-        if (sub === "reconnect" || sub === "on") {
-          c.view.info(`MCP ${name}: connecting…`)
-          const s = sub === "on" ? await mcp.setEnabled(name, true) : await mcp.connect(name)
-          if (s.status !== "connected") c.view.info(`MCP ${name}: ${s.error ?? s.status}`, "warn")
-        } else if (sub === "off") {
-          await mcp.setEnabled(name, false)
-          c.view.info(`MCP ${name}: off for this session`)
-        } else if (sub === "auth") {
-          const pasted = new Promise<string>((resolve) => pendingCodes.set(name, resolve))
-          const s = await mcp.auth(name, (url) => c.view.info(`Sign in to ${name} at:\n${url}\n\nThe browser is sent back to this machine (127.0.0.1). If it cannot get here, copy the address it ends on and type: /mcp code ${name} <that address>`), pasted)
-          pendingCodes.delete(name)
-          c.view.info(s.status === "connected" ? `MCP ${name}: signed in` : `MCP ${name}: ${s.error ?? s.status}`, s.status === "connected" ? undefined : "warn")
-        } else if (sub === "code") {
-          const give = pendingCodes.get(name)
-          if (!give) return c.view.info(`no sign-in to ${name} is waiting — /mcp auth ${name} starts one`, "warn")
-          give(rest.join(" "))
-        } else if (sub === "logout") {
-          mcp.logout(name)
-          c.view.info(`MCP ${name}: stored sign-in removed`)
-        } else c.view.info(`unknown: /mcp ${sub} — reconnect, on, off, auth, code or logout`, "warn")
-      } catch (e) {
-        pendingCodes.delete(name)
-        c.view.info(`MCP ${name}: ${(e as Error).message}`, "warn")
-      }
-      c.refresh()
+      await runAction(c, name, sub, { menu: false, code: rest.join(" ") })
     },
   },
   {

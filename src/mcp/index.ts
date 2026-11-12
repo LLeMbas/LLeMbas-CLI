@@ -144,6 +144,13 @@ let exitHook = false
 
 export class McpManager {
   readonly servers = new Map<string, ServerState>()
+  /** What each server's tool is called here, as `tools()` last named it. */
+  private names = new Map<string, string>()
+
+  /** The name a server's tool goes by among this program's tools — its permission key too. */
+  nameOf(server: string, tool: string): string {
+    return this.names.get(`${server}\u0000${tool}`) ?? (server === LIBRARY_SERVER ? sanitize(tool) : toolName(server, tool))
+  }
   private listeners: (() => void)[] = []
 
   /** Called whenever a server's status, tools or prompts change. */
@@ -399,6 +406,7 @@ export class McpManager {
         const library = s.name === LIBRARY_SERVER
         const name = library ? sanitize(t.name) : unique(s.name, t.name)
         if (library) used.add(name)
+        this.names.set(`${s.name}\u0000${t.name}`, name)
         const readOnly = t.annotations?.readOnlyHint === true
         out.push({
           name,

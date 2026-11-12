@@ -8,7 +8,7 @@ import { isAbsolute } from "node:path"
 import type { Asker, AttachmentInfo, Bus } from "../bus/index.ts"
 import type { Mode } from "../config/schema.ts"
 import type { Level } from "../provider/effort.ts"
-import { evaluate, shadowsDeny, type Context as PermContext, type PermissionRequest, type Rule } from "../permission/evaluate.ts"
+import { evaluate, ruleAction, shadowsDeny, stricterGlobal, type Context as PermContext, type PermissionRequest, type Rule } from "../permission/evaluate.ts"
 import { ProviderError, type Client, type ImagePart, type Message, type ResolvedModel, type ToolCallPart, type Usage } from "../provider/types.ts"
 import type { Plan } from "../plan/plan.ts"
 import { LOOP } from "../harness.ts"
@@ -392,6 +392,42 @@ export class Engine {
     }
     const title = callTitle(args)
     return { args, ...(title ? { title } : {}) }
+  }
+
+  /** Every rule in force: the configured ones, then this session's. */
+  get rules(): Rule[] {
+    return [...this.o.perm.rules, ...this.sessionRules]
+  }
+
+  /** What the rules say of a permission (and pattern) now, before the mode; undefined: none speaks. */
+  ruleFor(permission: string, pattern = "*"): Rule["action"] | undefined {
+    return ruleAction(permission, pattern, this.rules)
+  }
+
+  /** A rule the person set themselves (a menu, not an answer to a card): in force at once for
+   *  this session, and written to the project's config where the project is trusted. Refused,
+   *  with the rule that stands in the way, where the person's own global config is stricter —
+   *  that is changed there, not written over from a project. */
+  setRule(rule: Pick<Rule, "permission" | "pattern" | "action">): { saved: "project" | "session" } | { refused: Rule } {
+    const floor = stricterGlobal(rule.permission, rule.pattern, rule.action, this.o.perm.rules)
+    if (floor) return { refused: floor }
+    this.sessionRules = this.sessionRules.filter((r) => !(r.permission === rule.permission && r.pattern === rule.pattern))
+    this.sessionRules.push({ ...rule })
+    if (!this.o.persistRule) return { saved: "session" }
+    this.o.persistRule({ ...rule })
+    return { saved: "project" }
+  }
+
+  /** Take a rule of this session away again (one made by an "always" answer, or set here). */
+  dropSessionRule(permission: string, pattern: string): boolean {
+    const before = this.sessionRules.length
+    this.sessionRules = this.sessionRules.filter((r) => !(r.permission === permission && r.pattern === pattern))
+    return this.sessionRules.length < before
+  }
+
+  /** This session's own rules ("always" answers and what was set in a menu). */
+  get ownRules(): readonly Rule[] {
+    return this.sessionRules
   }
 
   /** How this session's last turn ended, when it did not finish — from the store. */

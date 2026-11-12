@@ -6,6 +6,20 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A `/mcp` menu.** The servers with their state (connected, connecting, failed and why, needs
+  sign-in, switched off), where each comes from (the LLeMbas server's library, this project, your
+  config) and what it offers. Enter opens a server: reconnect, switch it off or on (kept for a
+  trusted project), sign in or out, read its last error in full; its tools, searchable as you
+  type, each with what the permission rules say of it — asks, always allowed, denied — which
+  Enter changes (for the session, and saved to a trusted project; your own config's stricter rule
+  is never loosened from here); its prompts. `/mcp <name>` opens one server directly. Keyboard
+  only; Esc goes back. Over the link and in `lembas run`, `/mcp` and `/mcp <name>` print a plain
+  table instead.
+- **Menus have sections, state marks, a line about the highlighted row, Esc-goes-back, PgUp/PgDn
+  and Home/End, and say where the cursor is in a long list** — every picker is the one component.
+
 ### Changed
 
 - **An MCP server that connects no longer says so with a warning sign at every start.** Nothing is

@@ -113,6 +113,19 @@ export function setTrust(root: string, level: TrustLevel) {
   writeFileSync(trustFile(), JSON.stringify(t, null, 2))
 }
 
+/** A server switched off or on for this project: `mcp.<name>.enabled` in the project's
+ *  config.yaml, keeping its comments (for a server of the user's own config this is the one thing
+ *  a project may say about it). */
+export function persistProjectMcpEnabled(project: Project, name: string, on: boolean) {
+  const file = join(project.dir, "config.yaml")
+  mkdirSync(project.dir, { recursive: true })
+  assertProjectFile(file, project.root)
+  const doc = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "")
+  if (!doc.contents) doc.contents = doc.createNode({}) as never
+  doc.setIn(["mcp", name, "enabled"], on)
+  writeFileSync(file, doc.toString())
+}
+
 /** "Always allow (project)": add the rule to the project's config.yaml, keeping its comments. */
 export function persistProjectRule(project: Project, rule: Rule) {
   const file = join(project.dir, "config.yaml")

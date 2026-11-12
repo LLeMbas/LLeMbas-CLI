@@ -63,6 +63,19 @@ export function toRules(config: PermissionConfig, source?: Rule["source"]): Rule
   return rules
 }
 
+/** What the rules say of a permission and pattern, before any mode: undefined where none speaks
+ *  (the call is then asked or allowed by its class and the mode). */
+export function ruleAction(permission: string, pattern: string, rules: Rule[]): Action | undefined {
+  return lookupRule(permission, pattern, rules)?.action
+}
+
+/** The user's own global rule that is stricter than `action` for this permission and pattern —
+ *  the floor a rule made anywhere else cannot go under — or undefined. */
+export function stricterGlobal(permission: string, pattern: string, action: Action, rules: Rule[]): Rule | undefined {
+  const own = rules.findLast((r) => r.source === "global" && !r.learned && match(permission, r.permission) && match(pattern, r.pattern))
+  return own && RANK[own.action] > RANK[action] ? own : undefined
+}
+
 function lookupRule(permission: string, pattern: string, rules: Rule[]): Rule | undefined {
   const hit = rules.findLast((r) => match(permission, r.permission) && match(pattern, r.pattern))
   // A project's rule (or an "always" answer) that is looser than what the user's global config says

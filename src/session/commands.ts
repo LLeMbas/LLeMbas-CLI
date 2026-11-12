@@ -20,6 +20,7 @@ import { TEAM, Team } from "../team/team.ts"
 import { SUBAGENTS } from "../team/subagents.ts"
 import { progressLine } from "./progress.ts"
 import { fillPrompt } from "../prompt/fill.ts"
+import { mcpText } from "../mcp/text.ts"
 
 export type CommandKind = "custom" | "skill" | "builtin"
 
@@ -50,6 +51,7 @@ export const SHARED_BUILTINS: { name: string; description: string; hint?: string
   { name: "changelog", description: "update CHANGELOG.md's Unreleased section from the commits since the last tag", hint: "since" },
   { name: "init", description: "make or update the project's AGENTS.md from what the repository says", hint: "what to focus on" },
   { name: "continue", description: "carry on — after esc stopped it, or when it should keep going (ctrl+g)" },
+  { name: "mcp", description: "MCP servers: a menu of them — state, tools and what each may do, sign in, switch one on or off", hint: "server" },
   { name: "agents", description: "subagents: list them, make one, or hand one a task", hint: "name" },
   { name: "team", description: "subagents: the tree and the room; how many; stop one; their findings", hint: "size <min> <max> | stop <name> | findings <name>" },
 ]
@@ -264,6 +266,11 @@ export function expandSlash(app: App, text: string): Expanded | undefined {
       return { kind: "message", name, text: agentsText(app, arg) }
     case "team":
       return { kind: "message", name, text: teamText(app, arg) }
+    case "mcp":
+      // No menu here: the servers as a table, or one server's tools. What changes a server (sign
+      // in, switch off) is the terminal's to do.
+      if (/^(reconnect|on|off|auth|code|logout)\b/.test(arg.trim())) return { kind: "message", name, text: "/mcp here shows the servers and their tools; connecting, switching one off and signing in are done at the terminal." }
+      return { kind: "message", name, text: mcpText(app.mcp, arg.trim().split(/\s+/)[0] ?? "", (tool) => app.engine.ruleFor(tool)) }
     case "init":
       // The prompt is ours; only what was typed after the name may attach files.
       return { kind: "prompt", name, prompt: initPrompt(app, arg), shown: t, attachFrom: arg }

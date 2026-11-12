@@ -540,7 +540,8 @@ test("MCP: a server's prompt is a /server:prompt command; /mcp lists the server;
   for (const line of t.frame().split("\n")) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80)
   await t.input.typeText("/mcp")
   t.input.pressEnter()
-  expect(await t.until("● fix  local")).toBe(true)
+  expect(await t.until("MCP servers — 1 of 1 connected")).toBe(true)
+  expect(t.frame()).toContain("● fix  ")
 }, 20_000)
 
 test("MCP: a server's prompt cannot attach a file by naming it with @", async () => {

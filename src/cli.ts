@@ -3,6 +3,7 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { parseArgs } from "node:util"
 import { createApp } from "./app.ts"
+import { expandSlash } from "./session/commands.ts"
 import { attachmentsFor } from "./project/attach.ts"
 import { ConfigError, loadConfig } from "./config/load.ts"
 import { asMode, EFFORTS, MODES, type Mode } from "./config/schema.ts"
@@ -344,6 +345,14 @@ async function main() {
     // One prompt, so the MCP servers' tools must be there before it (each server has its own
     // connect timeout; a failure is a notice, not a stop).
     await app.mcpReady
+    // A command that only says something (/mcp, /agents, /team — what the TUI shows as a menu):
+    // its text, and no model is asked.
+    const said = expandSlash(app, prompt)
+    if (said?.kind === "message") {
+      console.log(said.text)
+      app.discardIfEmpty()
+      process.exit(0)
+    }
     const atts = attachmentsFor(prompt, app.engine.o.toolCtx, app.engine.model.spec.vision === true)
     // Through the turns, like every front end: a job's note wakes the session the same way.
     const reason = await app.turns.prompt(prompt, atts.flatMap((a) => (a.image ? [a.text, a.image] : [a.text])))
