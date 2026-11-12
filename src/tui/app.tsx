@@ -217,9 +217,12 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
       // Sent as words, never as a command: a transcript that starts with "/" or "!" is still speech.
       if (voiceCfg?.submit === "send" && app.turns.steer(text)) return
       if (voiceCfg?.submit === "send" && !busy()) return void send(text)
-      const now = input?.plainText ?? ""
-      input?.setText(now.trim() ? `${now.replace(/\s+$/, "")} ${text}` : text)
-      input?.gotoBufferEnd()
+      if (!input) return
+      // Added at the end, not by setting the whole text: that would turn a paste placeholder in
+      // the box into its bare label and lose what it stands for.
+      const now = input.plainText
+      input.gotoBufferEnd()
+      input.insertText(now.trim() && !/\s$/.test(now) ? ` ${text}` : text)
     },
     notice: (m, warn) => view.info(m, warn ? "warn" : undefined),
   })

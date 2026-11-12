@@ -223,8 +223,9 @@ Params: `{ sessionId }`. Stops the running turn.
 
 From spec 3.7.0 a `tool_call`'s `title` is **the call's short title** (`display.md` §1) — the
 tool's name where the call has none — and no `tool_call_update` changes it: `completed` is the
-state `done`, `failed` is `failed`, and a call that was refused is `failed` with
-`_meta.lembas.denied: true` and the reason as its content (the state `denied`). The same title is
+state `done`, `failed` is `failed`, and a call that was refused — it never started, so nothing
+announced it — is one `tool_call` with status `failed`, `_meta.lembas.denied: true` and the reason
+as its content (the state `denied`). The same title is
 `title` on the `tool_start` event of `_lembas/event` and `what` of `running_tool`; `tool_end`
 carries `ms`, the call's duration, and `tool_denied` its `reason`. A client of `_lembas/event`
 that is given no `title` (a device before 3.7.0) makes it from `args` by the same rule.

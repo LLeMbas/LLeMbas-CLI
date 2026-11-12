@@ -1455,11 +1455,16 @@ export class AcpAgent {
       case "tool_denied":
         // Refused, not run: `failed` to a plain ACP client, `denied` to one that reads _meta.lembas.
         // Refused, not run: `failed` to a plain ACP client, `denied` to one that reads _meta.lembas.
+        // A refused call never started, so no tool_call announced it (the approval card, if one
+        // was shown, has an id of its own): this is the call's first and only update, and an
+        // update of an id nobody knows would be dropped.
         return this.update(s, {
-          sessionUpdate: "tool_call_update",
+          sessionUpdate: "tool_call",
           toolCallId: e.id,
+          title: e.title ?? e.name,
+          kind: toolKind(e.name),
           status: "failed",
-          ...(e.title ? { title: e.title } : {}),
+          ...(e.args !== undefined ? { rawInput: e.args } : {}),
           content: [{ type: "content", content: { type: "text", text: e.reason } }],
           _meta: { lembas: { denied: true } },
         })

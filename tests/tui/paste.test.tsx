@@ -309,3 +309,23 @@ test("over SSH in kitty: ctrl+v asks the terminal for its clipboard, and the ima
     expect(asked.length).toBe(2)
   })
 })
+
+test("what is dictated is added after a placeholder, which still stands for its text", async () => {
+  const stt = Bun.serve({ port: 0, fetch: () => Response.json({ text: "Explain this." }) })
+  const mic = join(import.meta.dir, "..", "fixtures", "voice", "mic.ts")
+  try {
+    t = await tui([{ chunks: [delta({ content: "Explained." }), usage(100, 5)] }], { width: 100, height: 30 }, `voice:\n  stt: { base_url: "http://127.0.0.1:${stt.port}/v1" }\n  recorder_command: ["${process.execPath}", "${mic}", "1"]\n  silence_seconds: 0.4\n`)
+    const a = box(t.setup.renderer.root)
+    await t.input.pasteBracketedText(LONG)
+    await t.settle()
+    t.input.pressKey("t", { ctrl: true })
+    const end = Date.now() + 8000
+    while (Date.now() < end && !a.plainText.includes("Explain this.")) await t.settle(40)
+    expect(a.plainText).toBe("[Pasted text 4 lines] Explain this.")
+    t.input.pressEnter()
+    expect(await t.until("Explained.")).toBe(true)
+    expect(sent()).toContain("first line\\nsecond line\\nthird line\\nfourth line Explain this.")
+  } finally {
+    void stt.stop(true)
+  }
+})

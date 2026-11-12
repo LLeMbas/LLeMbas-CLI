@@ -126,7 +126,7 @@ test("an approval is asked of the client, and its answer decides", async () => {
   expect(done.status).toBe("completed")
   expect(done.content[0].content.text).toContain("approved-run")
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "again" }] })
-  const refused = updates.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === "t2")
+  const refused = updates.find((u) => u.sessionUpdate === "tool_call" && u.toolCallId === "t2")
   expect(refused.status).toBe("failed")
   expect(asked).toBe(2)
 })
@@ -330,9 +330,12 @@ test("an approval nobody answers is a denial", async () => {
   const { c, updates } = await client({ roots: [root], maxMode: "manual", approvalTimeoutMs: 50, requireTrust: true }, () => new Promise(() => {}))
   const s: any = await c.request("session/new", { cwd: root })
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "x" }] })
-  const u = updates.find((x) => x.sessionUpdate === "tool_call_update" && x.toolCallId === "t1")
+  // Refused, not run (spec 3.7.0 display.md): the call is announced once, failed and marked
+  // denied, under its one title — not as an update of a call no client was told about.
+  expect(updates.some((x) => x.sessionUpdate === "tool_call_update" && x.toolCallId === "t1")).toBe(false)
+  const u = updates.find((x) => x.sessionUpdate === "tool_call" && x.toolCallId === "t1")
   expect(u.status).toBe("failed")
-  // Refused, not run (spec 3.7.0 display.md): marked denied, under the call's one title.
+  expect(u.rawInput).toEqual({ command: "echo never", description: "x" })
   expect(u._meta.lembas.denied).toBe(true)
   expect(u.title).toBe("echo never")
   expect(fake.requests[1].messages.at(-1).content).toContain("Nobody answered")

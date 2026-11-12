@@ -66,6 +66,10 @@ Harness spec 3.7.0: one display in every client.
 - **Completing an `@file` or moving through the prompt box now counts columns as the box does**:
   with a wide character (CJK, an emoji) before the cursor, the `@` list could replace the wrong
   part of the line.
+- **A refused tool call reaches a plain ACP client** (an editor): it was sent as an update of a
+  call the client had never been told about, which a client drops; it is now announced as a failed
+  call, with its title and the reason.
+- **Dictating into a box that holds a paste placeholder** keeps the placeholder.
 - **Plainer refusals when a terminal or a folder cannot be used**: each says what to do —
   `lembas remote terminal on`, `lembas remote add <dir>`, close one of the open terminals.
 
