@@ -63,17 +63,31 @@ export function toRules(config: PermissionConfig, source?: Rule["source"]): Rule
   return rules
 }
 
+/** Whether rule `a` speaks of less than rule `b`: everything `a`'s permission and pattern take in
+ *  is taken in by `b`'s, and they are not the same rule (`read *.env` under `read *`, and `read *`
+ *  under `* *`). */
+export function narrowerThan(a: Pick<Rule, "permission" | "pattern">, b: Pick<Rule, "permission" | "pattern">): boolean {
+  if (a.permission === b.permission && a.pattern === b.pattern) return false
+  return match(a.permission, b.permission) && match(a.pattern, b.pattern)
+}
+
+/** What stands in a new rule's way, so that making it would change nothing or loosen what was
+ *  written on purpose: the person's own (global) rule, or any written deny, that takes in all the
+ *  new rule would — and is stricter. Such a rule is changed where it was written. */
+export function standsInTheWay(rule: Pick<Rule, "permission" | "pattern" | "action">, rules: Rule[]): Rule | undefined {
+  return rules.findLast((r) => !r.learned && RANK[r.action] > RANK[rule.action] && (r.source === "global" || r.action === "deny") && match(rule.permission, r.permission) && match(rule.pattern, r.pattern))
+}
+
+/** The written rules a new rule does not change, because they are stricter and speak of less
+ *  than it (or are the person's own): what "still applies" after it is made. */
+export function stillStricter(rule: Pick<Rule, "permission" | "pattern" | "action">, rules: Rule[]): Rule[] {
+  return rules.filter((r) => !r.learned && RANK[r.action] > RANK[rule.action] && match(r.permission, rule.permission) && match(r.pattern, rule.pattern) && narrowerThan(r, rule))
+}
+
 /** What the rules say of a permission and pattern, before any mode: undefined where none speaks
  *  (the call is then asked or allowed by its class and the mode). */
 export function ruleAction(permission: string, pattern: string, rules: Rule[]): Action | undefined {
   return lookupRule(permission, pattern, rules)?.action
-}
-
-/** The user's own global rule that is stricter than `action` for this permission and pattern —
- *  the floor a rule made anywhere else cannot go under — or undefined. */
-export function stricterGlobal(permission: string, pattern: string, action: Action, rules: Rule[]): Rule | undefined {
-  const own = rules.findLast((r) => r.source === "global" && !r.learned && match(permission, r.permission) && match(pattern, r.pattern))
-  return own && RANK[own.action] > RANK[action] ? own : undefined
 }
 
 function lookupRule(permission: string, pattern: string, rules: Rule[]): Rule | undefined {
@@ -89,6 +103,14 @@ function lookupRule(permission: string, pattern: string, rules: Rule[]): Rule | 
   if (hit?.learned) {
     const written = rules.findLast((r) => !r.learned && match(permission, r.permission) && match(pattern, r.pattern))
     if (written?.action === "deny") return written
+  }
+  // A rule made after the written ones — a project's, an "always" answer, one set in a menu —
+  // decides what a broader rule decided, never what a narrower one did: `read: allow` leaves
+  // `read *.env: ask` asking, `bash: allow` leaves `bash "git push *": ask`. The strictest
+  // narrower rule that matches this call keeps winning.
+  if (hit && (hit.source === "project" || hit.learned)) {
+    const narrower = rules.filter((r) => r !== hit && !r.learned && RANK[r.action] > RANK[hit.action] && match(permission, r.permission) && match(pattern, r.pattern) && narrowerThan(r, hit))
+    if (narrower.length) return narrower.reduce((a, b) => (RANK[b.action] > RANK[a.action] ? b : a))
   }
   return hit
 }

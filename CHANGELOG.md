@@ -13,8 +13,7 @@ All notable changes to LLeMbas CLI. The format follows
   config) and what it offers. Enter opens a server: reconnect, switch it off or on (kept for a
   trusted project), sign in or out, read its last error in full; its tools, searchable as you
   type, each with what the permission rules say of it — asks, always allowed, denied — which
-  Enter changes (for the session, and saved to a trusted project; your own config's stricter rule
-  is never loosened from here); its prompts. `/mcp <name>` opens one server directly. Keyboard
+  Enter changes (for the session, and saved to a trusted project); its prompts. `/mcp <name>` opens one server directly. Keyboard
   only; Esc goes back. Over the link and in `lembas run`, `/mcp` and `/mcp <name>` print a plain
   table instead.
 - **Menus have sections, state marks, a line about the highlighted row, Esc-goes-back, PgUp/PgDn
@@ -26,7 +25,14 @@ All notable changes to LLeMbas CLI. The format follows
   too.
 - **`/permissions`** (new): the permission rules in force, by where each was made — this session,
   the project, your config, built in. Enter changes one (asks / always allowed / denied), the
-  first row adds one (`bash git status* allow`), and a rule of this session can be removed.
+  first row adds one (`bash git status* allow`), and a rule of this session can be removed (its
+  saved copy with it). A rule made in a menu changes what a broader rule decided and nothing
+  else: a narrower, stricter rule keeps winning (`read: allow` leaves `read *.env` asking), your
+  own config is never loosened, choosing what is already so changes nothing, and the menu says
+  which stricter rules still apply. This session and the next start judge a call the same way.
+- **A project's rule, or an "always" answer, no longer overrides a narrower, stricter rule**
+  either: a project's `read: allow` leaves `.env` files asking, unless the project names
+  `"*.env"` itself.
 - **`/status`** (new): the server and login, the model, the session, the project and whether it
   is trusted, the MCP servers, and this terminal — how copying and pasting images work here —
   on one screen. What needs attention is marked; Enter on a row opens what changes it.

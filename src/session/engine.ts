@@ -8,7 +8,7 @@ import { isAbsolute } from "node:path"
 import type { Asker, AttachmentInfo, Bus } from "../bus/index.ts"
 import type { Mode } from "../config/schema.ts"
 import type { Level } from "../provider/effort.ts"
-import { evaluate, ruleAction, shadowsDeny, stricterGlobal, type Context as PermContext, type PermissionRequest, type Rule } from "../permission/evaluate.ts"
+import { evaluate, ruleAction, shadowsDeny, standsInTheWay, stillStricter, type Context as PermContext, type PermissionRequest, type Rule } from "../permission/evaluate.ts"
 import { ProviderError, type Client, type ImagePart, type Message, type ResolvedModel, type ToolCallPart, type Usage } from "../provider/types.ts"
 import type { Plan } from "../plan/plan.ts"
 import { LOOP } from "../harness.ts"
@@ -61,6 +61,8 @@ export interface EngineOptions {
   budget?: { wall_seconds?: number; output_bytes?: number; completion_tokens?: number }
   /** Rules added by "always allow (project)" are handed here to persist. */
   persistRule?: (rule: Rule) => void
+  /** Take a rule out of the project's config again; whether it was there. */
+  forgetRule?: (rule: Pick<Rule, "permission" | "pattern">) => boolean
   compaction?: { autoAt?: number }
   /** Starts a subagent for the task tool; absent in a subagent. */
   spawn?: ToolContext["spawn"]
@@ -175,6 +177,8 @@ export class Engine {
    *  prompt on every step while it exists. */
   plan: Plan | undefined
   private sessionRules: Rule[] = []
+  /** The session rules set in a menu (as against learned from an "always" answer). */
+  private set = new WeakSet<Rule>()
   private recentCalls: string[] = []
   /** Tools refused with no one able to approve them, and the refusal: still listed (the tool list
    *  is the session's, harness context.md §10), and every further call answers that refusal. */
@@ -404,25 +408,47 @@ export class Engine {
     return ruleAction(permission, pattern, this.rules)
   }
 
-  /** A rule the person set themselves (a menu, not an answer to a card): in force at once for
-   *  this session, and written to the project's config where the project is trusted. Refused,
-   *  with the rule that stands in the way, where the person's own global config is stricter —
-   *  that is changed there, not written over from a project. */
-  setRule(rule: Pick<Rule, "permission" | "pattern" | "action">): { saved: "project" | "session" } | { refused: Rule } {
-    const floor = stricterGlobal(rule.permission, rule.pattern, rule.action, this.o.perm.rules)
+  /** A rule the person set themselves (a menu, not an answer to a card).
+   *
+   *  - Choosing what is already in force changes nothing: nothing is added, nothing written.
+   *  - It is refused, with the rule in the way, where the person's own config — or a written deny
+   *    — is stricter and takes in all of it: that is changed where it was written.
+   *  - Otherwise it is in force at once and, in a trusted project, saved to the project's
+   *    config. It is a project's rule in both places (`source: "project"`), so this session and
+   *    the next start from the saved file judge every call the same way: it decides what a
+   *    broader rule decided, and never what a narrower, stricter one did (evaluate.ts). Those
+   *    that still apply are named in `still`.
+   *  - A save that fails leaves the rule in force for this session, and says why. */
+  setRule(rule: Pick<Rule, "permission" | "pattern" | "action">): { saved: "project" | "session"; still: Rule[]; failed?: string } | { unchanged: true } | { refused: Rule } {
+    if (ruleAction(rule.permission, rule.pattern, this.rules) === rule.action) return { unchanged: true }
+    const floor = standsInTheWay(rule, this.o.perm.rules)
     if (floor) return { refused: floor }
     this.sessionRules = this.sessionRules.filter((r) => !(r.permission === rule.permission && r.pattern === rule.pattern))
-    this.sessionRules.push({ ...rule })
-    if (!this.o.persistRule) return { saved: "session" }
-    this.o.persistRule({ ...rule })
-    return { saved: "project" }
+    const made: Rule = { ...rule, source: "project" }
+    this.sessionRules.push(made)
+    this.set.add(made)
+    const still = stillStricter(rule, this.o.perm.rules)
+    if (!this.o.persistRule) return { saved: "session", still }
+    try {
+      this.o.persistRule({ ...rule })
+    } catch (e) {
+      return { saved: "session", still, failed: (e as Error).message.split("\n")[0] }
+    }
+    return { saved: "project", still }
   }
 
   /** Take a rule of this session away again (one made by an "always" answer, or set here). */
-  dropSessionRule(permission: string, pattern: string): boolean {
+  dropSessionRule(permission: string, pattern: string): { removed: boolean; file: "removed" | "none" | "kept"; failed?: string } {
     const before = this.sessionRules.length
     this.sessionRules = this.sessionRules.filter((r) => !(r.permission === permission && r.pattern === pattern))
-    return this.sessionRules.length < before
+    const removed = this.sessionRules.length < before
+    // The copy saved to the project goes with it, where there is one and it can be reached.
+    if (!this.o.forgetRule) return { removed, file: "kept" }
+    try {
+      return { removed, file: this.o.forgetRule({ permission, pattern }) ? "removed" : "none" }
+    } catch (e) {
+      return { removed, file: "kept", failed: (e as Error).message.split("\n")[0] }
+    }
   }
 
   /** This session's own rules ("always" answers and what was set in a menu). */

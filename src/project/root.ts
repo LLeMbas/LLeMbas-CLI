@@ -126,6 +126,28 @@ export function persistProjectMcpEnabled(project: Project, name: string, on: boo
   writeFileSync(file, doc.toString())
 }
 
+/** Take a rule out of the project's config.yaml again (one a menu saved there); whether it was
+ *  there. A permission left with no pattern goes too. */
+export function forgetProjectRule(project: Project, rule: Pick<Rule, "permission" | "pattern">): boolean {
+  const file = join(project.dir, "config.yaml")
+  if (!existsSync(file)) return false
+  assertProjectFile(file, project.root)
+  const doc = parseDocument(readFileSync(file, "utf8"))
+  const current = doc.getIn(["permission", rule.permission])
+  if (current === undefined) return false
+  if (typeof current === "string") {
+    if (rule.pattern !== "*") return false
+    doc.deleteIn(["permission", rule.permission])
+  } else {
+    if (!doc.hasIn(["permission", rule.permission, rule.pattern])) return false
+    doc.deleteIn(["permission", rule.permission, rule.pattern])
+    const left = doc.getIn(["permission", rule.permission]) as { items?: unknown[] } | undefined
+    if (left && Array.isArray(left.items) && left.items.length === 0) doc.deleteIn(["permission", rule.permission])
+  }
+  writeFileSync(file, doc.toString())
+  return true
+}
+
 /** "Always allow (project)": add the rule to the project's config.yaml, keeping its comments. */
 export function persistProjectRule(project: Project, rule: Rule) {
   const file = join(project.dir, "config.yaml")

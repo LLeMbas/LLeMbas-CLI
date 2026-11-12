@@ -220,7 +220,7 @@ test("a rule the person's own config makes stricter is not loosened from the men
   expect(t.app.engine.setRule({ permission: "mcp__web__tool_0", pattern: "*", action: "allow" })).toMatchObject({ refused: { action: "deny", source: "global" } })
   expect(t.app.engine.ruleFor("mcp__web__tool_0")).toBe("deny")
   // Stricter is always possible, and for an untrusted project it stays in the session.
-  expect(t.app.engine.setRule({ permission: "mcp__web__tool_1", pattern: "*", action: "deny" })).toEqual({ saved: "session" })
+  expect(t.app.engine.setRule({ permission: "mcp__web__tool_1", pattern: "*", action: "deny" })).toEqual({ saved: "session", still: [] })
   expect(existsSync(join(t.cwd, ".agent", "config.yaml"))).toBe(false)
 })
 

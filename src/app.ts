@@ -20,7 +20,7 @@ import { subagentModel, type ModelInfo } from "./team/subagents.ts"
 import { assembleSystem, instructionFiles, knowledgeScope, modeText } from "./prompt/assemble.ts"
 import type { Changing } from "./session/prefix.ts"
 import { describeRepo, repoState } from "./git/repo.ts"
-import { findProject, persistProjectRule, trustOf, type Project } from "./project/root.ts"
+import { findProject, forgetProjectRule, persistProjectRule, trustOf, type Project } from "./project/root.ts"
 import type { Message } from "./provider/types.ts"
 import { Engine } from "./session/engine.ts"
 import { agents, NOT_FOR_SUBAGENTS } from "./project/agents.ts"
@@ -709,6 +709,7 @@ export function createApp(o: AppOptions): App {
     // The configured MCP servers, up to loop.json's wait: their tools in the first list.
     beforeFirst: () => Promise.race([mcpReady.catch(() => {}), Bun.sleep(LOOP.context.mcp_wait_ms)]),
     persistRule: trusted ? (rule) => persistProjectRule(project, rule) : undefined,
+    forgetRule: trusted ? (rule) => forgetProjectRule(project, rule) : undefined,
     // subagents: false — no task tool, and no team (team.md §2).
     spawn: loaded.config.subagents === false ? undefined : spawn,
   })

@@ -5,6 +5,7 @@
 import type { CommandCtx } from "./commands.ts"
 import type { Option } from "./components/dialog.tsx"
 import type { Mark } from "./notices.ts"
+import { applyRule } from "./menus.ts"
 import type { ServerState } from "../mcp/index.ts"
 import { persistProjectMcpEnabled } from "../project/root.ts"
 import { offers, sourceOf, SOURCE_WORDS, STATE_WORDS, whereOf } from "../mcp/text.ts"
@@ -123,9 +124,7 @@ function openToolRule(c: CommandCtx, server: string, tool: string) {
     filter: false,
     onBack: () => openMcpServer(c, server, `${TOOL}${tool}`),
     onSelect: (action) => {
-      const r = c.app.engine.setRule({ permission: called, pattern: "*", action: action as "ask" | "allow" | "deny" })
-      if ("refused" in r) c.view.info(`${tool}: your own config says ${r.refused.action} for ${r.refused.permission} — change it there (~/.config/lembas/config.yaml, permission:); a rule made here cannot loosen it`, "warn")
-      else c.flash(`${tool}: ${RULE_WORDS[action as keyof typeof RULE_WORDS]}${r.saved === "project" ? " — saved to the project" : " for this session"}`)
+      applyRule(c, { permission: called, pattern: "*", action: action as "ask" | "allow" | "deny" }, tool)
       openMcpServer(c, server, `${TOOL}${tool}`)
     },
   })

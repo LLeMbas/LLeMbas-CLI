@@ -70,10 +70,19 @@ export function parseRule(text: string): Pick<Rule, "permission" | "pattern" | "
   return { permission: words[0]!, pattern: words.slice(1, -1).join(" ") || "*", action }
 }
 
-function applyRule(c: CommandCtx, rule: Pick<Rule, "permission" | "pattern" | "action">) {
+/** Make a rule, and say truthfully what that did: nothing (it was so already); refused, and by
+ *  which rule; made — where it holds, whether it was saved, and which stricter rules it leaves
+ *  standing. One sentence in the transcript, so it can be read after the menu is gone. */
+export function applyRule(c: CommandCtx, rule: Pick<Rule, "permission" | "pattern" | "action">, name = ruleLine(rule as Rule)) {
   const r = c.app.engine.setRule(rule)
-  if ("refused" in r) return c.view.info(`${ruleLine(rule as Rule)}: your own config says ${r.refused.action} — change it there (~/.config/lembas/config.yaml, permission:); a rule made here cannot loosen it`, "warn")
-  c.flash(`${ruleLine(rule as Rule)}: ${ACTION_WORDS[rule.action]}${r.saved === "project" ? " — saved to the project" : " for this session"}`)
+  if ("unchanged" in r) return c.flash(`${name}: already ${ACTION_WORDS[rule.action]} — nothing changed`)
+  if ("refused" in r) {
+    const whose = r.refused.source === "global" ? "your own config (~/.config/lembas/config.yaml, permission:)" : r.refused.source === "project" ? "this project's .agent/config.yaml" : "the built-in rules"
+    return c.view.info(`${name}: not changed — ${whose} says ${r.refused.action} for ${ruleLine(r.refused)}, which takes this in. Change it there; a rule made here does not loosen it.`, "warn")
+  }
+  const where = r.failed ? `for this session only — it could not be saved to the project: ${r.failed}` : r.saved === "project" ? "for this session, and saved to this project's .agent/config.yaml" : "for this session"
+  const still = r.still.length ? ` These stricter rules still apply: ${r.still.slice(0, 6).map((x) => `${ruleLine(x)} (${ACTION_WORDS[x.action]})`).join(", ")}${r.still.length > 6 ? `, and ${r.still.length - 6} more` : ""}.` : ""
+  c.view.info(`${name}: ${ACTION_WORDS[rule.action]} ${where}.${still}`, r.failed ? "warn" : "success")
 }
 
 /** /permissions: the rules in force by where they were made; enter changes one, the first row adds one. */
@@ -83,7 +92,7 @@ export function openPermissions(c: CommandCtx, select?: string) {
   const where = c.app.trusted ? "this session, and saved to this project's .agent/config.yaml" : "this session only (the project is not trusted)"
   c.openDialog({
     title: `Permissions — mode ${c.app.engine.mode}`,
-    body: [`A call no rule speaks of is asked about or allowed by its kind and the mode (/mode). A change made here holds for ${where}.`],
+    body: [`A call no rule speaks of is asked about or allowed by its kind and the mode (/mode). A rule made here holds for ${where}; it decides what a broader rule decided — a narrower, stricter one, and your own config, keep winning.`],
     options: [
       { label: "Add a rule…", value: ADD, description: "<permission> [pattern] <allow|ask|deny>" },
       ...rules.map(({ rule, from }) => ({ label: ruleLine(rule), value: key(rule), mark: ACTION_MARK[rule.action], description: ACTION_WORDS[rule.action], section: RULE_FROM[from], detail: `${rule.permission} · pattern ${rule.pattern} · ${rule.action}${rule.learned ? " · from an \"always\" answer" : ""}` })),
@@ -126,8 +135,15 @@ export function openPermissions(c: CommandCtx, select?: string) {
         onBack: () => openPermissions(c, v),
         onSelect: (action) => {
           if (action === "remove") {
-            c.app.engine.dropSessionRule(hit.rule.permission, hit.rule.pattern)
-            c.flash(`${ruleLine(hit.rule)}: this session's rule is removed`)
+            const gone = c.app.engine.dropSessionRule(hit.rule.permission, hit.rule.pattern)
+            const file = gone.failed
+              ? ` — but not from the project's .agent/config.yaml: ${gone.failed}`
+              : gone.file === "removed"
+                ? ", and its copy in this project's .agent/config.yaml"
+                : gone.file === "kept"
+                  ? " (this session's only: nothing was saved for it)"
+                  : ""
+            c.view.info(`${ruleLine(hit.rule)}: this session's rule is removed${file}. What stood before it holds again.`, gone.failed ? "warn" : "info")
           } else applyRule(c, { permission: hit.rule.permission, pattern: hit.rule.pattern, action: action as Rule["action"] })
           openPermissions(c, v)
         },
