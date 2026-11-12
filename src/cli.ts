@@ -347,11 +347,16 @@ async function main() {
     await app.mcpReady
     // A command that only says something (/mcp, /agents, /team — what the TUI shows as a menu):
     // its text, and no model is asked.
-    const said = expandSlash(app, prompt)
+    const said = expandSlash(app, prompt, { plain: true })
     if (said?.kind === "message") {
-      console.log(said.text)
+      // With --json the text is an event of the stream like any other, then the end; plainly, it
+      // is the output. A command that could not do what was asked exits 1.
+      if (values.json) {
+        app.bus.emit({ type: "notice", level: said.error ? "error" : "info", message: said.text })
+        app.bus.emit({ type: "done", reason: said.error ? "error" : "stop" })
+      } else (said.error ? console.error : console.log)(said.text)
       app.discardIfEmpty()
-      process.exit(0)
+      process.exit(said.error ? 1 : 0)
     }
     const atts = attachmentsFor(prompt, app.engine.o.toolCtx, app.engine.model.spec.vision === true)
     // Through the turns, like every front end: a job's note wakes the session the same way.

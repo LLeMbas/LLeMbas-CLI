@@ -39,8 +39,23 @@ All notable changes to LLeMbas CLI. The format follows
 - **`/agents` is a menu** of the subagents; Enter puts one's name in the box to hand it a task.
 - **`lembas run "/mcp"`** (and `/status`, `/permissions`, `/agents`, `/team`) prints the command's
   text instead of sending the words to the model; the same text answers these commands over the
-  link. `permissions` and `status` are now command names of the program: a custom command or a
-  skill of either name is reached as `/skill <name>`.
+  link. Only the command alone is the command: `/status of the build?` is a question for the
+  model, and `/mcp <word>` is the command only when the word is a server's name. With `--json`
+  the text is an event of the stream; a command that could not do what was asked exits 1.
+- **`/command <name> [words]`** runs a custom command by its name, and **`/skill <name>`** now
+  works over the link too. `permissions`, `status` and `command` are command names of the
+  program: a custom command of such a name is said once at start, with `/command <name>` as the
+  way to it; a skill is reached as `/skill <name>`.
+- **What `/mcp` prints does not carry what your config resolved to**: an address is shown
+  without user, password or query, a local server by its program's name alone, an error by its
+  first line with what looks like a secret taken out — and never a local server's stderr. The
+  menu shows an error in full, on your own screen.
+- **A server's own words cannot draw on your terminal or put markup into a reply**: control
+  characters and escape sequences are taken out of every name, description, error and stderr
+  line an MCP server supplies; where `/mcp`'s text becomes a markdown reply, descriptions are
+  escaped.
+- **Two MCP tools whose names come out the same both get a distinguishing suffix**, so a server
+  that lists its tools in another order cannot move an "always allow" onto the other tool.
 
 ### Changed
 

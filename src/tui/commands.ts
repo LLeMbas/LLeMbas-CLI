@@ -53,6 +53,8 @@ export interface CommandCtx extends Ctx {
   /** Run a line as if it had been typed and sent — a command chosen in a menu goes through the
    *  same checks as one typed (not mid-reply, and so on). false: refused. */
   runLine(line: string): boolean | void
+  /** Run a custom command (a file under commands/) by its name; false when there is none. */
+  runCustom(name: string, arg: string, typed: string): boolean
   setMode(m: Mode): void
   setEffort(e: Level): void
   setTheme(name: string): void
@@ -932,6 +934,16 @@ export const COMMANDS: Command[] = [
       const s = findSkill(c.app.skills(), name)
       if (!s) return c.view.info(name ? `no skill "${name}" — /skills lists them` : "usage: /skill <name> [instruction]", "warn")
       c.sendAs?.(skillMessage(s, rest.join(" ")), `/skill ${arg.trim()}`, { attachFrom: rest.join(" ") })
+    },
+  },
+  {
+    name: "command",
+    args: "<name> [words]",
+    description: "run a custom command by its name (for one whose name a built-in command has)",
+    run(c, arg) {
+      const [name = "", ...rest] = arg.trim().split(/\s+/)
+      if (!name) return c.view.info("usage: /command <name> [words] — a custom command from .agent/commands or ~/.config/lembas/commands", "warn")
+      if (!c.runCustom(name, rest.join(" "), `/command ${arg.trim()}`)) c.view.info(`no custom command "${name}"`, "warn")
     },
   },
   {

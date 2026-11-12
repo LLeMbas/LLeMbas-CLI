@@ -65,7 +65,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   // "team 3/4 · 2 working" while the lead has members (team.md, the TUI's status).
   const teamWord = () => (rev(), teamLabel(app.team.team))
   // The status bar follows the MCP servers as they connect (and nothing is said in the transcript).
-  app.mcp.onChange(() => refresh())
+  onCleanup(app.mcp.onChange(() => refresh()))
   const busy = () => view.state.phase !== "idle"
   const branch = () => (rev(), app.project.gitRoot ? currentBranch(app.project.gitRoot) : undefined)
   // A word in the status bar that goes by itself (a copy): it says something happened without
@@ -302,6 +302,11 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     continueTask: () => continueTask(),
     sendAs: (prompt: string, shown: string, opts?: { model?: string; mode?: string }) => void sendAs(prompt, shown, opts),
     runLine: (line: string) => submit(line),
+    runCustom: (name: string, arg: string, typed: string) => {
+      const cc = custom().find((x) => x.name === name)
+      if (cc) void runCustom(cc, arg, typed)
+      return Boolean(cc)
+    },
     setInput(text: string) {
       input?.setText(text)
       input?.gotoBufferEnd()
@@ -465,7 +470,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
       if (c) {
         // Not mid-task: what changes the session under it, and what sends a prompt of its own
         // (that would start a second turn on top of the running one).
-        const midTask = ["new", "delete", "compact", "sessions", "model", "undo", "redo", "commit", "diff", "release", "changelog", "init", "checkpoint", "checkpoints", "branch", "reload", "review", "skill"]
+        const midTask = ["command", "new", "delete", "compact", "sessions", "model", "undo", "redo", "commit", "diff", "release", "changelog", "init", "checkpoint", "checkpoints", "branch", "reload", "review", "skill"]
         if ((busy() || app.turns.current) && (midTask.includes(c.name) || (c.name === "plan" && arg && arg !== "show"))) return (view.info("wait for the reply to finish (esc stops it)", "warn"), false)
         return void c.run(cmd, arg)
       }

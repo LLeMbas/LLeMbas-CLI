@@ -43,6 +43,9 @@ import { instances as lembasInstances, keyFile as lembasKeyFile } from "./lembas
 import { PERSONAL_KEYS, personalConfig, pushPersonalization } from "./lembas/personal.ts"
 import type { Plan } from "./plan/plan.ts"
 import { LIBRARY_SERVER, mcpInstructions } from "./mcp/index.ts"
+import { clean as cleanText, errorLine } from "./mcp/clean.ts"
+import { customCommands } from "./project/commands.ts"
+import { TUI_COMMAND_NAMES } from "./session/commands.ts"
 import type { McpServer } from "./config/schema.ts"
 import { embedderFor } from "./library/embed.ts"
 import { isLevel, levelsFor, readLevel, type Level } from "./provider/effort.ts"
@@ -798,8 +801,10 @@ export function createApp(o: AppOptions): App {
       seen.set(s.name, s.status)
       // A server that connected says nothing: that is what was meant to happen, and the status
       // bar counts it. One that did not gets one line that says which, why, and where to go.
-      if (s.status === "failed") bus.emit({ type: "notice", level: "warn", message: `MCP ${s.name} did not connect: ${(s.error ?? "failed").split("\n")[0]} — /mcp ${s.name} shows more and reconnects` })
-      else if (s.status === "needs_auth") bus.emit({ type: "notice", level: "warn", message: `MCP ${s.name} needs you to sign in — /mcp ${s.name}` })
+      // One line, cleaned and with nothing secret in it (it goes to every front end, the link's
+      // included), and promising only what every front end has: /mcp <name> shows the server.
+      if (s.status === "failed") bus.emit({ type: "notice", level: "warn", message: `MCP ${cleanText(s.name)} did not connect: ${errorLine(s.error) || "no reason given"} — /mcp ${cleanText(s.name)} shows more` })
+      else if (s.status === "needs_auth") bus.emit({ type: "notice", level: "warn", message: `MCP ${cleanText(s.name)} needs you to sign in — /mcp ${cleanText(s.name)}` })
     }
   })
   const mcpReady = mcp.start()
@@ -954,6 +959,10 @@ export function createApp(o: AppOptions): App {
   }
 
   if (session) bus.emit({ type: "session", id: session.id, model: model.ref, mode })
+  // A custom command named like a command of the program is hidden by it: said once at start,
+  // with the way to it.
+  for (const cc of customCommands(trusted ? project.dir : undefined))
+    if ((TUI_COMMAND_NAMES as readonly string[]).includes(cc.name)) loaded.warnings.push(`the custom command /${cc.name} (${cc.file}) has the name of a built-in command, which wins — run it as /command ${cc.name}, or rename the file`)
   for (const w of loaded.warnings) bus.emit({ type: "notice", message: w })
   return {
     bus,

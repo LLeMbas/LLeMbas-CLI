@@ -139,6 +139,41 @@ describe("end to end", () => {
     expect(out).toBe("Hi from the fake.\n")
     expect(code).toBe(0)
   })
+
+  test("the CLI: a command that only says something is printed; the same word in a sentence is a prompt; --json gets events; an unknown name exits 1", async () => {
+    const dir = setup([{ chunks: [delta({ content: "The build is fine." })] }, { chunks: [delta({ content: "No such server." })] }])
+    const run = async (...args: string[]) => {
+      const p = Bun.spawn(["bun", join(import.meta.dir, "../src/cli.ts"), "run", "--no-store", ...args], { cwd: dir, env: { ...process.env }, stdout: "pipe", stderr: "pipe" })
+      const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+      return { out, err, code }
+    }
+    // Alone, it is the command: its text, no model asked.
+    const status = await run("/status")
+    expect(status.code).toBe(0)
+    expect(status.out).toContain("This program:\n- version: ")
+    expect(fake!.requests).toHaveLength(0)
+    // In a sentence it is a question for the model.
+    const asked = await run("/status of the build?")
+    expect(asked.out).toBe("The build is fine.\n")
+    expect(fake!.requests).toHaveLength(1)
+    expect(JSON.stringify(fake!.requests[0].messages.at(-1))).toContain("/status of the build?")
+    // /mcp with a word that is no server's name: a prompt too.
+    const mcp = await run("/mcp servers are what, exactly?")
+    expect(mcp.out).toBe("No such server.\n")
+    expect(fake!.requests).toHaveLength(2)
+    // --json: every line of stdout is an event; the text is one of them, then the end.
+    const json = await run("--json", "/permissions")
+    const events = json.out.trim().split("\n").map((l) => JSON.parse(l) as { type: string; message?: string; reason?: string; level?: string })
+    expect(events.find((e) => e.type === "notice" && e.level === "info")!.message).toStartWith("Mode: ")
+    expect(events.at(-1)).toMatchObject({ type: "done", reason: "stop" })
+    expect(json.code).toBe(0)
+    // A command that could not do what was asked: on stderr, exit 1.
+    const none = await run("/agents nosuchagent")
+    expect(none.code).toBe(1)
+    expect(none.out).toBe("")
+    expect(none.err).toContain('no agent "nosuchagent"')
+    expect(fake!.requests).toHaveLength(2)
+  }, 60_000)
 })
 
 describe("nobody to approve", () => {

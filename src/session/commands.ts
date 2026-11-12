@@ -40,7 +40,7 @@ export const TUI_COMMAND_NAMES = [
   "agents", "continue", "help", "model", "effort", "mode", "plan", "plans", "prototype", "review", "changelog", "init", "release", "tasks", "decisions", "decide",
   "jobs", "sessions", "resume", "remote", "delete", "new", "clear", "copy", "undo", "redo", "diff", "checkpoint", "checkpoints", "branch", "commit", "context",
   "compact", "memory", "skills", "skill", "personality", "voice", "speak", "mcp", "login", "logout", "settings", "usage", "kb", "theme", "skin", "terminal",
-  "icons", "trust", "reload", "restart", "quit", "exit", "q", "team", "rename", "schedule", "schedules", "search", "permissions", "status",
+  "icons", "trust", "reload", "restart", "quit", "exit", "q", "team", "rename", "schedule", "schedules", "search", "permissions", "status", "command",
 ] as const
 
 /** The built-ins that work without a screen of their own. Descriptions as the TUI's (a test). */
@@ -55,6 +55,8 @@ export const SHARED_BUILTINS: { name: string; description: string; hint?: string
   { name: "mcp", description: "MCP servers: a menu of them — state, tools and what each may do, sign in, switch one on or off", hint: "server" },
   { name: "permissions", description: "the permission rules in force — this session's, the project's, yours, the built-in ones; change or add one" },
   { name: "status", description: "everything in one place: the server and login, the session, the project, the MCP servers, this terminal" },
+  { name: "skill", description: "use a skill (for one whose name a command already has)", hint: "name [instruction]" },
+  { name: "command", description: "run a custom command by its name (for one whose name a built-in command has)", hint: "name [words]" },
   { name: "agents", description: "subagents: list them, make one, or hand one a task", hint: "name" },
   { name: "team", description: "subagents: the tree and the room; how many; stop one; their findings", hint: "size <min> <max> | stop <name> | findings <name>" },
 ]
@@ -193,7 +195,8 @@ export type Expanded =
   /** A built-in that is not a prompt (compact, undo; plan without a task). */
   | { kind: "action"; name: "compact" | "undo" | "plan"; arg: string }
   /** Nothing to send, and why (a review with no changes). */
-  | { kind: "message"; name: string; text: string }
+  /** `error`: the text says the command could not do what was asked (an unknown name). */
+  | { kind: "message"; name: string; text: string; error?: boolean }
 
 /** `/review [head | <branch>]`: the change, as a prompt for a read-only review — or why there is none. */
 export function reviewPrompt(app: App, arg: string): { prompt: string } | { message: string } {
@@ -249,7 +252,9 @@ export function initPrompt(app: App, arg: string): string {
 
 /** A prompt's text as a command of the shared set, or undefined when it is not one — then it goes
  *  to the model as it is, `/` and all (a path, a regex, a command this machine does not have). */
-export function expandSlash(app: App, text: string): Expanded | undefined {
+/** `plain`: the text is printed as it is (`lembas run`), not drawn as markdown (a reply in the
+ *  web UI, which is what a prompt over the link becomes). */
+export function expandSlash(app: App, text: string, o: { plain?: boolean } = {}): Expanded | undefined {
   const t = text.trim()
   const m = /^\/([a-z0-9_:-]+)(?:\s+([\s\S]*))?$/i.exec(t)
   if (!m) return undefined
@@ -266,18 +271,20 @@ export function expandSlash(app: App, text: string): Expanded | undefined {
     case "agents":
       // List and describe anywhere; `new` and `<name> <task>` are the TUI's own.
       if (/^(new)\b/.test(arg) || arg.trim().split(/\s+/).length > 1) return { kind: "message", name, text: "/agents here lists and describes the subagents; making one or handing one a task is done at the terminal." }
-      return { kind: "message", name, text: agentsText(app, arg) }
+      return ((text) => ({ kind: "message" as const, name, text, ...(text.startsWith("no agent ") ? { error: true } : {}) }))(agentsText(app, arg))
     case "team":
       return { kind: "message", name, text: teamText(app, arg) }
+    // A command that takes no words is the command only when it stands alone: "/status of the
+    // build?" is a question for the model.
     case "permissions":
-      return { kind: "message", name, text: permissionsText(app) }
+      return arg ? undefined : { kind: "message", name, text: permissionsText(app) }
     case "status":
-      return { kind: "message", name, text: statusText(app) }
+      return arg ? undefined : { kind: "message", name, text: statusText(app) }
     case "mcp":
-      // No menu here: the servers as a table, or one server's tools. What changes a server (sign
-      // in, switch off) is the terminal's to do.
-      if (/^(reconnect|on|off|auth|code|logout)\b/.test(arg.trim())) return { kind: "message", name, text: "/mcp here shows the servers and their tools; connecting, switching one off and signing in are done at the terminal." }
-      return { kind: "message", name, text: mcpText(app.mcp, arg.trim().split(/\s+/)[0] ?? "", (tool) => app.engine.ruleFor(tool)) }
+      // No menu here: the servers as a list, or — when the one word after it is exactly a
+      // server's name — that server's tools. Anything else is a prompt.
+      if (arg && !app.mcp.servers.has(arg)) return undefined
+      return { kind: "message", name, text: mcpText(app.mcp, arg, (tool) => app.engine.ruleFor(tool), { markdown: !o.plain }) }
     case "init":
       // The prompt is ours; only what was typed after the name may attach files.
       return { kind: "prompt", name, prompt: initPrompt(app, arg), shown: t, attachFrom: arg }
@@ -291,17 +298,30 @@ export function expandSlash(app: App, text: string): Expanded | undefined {
       return "message" in r ? { kind: "message", name, text: r.message } : { kind: "prompt", name, prompt: r.prompt, shown: t, attachFrom: "" }
     }
   }
-  if (reserved.has(name)) return undefined
   const src = sourcesOf(app)
-  const cc = customCommands(src.projectDir).find((c) => c.name === name)
+  // The way to a skill or a custom command whose own name a built-in command has.
+  let wanted = name
+  let words = arg
+  let only: "skill" | "custom" | undefined
+  if (name === "skill" || name === "command") {
+    const [first = "", ...rest] = arg.split(/\s+/)
+    if (!first) return undefined
+    wanted = name === "skill" ? slug(first) : first.toLowerCase()
+    words = rest.join(" ")
+    only = name === "skill" ? "skill" : "custom"
+  } else if (reserved.has(name)) return undefined
+  const cc = only === "skill" ? undefined : customCommands(src.projectDir).find((c) => c.name === wanted)
+  if (only === "custom" && !cc) return { kind: "message", name, text: `no custom command "${wanted}"`, error: true }
   if (cc) {
+    const arg = words
     // A project's command may make the mode stricter for its prompt, never looser; your own may.
     const own = cc.mode && (MODES as readonly string[]).includes(cc.mode) ? (cc.mode as Mode) : undefined
     const mode = own && cc.source === "project" ? stricter(own, app.engine.mode) : own
     return { kind: "prompt", name, prompt: expandCommand(cc, arg, app.project.root, app.engine.o.perm.hardline), shown: t, attachFrom: arg, model: cc.model, ...(mode ? { mode } : {}) }
   }
-  const sk = src.skills().find((s) => slug(s.name) === name)
-  if (sk) return { kind: "prompt", name, prompt: skillMessage(sk, arg), shown: t, attachFrom: arg }
+  const sk = src.skills().find((s) => slug(s.name) === wanted)
+  if (sk) return { kind: "prompt", name, prompt: skillMessage(sk, words), shown: t, attachFrom: words }
+  if (only === "skill") return { kind: "message", name, text: `no skill "${wanted}"`, error: true }
   return undefined
 }
 
