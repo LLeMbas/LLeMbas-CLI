@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { afterAll, describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { paths } from "../src/config/paths.ts"
@@ -8,6 +8,10 @@ import { attachmentsFor } from "../src/project/attach.ts"
 import { customCommands, expandCommand } from "../src/project/commands.ts"
 import { FileIndex } from "../src/project/files.ts"
 import { findProject, projectDirName } from "../src/project/root.ts"
+
+// The whole suite shares one config directory: what this file puts under commands/ is taken away
+// again, or every later start-up warns about it.
+afterAll(() => rmSync(join(paths.config, "commands"), { recursive: true, force: true }))
 
 function tree() {
   const root = mkdtempSync(join(tmpdir(), "ph-proj-"))

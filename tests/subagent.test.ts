@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { afterAll, afterEach, describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createApp } from "../src/app.ts"
@@ -8,6 +8,10 @@ import { paths } from "../src/config/paths.ts"
 import { createView } from "../src/tui/state.ts"
 import { MARKS } from "../src/jobs/note.ts"
 import { delta, fakeProvider, toolCall, type Fake } from "./fake-provider.ts"
+
+// The whole suite shares one config directory: what this file puts under agents/ is taken away
+// again, or every later start-up warns about it.
+afterAll(() => rmSync(join(paths.config, "agents"), { recursive: true, force: true }))
 
 let fake: Fake | undefined
 let other: Fake | undefined
