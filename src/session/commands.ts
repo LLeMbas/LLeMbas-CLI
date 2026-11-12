@@ -21,6 +21,7 @@ import { SUBAGENTS } from "../team/subagents.ts"
 import { progressLine } from "./progress.ts"
 import { fillPrompt } from "../prompt/fill.ts"
 import { mcpText } from "../mcp/text.ts"
+import { permissionsText, statusText } from "./report.ts"
 
 export type CommandKind = "custom" | "skill" | "builtin"
 
@@ -39,7 +40,7 @@ export const TUI_COMMAND_NAMES = [
   "agents", "continue", "help", "model", "effort", "mode", "plan", "plans", "prototype", "review", "changelog", "init", "release", "tasks", "decisions", "decide",
   "jobs", "sessions", "resume", "remote", "delete", "new", "clear", "copy", "undo", "redo", "diff", "checkpoint", "checkpoints", "branch", "commit", "context",
   "compact", "memory", "skills", "skill", "personality", "voice", "speak", "mcp", "login", "logout", "settings", "usage", "kb", "theme", "skin", "terminal",
-  "icons", "trust", "reload", "restart", "quit", "exit", "q", "team", "rename", "schedule", "schedules", "search",
+  "icons", "trust", "reload", "restart", "quit", "exit", "q", "team", "rename", "schedule", "schedules", "search", "permissions", "status",
 ] as const
 
 /** The built-ins that work without a screen of their own. Descriptions as the TUI's (a test). */
@@ -52,6 +53,8 @@ export const SHARED_BUILTINS: { name: string; description: string; hint?: string
   { name: "init", description: "make or update the project's AGENTS.md from what the repository says", hint: "what to focus on" },
   { name: "continue", description: "carry on — after esc stopped it, or when it should keep going (ctrl+g)" },
   { name: "mcp", description: "MCP servers: a menu of them — state, tools and what each may do, sign in, switch one on or off", hint: "server" },
+  { name: "permissions", description: "the permission rules in force — this session's, the project's, yours, the built-in ones; change or add one" },
+  { name: "status", description: "everything in one place: the server and login, the session, the project, the MCP servers, this terminal" },
   { name: "agents", description: "subagents: list them, make one, or hand one a task", hint: "name" },
   { name: "team", description: "subagents: the tree and the room; how many; stop one; their findings", hint: "size <min> <max> | stop <name> | findings <name>" },
 ]
@@ -266,6 +269,10 @@ export function expandSlash(app: App, text: string): Expanded | undefined {
       return { kind: "message", name, text: agentsText(app, arg) }
     case "team":
       return { kind: "message", name, text: teamText(app, arg) }
+    case "permissions":
+      return { kind: "message", name, text: permissionsText(app) }
+    case "status":
+      return { kind: "message", name, text: statusText(app) }
     case "mcp":
       // No menu here: the servers as a table, or one server's tools. What changes a server (sign
       // in, switch off) is the terminal's to do.

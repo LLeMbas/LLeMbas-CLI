@@ -20,6 +20,22 @@ All notable changes to LLeMbas CLI. The format follows
 - **Menus have sections, state marks, a line about the highlighted row, Esc-goes-back, PgUp/PgDn
   and Home/End, and say where the cursor is in a long list** — every picker is the one component.
 
+- **`/help` is a menu**: every command under a heading (this session, the model, the project,
+  what it knows and can use, account and settings, look), found by typing a word of its name or
+  of what it does; Enter runs it, or puts it in the box when it needs words. The keys are in it
+  too.
+- **`/permissions`** (new): the permission rules in force, by where each was made — this session,
+  the project, your config, built in. Enter changes one (asks / always allowed / denied), the
+  first row adds one (`bash git status* allow`), and a rule of this session can be removed.
+- **`/status`** (new): the server and login, the model, the session, the project and whether it
+  is trusted, the MCP servers, and this terminal — how copying and pasting images work here —
+  on one screen. What needs attention is marked; Enter on a row opens what changes it.
+- **`/agents` is a menu** of the subagents; Enter puts one's name in the box to hand it a task.
+- **`lembas run "/mcp"`** (and `/status`, `/permissions`, `/agents`, `/team`) prints the command's
+  text instead of sending the words to the model; the same text answers these commands over the
+  link. `permissions` and `status` are now command names of the program: a custom command or a
+  skill of either name is reached as `/skill <name>`.
+
 ### Changed
 
 - **An MCP server that connects no longer says so with a warning sign at every start.** Nothing is

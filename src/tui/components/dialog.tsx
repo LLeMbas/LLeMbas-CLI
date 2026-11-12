@@ -149,7 +149,7 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
     return out
   })
   // What the screen leaves for the list: less the body above it and the detail below.
-  const visible = () => Math.max(3, Math.min(16, dims().height - 10 - Math.min(body().length, BODY_ROWS) - (detail().length ? DETAIL_ROWS + 1 : 0)))
+  const visible = () => Math.max(3, Math.min(22, dims().height - 10 - Math.min(body().length, BODY_ROWS) - (detail().length ? DETAIL_ROWS + 1 : 0)))
   const offset = () => {
     const at = rows().findIndex((r) => "option" in r && r.index === sel())
     const first = Math.max(0, Math.min(at - Math.floor(visible() / 2), rows().length - visible()))

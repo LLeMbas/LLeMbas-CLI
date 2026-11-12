@@ -31,6 +31,7 @@ import { keyMatcher } from "../voice/index.ts"
 import { PLAYER_NAMES, playerFor, recorderFor } from "../voice/audio.ts"
 import { duration } from "../duration.ts"
 import { openMcpMenu, openMcpServer, runAction } from "./mcpmenu.ts"
+import { openAgents, openHelp, openPermissions, openStatus } from "./menus.ts"
 import type { Job, JobInfo } from "../jobs/registry.ts"
 
 export interface CommandCtx extends Ctx {
@@ -170,6 +171,7 @@ export const COMMANDS: Command[] = [
           `  model the session's, or one you name${a.model ? ` (its own model: ${a.model} is not used)` : ""} · mode ${a.mode ?? "the session's"} · tools ${a.tools?.join(", ") ?? "all a subagent may have"}${a.isolation ? " · own worktree" : ""}`,
         ].join("\n")
       if (named) return c.view.info(describe(named))
+      if (!first) return openAgents(c)
       c.view.info(
         [
           ...list.map(describe),
@@ -189,8 +191,22 @@ export const COMMANDS: Command[] = [
     name: "help",
     description: "commands and keys",
     run(c) {
-      const lines = COMMANDS.map((cmd) => `/${cmd.name}${cmd.args ? " " + cmd.args : ""} — ${cmd.description}`)
-      c.view.info([...lines, "", ...HELP_KEYS].join("\n"))
+      openHelp(c, COMMANDS, HELP_KEYS, (cmd) => void cmd.run(c, ""))
+    },
+  },
+  {
+    name: "permissions",
+    description: "the permission rules in force — this session's, the project's, yours, the built-in ones; change or add one",
+    run: (c) => openPermissions(c),
+  },
+  {
+    name: "status",
+    description: "everything in one place: the server and login, the session, the project, the MCP servers, this terminal",
+    run(c) {
+      openStatus(c, (line) => {
+        const [name = "", ...rest] = line.split(" ")
+        void findCommand(name)?.run(c, rest.join(" "))
+      })
     },
   },
   {

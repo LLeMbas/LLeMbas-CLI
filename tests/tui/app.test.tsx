@@ -912,8 +912,15 @@ test("/agents lists the subagents; /agents new writes a starter; /agents <name> 
   t = await tui([{ chunks: [delta({ content: "Handing it over." }, "stop")] }])
   await t.input.typeText("/agents")
   t.input.pressEnter()
+  // A menu (tests/tui/menus.test.tsx); the description of one is still text.
+  expect(await t.until("Subagents — ")).toBe(true)
+  expect(t.frame()).toContain("explore")
+  expect(t.frame()).toContain("general")
+  t.input.pressEscape()
+  await t.settle()
+  await t.input.typeText("/agents explore")
+  t.input.pressEnter()
   expect(await t.until("explore (builtin)")).toBe(true)
-  expect(t.frame()).toContain("general (builtin)")
   const name = `scout${Date.now() % 100000}`
   await t.input.typeText(`/agents new ${name}`)
   t.input.pressEnter()
