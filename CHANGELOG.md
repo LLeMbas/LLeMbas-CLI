@@ -29,6 +29,17 @@ Harness spec 3.7.0: one display in every client.
   give the text in full. `paste: full` in the config (or `/settings`) shows pastes whole, as
   before.
 
+- **Images from the clipboard on macOS and Windows, and JPEG, WebP and GIF** besides PNG: ctrl+v
+  reads the clipboard through OpenTUI's host clipboard, with `wl-paste` / `xclip` behind it. It
+  no longer holds the screen while a clipboard answers, and says so when there is no image.
+  Pasted images are kept under the state directory and removed after a week.
+- **Images over SSH.** A terminal cannot hand over the clipboard image of the machine you sit at,
+  so: an image pasted as text — a `data:image/png;base64,…` URL, or the base64 itself — is
+  recognised, saved and shown as `[Image N]`; with `ssh -X` the forwarded X clipboard is read; in
+  kitty the terminal itself is asked for its clipboard (its clipboard protocol, OSC 5522 — it asks
+  you once); and when nothing came through, one line names what works: the data URL, `@path` after
+  copying the file over, or attaching it to the same chat in the web, Desktop or Android app.
+
 ### Changed
 
 - **The terminal opened from the web UI or Desktop picks a shell that exists.** `$SHELL` when

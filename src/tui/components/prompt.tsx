@@ -1,8 +1,9 @@
 import { RGBA, SyntaxStyle, type PasteEvent, type TextareaRenderable } from "@opentui/core"
-import { existsSync, mkdirSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { paths } from "../../config/paths.ts"
-import { clipboardImage, isImage } from "../../project/image.ts"
+import { cleanPastedImages, clipboardImage, CLIPBOARD_TYPES, imageFromText, isImage, savePastedImage, type ClipboardImage } from "../../project/image.ts"
+import { kittyClipboardLikely, kittyReadImage, type KittyRead, type OscTerminal } from "../kitty-clipboard.ts"
 import { escapeMention } from "../../project/attach.ts"
 import fuzzysort from "fuzzysort"
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
@@ -25,6 +26,14 @@ interface Popup {
   /** How many characters before the cursor the replaced token takes. */
   token: number
 }
+
+/** Where pasted images are kept until they are old (cleanPastedImages). */
+const CLIP_DIR = join(paths.state, "clipboard")
+/** Sent with a clipboard read so a terminal that asks the person can remember the answer for
+ *  this run of the program. */
+const CLIPBOARD_PASSWORD = crypto.randomUUID()
+/** Said when an image paste over SSH found nothing: the ways that do work. */
+export const REMOTE_IMAGE_HINT = "no image reached this terminal over SSH — paste it as a data URL (data:image/png;base64,…), copy the file here and use @path, or attach it to this chat in the web, Desktop or Android app"
 
 /** What the app may ask of the box beyond its text. */
 export interface PromptHandle {
@@ -59,6 +68,12 @@ export function Prompt(p: {
   onSubmit: (text: string, shown?: string) => boolean | void
   ref?: (r: TextareaRenderable) => void
   handle?: (h: PromptHandle) => void
+  /** Whether the terminal is on another machine (SSH): its clipboard is not this machine's. */
+  remote?: () => boolean
+  /** The terminal, for asking it for its clipboard (kitty's protocol). */
+  terminal?: OscTerminal
+  /** A short line for the person (nothing on the clipboard, why an image was not taken). */
+  note?: (text: string, warn?: boolean) => void
   /** The messages waiting to go in: how many, take one out, put it back. */
   queue?: { count(): number; take(index: number): string | undefined; putBack(index: number, text: string): void }
   /** A burst of ↑/↓ that was a mouse wheel: scroll the transcript `lines` up (-1) or down (1). */
@@ -77,6 +92,8 @@ export function Prompt(p: {
   })
   onCleanup(() => style().destroy())
   let marks: Placeholders | undefined
+  // Pasted images are copies; old ones go when the box is made.
+  cleanPastedImages(CLIP_DIR)
   /** The box's text as it is sent: placeholders replaced by what they stand for. */
   const full = () => marks?.expanded() ?? area?.plainText ?? ""
   const pasteWhole = () => app.loaded.config.paste === "full"
@@ -176,14 +193,35 @@ export function Prompt(p: {
     marks.insert({ kind: "image", label: imageLabel(marks.nextImage()), content: ref })
   }
 
-  /** An image on the clipboard becomes a saved copy and a placeholder for it. */
-  const pasteClipboardImage = (): boolean => {
-    const dir = join(paths.state, "clipboard")
-    mkdirSync(dir, { recursive: true })
-    const saved = clipboardImage(join(dir, `paste-${Date.now()}.png`))
-    if (!saved || !area) return false
-    insertImage(saved)
-    return true
+  /** An image on the clipboard becomes a saved copy and a placeholder for it. Awaited, never
+   *  blocking: the box stays usable while a clipboard (or the person, asked by their terminal)
+   *  takes its time, and the placeholder goes in where the cursor is when the image arrives.
+   *
+   *  Over SSH this machine's clipboard is not the person's. What can still work: the X display
+   *  `ssh -X` forwards, and a terminal that hands its clipboard over itself (kitty). When neither
+   *  does, one line says what does. */
+  let reading = false
+  const pasteClipboardImage = async () => {
+    if (reading || !area) return
+    reading = true
+    try {
+      const remote = p.remote?.() ?? false
+      let r: ClipboardImage | KittyRead = { status: "unsupported" }
+      if (!remote) r = await clipboardImage()
+      else if (process.env.DISPLAY) r = await clipboardImage({ env: { DISPLAY: process.env.DISPLAY } })
+      if (r.status !== "read" && remote && p.terminal && kittyClipboardLikely()) {
+        p.note?.("asking the terminal for the image on its clipboard…")
+        r = await kittyReadImage(p.terminal, { types: CLIPBOARD_TYPES, password: CLIPBOARD_PASSWORD, name: "LLeMbas CLI" })
+      }
+      if (r.status === "read") return insertImage(savePastedImage(CLIP_DIR, r.bytes, r.mime))
+      if (r.status === "too-large") return p.note?.("the image on the clipboard is too large to paste — save it and use @path", true)
+      if (r.status === "denied") return p.note?.("the terminal did not allow reading its clipboard", true)
+      p.note?.(remote ? REMOTE_IMAGE_HINT : r.status === "unsupported" ? "no clipboard to read an image from here (install wl-clipboard or xclip), or use @path" : "no image on the clipboard")
+    } catch (e) {
+      p.note?.(`the clipboard could not be read: ${(e as Error).message.split("\n")[0]}`, true)
+    } finally {
+      reading = false
+    }
   }
 
   /** A pasted path to an image (dragged from a file manager: quoted, escaped or file://) → @path. */
@@ -203,8 +241,16 @@ export function Prompt(p: {
     // Some terminals hand over an image-only clipboard as an empty bracketed paste.
     if (!text.trim()) {
       e.preventDefault()
-      pasteClipboardImage()
+      void pasteClipboardImage()
       return
+    }
+    // An image pasted as text — a data URL, or base64 of one: the way through a terminal that
+    // cannot hand over a clipboard image (over SSH).
+    const data = imageFromText(text)
+    if (data) {
+      e.preventDefault()
+      if ("error" in data) return p.note?.(data.error, true)
+      return insertImage(savePastedImage(CLIP_DIR, data.bytes, data.mime))
     }
     const img = imagePath(text)
     e.preventDefault()
@@ -294,7 +340,10 @@ export function Prompt(p: {
           onPaste={onPaste}
           onKeyDown={(e) => {
             if (!area) return
-            if (e.ctrl && e.name === "v" && pasteClipboardImage()) return e.preventDefault()
+            if (e.ctrl && e.name === "v" && !e.shift && !e.meta) {
+              void pasteClipboardImage()
+              return e.preventDefault()
+            }
             if (e.ctrl && e.name === "b" && p.onBackground) {
               p.onBackground()
               return e.preventDefault()

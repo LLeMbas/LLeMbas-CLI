@@ -224,3 +224,88 @@ test("an @file completed after wide characters replaces its own token, nothing e
   await t.settle()
   expect(a.plainText).toBe("日本語の説明 @hello.txt ")
 })
+
+const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+/** Run with these environment variables set, then put back. */
+async function withEnv(vars: Record<string, string | undefined>, fn: () => Promise<void>) {
+  const before = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]))
+  for (const [k, v] of Object.entries(vars)) v === undefined ? delete process.env[k] : (process.env[k] = v)
+  try {
+    await fn()
+  } finally {
+    for (const [k, v] of Object.entries(before)) v === undefined ? delete process.env[k] : (process.env[k] = v)
+  }
+}
+const NOT_REMOTE = { SSH_CONNECTION: undefined, SSH_TTY: undefined, SSH_CLIENT: undefined }
+
+test("an image pasted as a data URL is saved and shown as [Image 1]; a broken one is said, not pasted", async () => {
+  t = await tui([{ chunks: [delta({ content: "Seen." }), usage(100, 5)] }])
+  const a = box(t.setup.renderer.root)
+  await t.input.typeText("what is this ")
+  await t.input.pasteBracketedText(`data:image/png;base64,${PNG_B64}`)
+  await t.settle()
+  expect(a.plainText).toBe("what is this [Image 1] ")
+  await t.input.pasteBracketedText(`data:image/png;base64,${Buffer.from("this is certainly not a picture").toString("base64")}`)
+  await t.settle()
+  expect(a.plainText).toBe("what is this [Image 1] ")
+  expect(t.frame()).toContain("not a PNG, JPEG, WebP or GIF image")
+  t.input.pressEnter()
+  expect(await t.until("Seen.")).toBe(true)
+  // Sent as the @path of the copy kept under the state directory.
+  const m = /@(\S+clipboard\/paste-[\w-]+\.png)/.exec(JSON.parse(sent()) as string)
+  expect(m).not.toBeNull()
+  expect(readFileSync(m![1]!).toString("base64")).toBe(PNG_B64)
+  expect(m![1]!.startsWith(join(paths.state, "clipboard"))).toBe(true)
+})
+
+test("ctrl+v with no image: said in a word, the box stays usable; over SSH one line names what works", async () => {
+  await withEnv({ ...NOT_REMOTE, DISPLAY: undefined, WAYLAND_DISPLAY: undefined }, async () => {
+    t = await tui([])
+    const a = box(t.setup.renderer.root)
+    t.input.pressKey("v", { ctrl: true })
+    // Not waited for: typing goes on at once.
+    await t.input.typeText("still typing")
+    expect(a.plainText).toBe("still typing")
+    expect(await t.until("or use @path")).toBe(true)
+    t.stop()
+  })
+  await withEnv({ SSH_CONNECTION: "192.0.2.1 50000 192.0.2.2 22", DISPLAY: undefined, WAYLAND_DISPLAY: undefined, TERM: "xterm-256color", KITTY_WINDOW_ID: undefined, TMUX: undefined }, async () => {
+    t = await tui([], { width: 220, height: 30 })
+    t.input.pressKey("v", { ctrl: true })
+    expect(await t.until("no image reached this terminal over SSH")).toBe(true)
+    const f = t.frame()
+    expect(f).toContain("data:image/png;base64")
+    expect(f).toContain("@path")
+    expect(f).toContain("web, Desktop or Android app")
+  })
+})
+
+test("over SSH in kitty: ctrl+v asks the terminal for its clipboard, and the image arrives as [Image 1]", async () => {
+  await withEnv({ SSH_CONNECTION: "192.0.2.1 50000 192.0.2.2 22", DISPLAY: undefined, WAYLAND_DISPLAY: undefined, TERM: "xterm-kitty", TMUX: undefined, STY: undefined, ZELLIJ: undefined }, async () => {
+    t = await tui([])
+    const a = box(t.setup.renderer.root)
+    const r = t.setup.renderer as any
+    const b64 = (s: string) => Buffer.from(s).toString("base64")
+    const asked: string[] = []
+    // The terminal's half, answered through the renderer's own input: what kitty would send back.
+    r.writeOut = (seq: string) => {
+      if (!seq.startsWith("\x1b]5522;")) return
+      asked.push(seq)
+      const id = /id=([^:;]+)/.exec(seq)![1]
+      const want = Buffer.from(seq.slice(seq.lastIndexOf(";") + 1).replace("\x1b\\", ""), "base64").toString()
+      const reply = (meta: string, payload = "") => r.stdin.emit("data", Buffer.from(`\x1b]5522;type=read:status=${meta}:id=${id}${payload ? `;${payload}` : ""}\x1b\\`))
+      setTimeout(() => {
+        reply("OK")
+        if (want === ".") reply(`DATA:mime=${b64(".")}`, b64("text/plain image/png"))
+        else reply(`DATA:mime=${b64("image/png")}`, PNG_B64)
+        reply("DONE")
+      }, 5)
+    }
+    await t.input.typeText("see ")
+    t.input.pressKey("v", { ctrl: true })
+    const end = Date.now() + 4000
+    while (Date.now() < end && !a.plainText.includes("[Image 1]")) await t.settle(40)
+    expect(a.plainText).toBe("see [Image 1] ")
+    expect(asked.length).toBe(2)
+  })
+})

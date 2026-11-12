@@ -10,7 +10,7 @@ import { COMMANDS, findCommand, type CommandCtx } from "./commands.ts"
 import { Dialog, type DialogSpec } from "./components/dialog.tsx"
 import { Messages } from "./components/messages.tsx"
 import { PermissionPrompt } from "./components/permission.tsx"
-import { copiedMessage, copyText } from "./clipboard.ts"
+import { copiedMessage, copyText, isRemote } from "./clipboard.ts"
 import { QuestionCard } from "./components/question.tsx"
 import { PlanCard } from "./components/plancard.tsx"
 import { PlanPanel } from "./components/plan.tsx"
@@ -83,15 +83,20 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   // The finished-reply notice (notify.ts): a reply that ends, or an answer the agent waits for,
   // while the terminal is not focused — the bell and a desktop notification naming the session.
   const focus = new FocusWatch((ev, fn) => renderer.on(ev, fn))
+  /** Raw sequences to the terminal, and the OSC replies it sends back. */
+  const writeRaw = (seq: string) => {
+    const r = renderer as unknown as { writeOut?: (s: string) => void }
+    if (r.writeOut) r.writeOut(seq)
+    else process.stdout.write(seq)
+  }
+  const terminal = { write: writeRaw, subscribeOsc: (h: (sequence: string) => void) => renderer.subscribeOsc(h) }
   const notice = (what: "finished" | "waiting" | "failed") => {
     if (focus.focused || app.loaded.config.notify === false) return
     const id = app.engine.sessionId
     const title = id ? app.store?.session(id)?.title : undefined
     const seq = noticeSequence(noticeText(title, what))
-    const r = renderer as unknown as { writeOut?: (s: string) => void }
     try {
-      if (r.writeOut) r.writeOut(seq)
-      else process.stdout.write(seq)
+      writeRaw(seq)
     } catch {}
   }
   app.bus.on((e) => e.type === "done" && e.reason !== "cancelled" && notice(e.reason === "error" ? "failed" : "finished"))
@@ -668,7 +673,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
             <Spinner />
           </Show>
           <Queued />
-          <Prompt focused={() => !dialog() && !jobPanel() && !view.state.pending && !view.state.question && !view.state.plan} busy={busy} commands={palette} files={files} onSubmit={submit} ref={(r) => (input = r)} handle={(h) => (box = h)} queue={queueAccess} onWheel={(dir, lines) => scroll?.scrollBy(dir * lines)} onBackground={backgroundNow} />
+          <Prompt focused={() => !dialog() && !jobPanel() && !view.state.pending && !view.state.question && !view.state.plan} busy={busy} commands={palette} files={files} onSubmit={submit} ref={(r) => (input = r)} handle={(h) => (box = h)} remote={() => isRemote(renderer as never)} terminal={terminal} note={(text, warn) => (warn ? view.info(text, "warn") : text.length > 60 ? view.info(text) : flash(text))} queue={queueAccess} onWheel={(dir, lines) => scroll?.scrollBy(dir * lines)} onBackground={backgroundNow} />
           <StatusBar mode={mode} model={model} effort={effort} branch={branch()} voice={voiceStatus} flash={flashText} remote={() => (rev(), share.label())} spend={spend} team={teamWord} />
         </box>
         <Show when={dialog()}>
