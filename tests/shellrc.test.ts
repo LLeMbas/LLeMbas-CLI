@@ -5,7 +5,7 @@ import { afterEach, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { shellKind, shellLaunch, type ShellLaunch } from "../src/acp/shellrc.ts"
+import { pickShell, shellKind, shellLaunch, type ShellLaunch } from "../src/acp/shellrc.ts"
 
 const launched: ShellLaunch[] = []
 afterEach(() => {
@@ -16,6 +16,28 @@ const launch = (...a: Parameters<typeof shellLaunch>) => {
   launched.push(l)
   return l
 }
+
+test("the shell a terminal runs: $SHELL where it exists, else bash, zsh, sh; on Windows PowerShell, then cmd", () => {
+  const has = (...paths: string[]) => (p: string) => paths.includes(p)
+  const none = () => null
+  // POSIX: the person's own shell, as a login shell.
+  expect(pickShell("linux", { SHELL: "/usr/bin/fish" }, has("/usr/bin/fish", "/bin/bash"), none)).toEqual({ shell: "/usr/bin/fish", args: ["-l"] })
+  // A SHELL that is not there (a container, a stale variable) is passed over, not started.
+  expect(pickShell("linux", { SHELL: "/opt/gone/zsh" }, has("/bin/bash", "/bin/sh"), none)).toEqual({ shell: "/bin/bash", args: ["-l"] })
+  // No bash (a minimal image): zsh, then sh.
+  expect(pickShell("darwin", {}, has("/bin/zsh", "/bin/sh"), none)).toEqual({ shell: "/bin/zsh", args: ["-l"] })
+  expect(pickShell("linux", {}, has("/bin/sh"), none)).toEqual({ shell: "/bin/sh", args: ["-l"] })
+  expect(pickShell("linux", {}, has(), none)).toBeUndefined()
+  // Windows: no -l anywhere; PowerShell 7 before Windows PowerShell before cmd. SHELL is not read.
+  const which = (...found: string[]) => (c: string) => (found.includes(c) ? `C:\\bin\\${c}` : null)
+  expect(pickShell("win32", { SHELL: "/usr/bin/bash" }, has(), which("pwsh.exe", "powershell.exe", "cmd.exe"))).toEqual({ shell: "C:\\bin\\pwsh.exe", args: ["-NoLogo"] })
+  expect(pickShell("win32", {}, has(), which("powershell.exe", "cmd.exe"))).toEqual({ shell: "C:\\bin\\powershell.exe", args: ["-NoLogo"] })
+  expect(pickShell("win32", { ComSpec: "C:\\Windows\\System32\\cmd.exe" }, has("C:\\Windows\\System32\\cmd.exe"), which())).toEqual({ shell: "C:\\Windows\\System32\\cmd.exe", args: [] })
+  expect(pickShell("win32", { ComSpec: "C:\\gone.exe" }, has(), which("cmd.exe"))).toEqual({ shell: "C:\\bin\\cmd.exe", args: [] })
+  expect(pickShell("win32", {}, has(), which())).toBeUndefined()
+  // A shell that takes no -l starts without it, and without marks.
+  expect(shellLaunch("C:\\bin\\pwsh.exe", "t1", true, {}, ["-NoLogo"])).toMatchObject({ kind: "other", integration: false, argv: ["C:\\bin\\pwsh.exe", "-NoLogo"] })
+})
 
 test("which shells get marks: bash, zsh and fish; anything else starts as before", () => {
   expect(shellKind("/usr/bin/bash")).toBe("bash")

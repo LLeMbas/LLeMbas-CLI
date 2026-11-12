@@ -30,7 +30,7 @@ import { PLAN_META } from "../session/engine.ts"
 import { ToolError } from "../tool/tool.ts"
 import { dropAttachments, preparePrompt, storedAttachments } from "./prompt.ts"
 import { addPendingDeleted, clearPendingDeleted, pendingDeleted } from "./pending.ts"
-import { shellLaunch } from "./shellrc.ts"
+import { pickShell, shellLaunch } from "./shellrc.ts"
 import { sessionTurnFile, sessionTurns, TurnLog } from "./turns.ts"
 import { expandHome } from "../config/paths.ts"
 import { asMode, MODES, type Mode } from "../config/schema.ts"
@@ -82,7 +82,7 @@ export function refusalFor(L: Limits | undefined, dir: string): string | undefin
   if (L.sharedOnly) return "remote work is off on this machine (remote.enabled); only the sessions its terminal shares (/remote) can be reached"
   if (L.enabled === false) return "remote work is off on this machine — lembas remote enable there (remote.enabled)"
   if (!L.roots.length) return "this device allows no folders for remote work yet — lembas remote add <dir> there (remote.roots)"
-  if (!underRoots(dir, L.roots)) return `${dir} is outside the directories this device accepts remote work in (remote.roots)`
+  if (!underRoots(dir, L.roots)) return `${dir} is outside the directories this device accepts remote work in — to allow it, run lembas remote add <dir> there (remote.roots)`
   if (L.requireTrust && trustOf(findProject(dir).root) !== "trusted" && !trustedWithin(realPath(dir)))
     return `${dir} is not in a trusted project on this device — trust it there first (lembas trust)`
   return undefined
@@ -1342,27 +1342,35 @@ export class AcpAgent {
    *  model's, so the hardline and the modes do not apply, exactly as in a terminal opened here. */
   private terminalOpen(p: any) {
     const L = this.limits
-    if (!L?.terminal) throw new RpcError(INVALID_PARAMS, "this device does not open terminals for the web UI (remote.terminal is off)")
+    if (!L?.terminal) throw new RpcError(INVALID_PARAMS, "Terminals are switched off on this computer. To allow them, run `lembas remote terminal on` there (remote.terminal).")
     const cwd = typeof p?.cwd === "string" && p.cwd.trim() ? resolve(expandHome(p.cwd.trim())) : resolve(expandHome(L.roots[0] ?? "~"))
     const refused = this.refusal(cwd)
     if (refused) throw new RpcError(INVALID_PARAMS, refused)
-    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new RpcError(INVALID_PARAMS, `${cwd} is not a directory on this machine`)
-    if (this.terminals.size >= MAX_TERMINALS) throw new RpcError(INVALID_PARAMS, `this device already has ${MAX_TERMINALS} terminals open for the web UI`)
+    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new RpcError(INVALID_PARAMS, `${cwd} is not a folder on this computer — choose one that exists`)
+    if (this.terminals.size >= MAX_TERMINALS) throw new RpcError(INVALID_PARAMS, `This computer already has ${MAX_TERMINALS} terminals open — close one, then open another.`)
     const id = crypto.randomUUID()
     const cols = Math.max(20, Math.min(500, Number(p?.cols) || 80))
     const rows = Math.max(5, Math.min(300, Number(p?.rows) || 24))
-    const shell = process.env.SHELL || "/bin/bash"
+    const picked = pickShell()
+    if (!picked) throw new RpcError(INVALID_PARAMS, "No shell was found on this computer to open a terminal with — set SHELL to one (on Windows: install PowerShell).")
     // Marks for the web UI's terminal: the user's own startup files first, then OSC 133/7.
-    const launch = shellLaunch(shell, id, L.terminalIntegration !== false)
-    const proc = Bun.spawn(launch.argv, {
-      cwd,
-      env: { ...process.env, TERM: "xterm-256color", ...launch.env },
-      terminal: {
-        cols,
-        rows,
-        data: (_t: unknown, d: Uint8Array) => this.peer.notify("_lembas/terminal/output", { terminalId: id, data: Buffer.from(d).toString("base64") }),
-      },
-    } as Parameters<typeof Bun.spawn>[1])
+    const launch = shellLaunch(picked.shell, id, L.terminalIntegration !== false, process.env, picked.args)
+    let proc: ReturnType<typeof Bun.spawn>
+    try {
+      proc = Bun.spawn(launch.argv, {
+        cwd,
+        env: { ...process.env, TERM: "xterm-256color", ...launch.env },
+        terminal: {
+          cols,
+          rows,
+          data: (_t: unknown, d: Uint8Array) => this.peer.notify("_lembas/terminal/output", { terminalId: id, data: Buffer.from(d).toString("base64") }),
+        },
+      } as Parameters<typeof Bun.spawn>[1])
+    } catch (e) {
+      // The runtime's pseudo-terminal is POSIX's: where it has none (Windows), say so plainly.
+      launch.cleanup()
+      throw new RpcError(INVALID_PARAMS, `A terminal could not be opened on this computer (${basename(picked.shell)}): ${(e as Error).message.split("\n")[0]}`)
+    }
     const pty = (proc as unknown as { terminal: Terminal["pty"] }).terminal
     this.terminals.set(id, { proc, pty, cleanup: launch.cleanup })
     void proc.exited.then((code) => {

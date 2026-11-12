@@ -21,6 +21,16 @@ Harness spec 3.7.0: one display in every client.
   answer for three situations; the spec now has one each — no page of the chat is open (and where
   to open it), the page did not answer, the run took too long.
 
+### Changed
+
+- **The terminal opened from the web UI or Desktop picks a shell that exists.** `$SHELL` when
+  it is there, else bash, zsh or sh; on Windows PowerShell 7, then Windows PowerShell, then
+  `cmd.exe` — started without `-l`, which none of them takes. (The runtime's pseudo-terminal is
+  documented for Linux and macOS only, and there is no Windows build of the CLI yet: where a
+  terminal cannot be opened, the refusal now says so in a sentence.)
+- **Plainer refusals when a terminal or a folder cannot be used**: each says what to do —
+  `lembas remote terminal on`, `lembas remote add <dir>`, close one of the open terminals.
+
 ## [2.0.0-beta.8] — 2026-11-10
 
 ### Added

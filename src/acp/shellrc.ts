@@ -9,7 +9,7 @@
 // files (which it sources), zsh a ZDOTDIR whose files source the user's own and hand ZDOTDIR back,
 // fish a command run after its config. Any other shell starts as it did before, without marks.
 // `remote.terminal_integration: false` turns it off.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import { paths } from "../config/paths.ts"
 
@@ -167,11 +167,34 @@ export interface ShellLaunch {
   cleanup(): void
 }
 
+/** The shell a terminal opened from the web UI runs, and how it is started without the marks.
+ *  POSIX: `$SHELL` when it is there, else the first of bash, zsh and sh that is — as a login
+ *  shell (`-l`). Windows: PowerShell 7 (`pwsh`), then Windows PowerShell, then `%ComSpec%` /
+ *  `cmd.exe` — none of which takes `-l`. Undefined when the machine has none of them. */
+export function pickShell(
+  os: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  has: (path: string) => boolean = existsSync,
+  which: (cmd: string) => string | null = Bun.which,
+): { shell: string; args: string[] } | undefined {
+  if (os === "win32") {
+    for (const name of ["pwsh.exe", "powershell.exe"]) {
+      const found = which(name)
+      if (found) return { shell: found, args: ["-NoLogo"] }
+    }
+    const cmd = (env.ComSpec && has(env.ComSpec) ? env.ComSpec : undefined) ?? which("cmd.exe")
+    return cmd ? { shell: cmd, args: [] } : undefined
+  }
+  const shell = [env.SHELL, "/bin/bash", "/bin/zsh", "/bin/sh"].find((s): s is string => !!s && has(s))
+  return shell ? { shell, args: ["-l"] } : undefined
+}
+
 /** How to start `shell` for terminal `id`: with the marks when it is bash, zsh or fish and
- *  `integration` is on; as `$SHELL -l` otherwise. */
-export function shellLaunch(shell: string, id: string, integration: boolean, env: NodeJS.ProcessEnv = process.env): ShellLaunch {
+ *  `integration` is on; as `$SHELL -l` (or with `plainArgs`, for a shell that takes no `-l`)
+ *  otherwise. */
+export function shellLaunch(shell: string, id: string, integration: boolean, env: NodeJS.ProcessEnv = process.env, plainArgs: string[] = ["-l"]): ShellLaunch {
   const kind = shellKind(shell)
-  const plain: ShellLaunch = { kind, integration: false, argv: [shell, "-l"], env: {}, cleanup: () => {} }
+  const plain: ShellLaunch = { kind, integration: false, argv: [shell, ...plainArgs], env: {}, cleanup: () => {} }
   if (!integration || kind === "other") return plain
   const dir = join(paths.state, "terminal", id.replace(/[^\w-]/g, "_"))
   const cleanup = () => rmSync(dir, { recursive: true, force: true })
