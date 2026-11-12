@@ -17,6 +17,9 @@ Harness spec 3.7.0: one display in every client.
   −removed` for an edit, and the kinds of block. A reply that was stopped or failed keeps the
   spec's line (`Stopped: by you`, `Failed: …`) on it. The approval, question and plan cards offer
   the same actions everywhere, and numbers are written in the client's locale format.
+- **Harness spec 3.7.0: `python` says why it could not run.** The server's `python` tool had one
+  answer for three situations; the spec now has one each — no page of the chat is open (and where
+  to open it), the page did not answer, the run took too long.
 
 ## [2.0.0-beta.8] — 2026-11-10
 

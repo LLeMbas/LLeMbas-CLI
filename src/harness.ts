@@ -98,6 +98,8 @@ export interface ToolSpecDef {
   requires?: ("display" | "page" | "forge" | "plan" | "team" | "phone")[]
   /** What a call answers, word for word, when a requirement went away after the offer. */
   unavailable?: string
+  /** Spec 3.7.0: a tool's other fixed answers, by key (python: no_answer, timeout). */
+  texts?: Record<string, string>
   /** `always`: put to the person in every mode, auto included; never remembered. */
   confirm?: "always"
   /** `{{name}}` in the description: a fact the projects differ in, filled in by each (fillDescription). */

@@ -15,7 +15,7 @@ page *Harness-parity* in LLeMbas CLI's wiki.
 |---|---|
 | `VERSION` | The spec's own version, apart from LLeMbas CLI's |
 | `purpose.json` | The `purpose` argument added to a tool whose calls say what they are for |
-| `tools/<name>.json` | One tool each: name, `scope`, `sessions`, `risk`, `exclusive`, `block` (how a call is shown: `shell`, `edit`, `read`, `search`, `web`, `task`, `plan` — not drawn, the plan card refreshes — `hidden`, `tool`), `purpose`, former names (`aliases`, per project), renamed arguments, `variables`, what a project offers of the parameters (`narrow`, per project), `offered` (`subagent`: given to subagents only, never to the main agent — `report`, `team_finish`, `team_request`; `main`, spec 3.4.0: given to the main agent only, never to a subagent — `team_add`, `team_assign`, `team_replace`, `team_stop`, `team_decide`), `requires` and `unavailable` (when it can be offered, and what a call answers when that has gone), `confirm` (`always`: the person is asked in every mode), the description and the JSON Schema of its parameters — exactly what a model is sent |
+| `tools/<name>.json` | One tool each: name, `scope`, `sessions`, `risk`, `exclusive`, `block` (how a call is shown: `shell`, `edit`, `read`, `search`, `web`, `task`, `plan` — not drawn, the plan card refreshes — `hidden`, `tool`), `purpose`, former names (`aliases`, per project), renamed arguments, `variables`, what a project offers of the parameters (`narrow`, per project), `offered` (`subagent`: given to subagents only, never to the main agent — `report`, `team_finish`, `team_request`; `main`, spec 3.4.0: given to the main agent only, never to a subagent — `team_add`, `team_assign`, `team_replace`, `team_stop`, `team_decide`), `requires` and `unavailable` (when it can be offered, and what a call answers when that has gone), `texts` (3.7.0: a tool's other fixed answers by key — `python`'s `no_answer` and `timeout`), `confirm` (`always`: the person is asked in every mode), the description and the JSON Schema of its parameters — exactly what a model is sent |
 | `prompts/` | The prompt texts; `prompts/index.json` says which are shared, which LLeMbas fragment each one is, and what each `{{variable}}` in a text means. `prompts/personality/` holds the personality presets both offer |
 | `permission/hardline.json` | The floor: commands refused in every mode, protected paths, and how a command is spelled plainly before it is checked again |
 | `permission/arity.json` | How much of a command an "always allow" covers |
@@ -101,6 +101,10 @@ Written ahead of the implementations; the CLI carries it in the same round (`dis
   with the mode to continue in, and Revise (`loop.json` `display.actions`).
 - **Numbers in the client's locale format**; durations, ids, exit codes and line numbers never.
   Conformance texts are in the plain format.
+- **`python` says why it could not run** (`tools/python.json`): one text used to answer three
+  situations. `unavailable` is now only *no page of this chat is open* and says where to open
+  it; `texts.no_answer` — a page is open but did not answer; `texts.timeout` — the run passed
+  its `{{seconds}}`. Conformance area **`python`** (the server's).
 - Conformance area **`display`** (titles, durations, hunk counts, facts, the end line, drawn
   blocks); `progress` gains the `budget` stop.
 
