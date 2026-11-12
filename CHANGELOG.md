@@ -4,6 +4,20 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Harness spec 3.7.0: one display in every client.
+
+### Added
+
+- **Harness spec 3.7.0: one display everywhere** (`harness/display.md`). The spec now says how
+  every client — the web UI, Desktop, the CLI, Android — shows a tool call: one short title made
+  from the call's arguments (the same in the transcript, on the progress line and over the link),
+  the four states running, done, failed and denied, how long a finished call took, `+added
+  −removed` for an edit, and the kinds of block. A reply that was stopped or failed keeps the
+  spec's line (`Stopped: by you`, `Failed: …`) on it. The approval, question and plan cards offer
+  the same actions everywhere, and numbers are written in the client's locale format.
+
 ## [2.0.0-beta.8] — 2026-11-10
 
 ### Added

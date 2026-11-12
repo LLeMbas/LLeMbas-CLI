@@ -93,6 +93,13 @@ export function progressLine(p: Progress, now = Date.now()): string {
   return fill(P.line, { text, elapsed: duration(now - p.since, true) })
 }
 
+/** The line that stays on a reply that did not finish (display.md §4): the text of `stopped` or
+ *  `failed`, alone; nothing for a reply that finished, or a phase that is not an end. */
+export function endLine(p: Progress | null | undefined, now = Date.now()): string | undefined {
+  if (!p || !LOOP.display.end.includes(p.phase)) return undefined
+  return progressLine(p, now)
+}
+
 /** Whether two objects are the same phase for the same thing (so `since` is kept). */
 export function samePhase(a: Progress | null | undefined, b: Omit<Progress, "since">): boolean {
   if (!a || a.phase !== b.phase) return false

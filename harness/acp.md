@@ -219,7 +219,17 @@ Params: `{ sessionId }`. Stops the running turn.
 
 `{ sessionId, update }` with `sessionUpdate` one of `agent_message_chunk`, `agent_thought_chunk`,
 `tool_call`, `tool_call_update`, `plan` (below), `current_mode_update`, and
-`available_commands_update` (capability `commands`):
+`available_commands_update` (capability `commands`).
+
+From spec 3.7.0 a `tool_call`'s `title` is **the call's short title** (`display.md` §1) — the
+tool's name where the call has none — and no `tool_call_update` changes it: `completed` is the
+state `done`, `failed` is `failed`, and a call that was refused is `failed` with
+`_meta.lembas.denied: true` and the reason as its content (the state `denied`). The same title is
+`title` on the `tool_start` event of `_lembas/event` and `what` of `running_tool`; `tool_end`
+carries `ms`, the call's duration, and `tool_denied` its `reason`. A client of `_lembas/event`
+that is given no `title` (a device before 3.7.0) makes it from `args` by the same rule.
+
+`available_commands_update`:
 
 ```json
 { "sessionUpdate": "available_commands_update",

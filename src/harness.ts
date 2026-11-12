@@ -186,6 +186,27 @@ export const LOOP: {
     monitor: { timeout_seconds: { default: number; min: number; max: number }; excerpt_chars: number; output_max_bytes: number }
     texts: Record<"off" | "plan" | "denied" | "monitor_asks" | "monitor_denied" | "no_reply", string>
   }
+  /** Display (spec 3.7.0, harness/display.md): a tool call's title, states and facts, the blocks,
+   *  the phases that end a reply, what each card offers. */
+  display: {
+    title: { questions_join: string; patch_files: string[]; patch_join: string; keys: string[] }
+    states: string[]
+    no_duration: string[]
+    duration: { tenths_under_seconds: number }
+    change: string
+    exit: string
+    hits: string
+    hit: string
+    blocks: string[]
+    not_drawn: string[]
+    end: string[]
+    actions: {
+      approval: Record<"once" | "always" | "deny" | "deny_reason", string>
+      question: Record<"something_else", string>
+      plan: Record<"approve_edit" | "approve_manual" | "revise", string>
+    }
+    plain: { group: string; decimal: string }
+  }
   /** Progress (spec 3.4.0, harness/progress.md): the phases, their texts, the line. */
   progress: {
     phases: string[]

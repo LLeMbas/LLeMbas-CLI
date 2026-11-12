@@ -31,7 +31,8 @@ import { LOOP, TOOL_SPECS } from "../src/harness.ts"
 import { LEAD_TOOLS, memberTools, Team, TEAM_TOOLS, type Capacity } from "../src/team/team.ts"
 import { noteBlock } from "../src/session/prefix.ts"
 import { offer, subagentModel, type ModelInfo } from "../src/team/subagents.ts"
-import { progressLine, progressText, type Progress } from "../src/session/progress.ts"
+import { endLine, progressLine, progressText, type Progress } from "../src/session/progress.ts"
+import { callDuration, callFacts, callTitle, changeText, diffCounts, drawnBlock, type CallState } from "../src/session/display.ts"
 import { checkMode, requestRefusal, tighten, whoDecides, type Grant } from "../src/team/delegation.ts"
 import { fillPrompt as fillText } from "../src/prompt/fill.ts"
 import { isSilent, judgeCase, monitorHash, scheduledMode, stripSentinel } from "../src/acp/scheduled.ts"
@@ -354,6 +355,27 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
       }
       throw new Error(`team: unknown op ${String(st.op)}`)
     })
+  },
+  // Display (display.md, spec 3.7.0): a call's title, duration and facts; the line that ends a reply.
+  display: (c) => {
+    switch (c.show) {
+      case "title":
+        return { title: callTitle(c.args) ?? null }
+      case "duration":
+        return { duration: callDuration(c.state as CallState, c.ms as number | undefined) ?? null }
+      case "change": {
+        const n = diffCounts(c.diff as string)
+        return { ...n, text: changeText(n) }
+      }
+      case "facts":
+        return { facts: callFacts(c as { block?: string; diff?: string; exit?: number; hits?: number }) }
+      case "end":
+        return { line: endLine(c.progress as Progress | null, c.now as number) ?? null }
+      case "drawn":
+        return { drawn: drawnBlock(c.block as string | undefined) }
+      default:
+        throw new Error(`display: unknown show ${String(c.show)}`)
+    }
   },
   // Progress (progress.md, spec 3.4.0): the text and the line a client draws.
   progress: (c) => {
