@@ -17,6 +17,11 @@ import { splitPrototypes, titleFor, type PrototypeKind } from "../prototype/fenc
 import { savePrototype } from "../prototype/store.ts"
 import { CHARS_PER_TOKEN } from "../provider/tokens.ts"
 import { isNote } from "../session/prefix.ts"
+import { blockOf, callTitle, resultFacts as factsOf } from "../session/display.ts"
+import { endLine, endOf, type Progress } from "../session/progress.ts"
+import { num } from "./locale.ts"
+
+const resultFacts = (name: string, title: string | undefined, result: { title?: string; meta?: Record<string, unknown> }) => factsOf(blockOf(name), title, result, num)
 
 export type Item =
   /** `mid`: sent while the agent worked, and given to it at a step boundary. `machine`: the harness
@@ -31,7 +36,13 @@ export type Item =
       name: string
       args: unknown
       status: "running" | "done" | "error" | "denied"
+      /** The call's one short title (harness display.md §1), from its arguments: the same from
+       *  its start to its end. */
       title?: string
+      /** What its result adds after the title: `+3 −1`, `exit 2`, `14 hits`, the lines read. */
+      facts?: string[]
+      /** A failed call's error, or why a call was denied: its first line. */
+      note?: string
       ms?: number
       output?: string
       diff?: string
@@ -45,6 +56,9 @@ export type Item =
   | { kind: "notice"; id: string; text: string; level: "info" | "warn" }
   | { kind: "diff"; id: string; title: string; patch: string }
   | { kind: "error"; id: string; text: string }
+  /** How a reply that did not finish ended: the spec's line (`Stopped: by you`, `Failed: …`),
+   *  and for an error with more than one line, the rest of it. */
+  | { kind: "end"; id: string; line: string; failed: boolean; more?: string }
 
 export type Phase = "idle" | "waiting" | "thinking" | "writing" | "tools"
 
@@ -132,6 +146,15 @@ const byRunning = (a: JobInfo, b: JobInfo) => Number(b.state === "running") - Nu
 let seq = 0
 const nextId = () => `i${++seq}`
 
+/** The item that ends a reply which did not finish; none for one that did. */
+function endItem(reason: string, error?: string): Extract<Item, { kind: "end" }> | undefined {
+  const end = endOf(reason, error)
+  const line = end && endLine({ ...end, since: 0 } as Progress, 0, num)
+  if (!end || !line) return undefined
+  const more = end.phase === "failed" ? error?.trim().split("\n").slice(1).join("\n").trim() : undefined
+  return { kind: "end", id: nextId(), line, failed: end.phase === "failed", ...(more ? { more } : {}) }
+}
+
 export function createView(bus: Bus) {
   const [state, set] = createStore<ViewState>({ items: [], phase: "idle", busySince: 0, showReasoning: false, expandTools: false, queued: { texts: [], mode: "steer" }, jobs: [] })
   let stepStart = 0
@@ -139,6 +162,8 @@ export function createView(bus: Bus) {
   // streaming now, counted as it arrives so the number moves before the step's usage comes in.
   // Not in the store: the spinner reads them on its own tick.
   let inTask = false
+  /** The error of the turn that is ending, until its `done` draws it. */
+  let failure: string | undefined
   let taskTokens = 0
   let liveChars = 0
   const startTask = () => {
@@ -231,7 +256,7 @@ export function createView(bus: Bus) {
           set(
             produce((s) => {
               settle(s)
-              s.items.push({ kind: "tool", id: e.id, name: e.name, args: e.args, status: "running" })
+              s.items.push({ kind: "tool", id: e.id, name: e.name, args: e.args, status: "running", title: e.title ?? callTitle(e.args) })
               s.phase = "tools"
               s.preparing = undefined
             }),
@@ -244,7 +269,9 @@ export function createView(bus: Bus) {
             produce((it) => {
               if (it.kind !== "tool") return
               it.status = e.result.isError ? "error" : "done"
-              it.title = e.result.title ?? (e.result.isError ? e.result.output.split("\n")[0] : undefined)
+              it.facts = resultFacts(it.name, it.title, e.result)
+              // A failure that says nothing beside its title says its first line.
+              if (e.result.isError && !it.facts.length) it.note = e.result.output.trim().split("\n")[0]
               it.ms = e.ms
               it.output = e.result.output
               it.diff = typeof e.result.meta?.diff === "string" ? (e.result.meta.diff as string) : undefined
@@ -256,7 +283,7 @@ export function createView(bus: Bus) {
           )
           break
         case "tool_denied":
-          set(produce((s) => void s.items.push({ kind: "tool", id: e.id, name: e.name, args: undefined, status: "denied", title: e.reason.split("\n")[0] })))
+          set(produce((s) => void s.items.push({ kind: "tool", id: e.id, name: e.name, args: e.args, status: "denied", title: e.title ?? callTitle(e.args), note: e.reason.split("\n")[0] })))
           break
         case "retract":
           set(produce((s) => void s.items.splice(stepStart)))
@@ -323,7 +350,8 @@ export function createView(bus: Bus) {
           set(produce((s) => void s.items.push({ kind: "notice", id: nextId(), text: e.message, level: "warn" })))
           break
         case "error":
-          set(produce((s) => void s.items.push({ kind: "error", id: nextId(), text: e.message })))
+          // Said once, as the line that ends the reply (`Failed: …`), when the turn is done.
+          failure = e.message
           break
         case "done":
           set(
@@ -332,10 +360,13 @@ export function createView(bus: Bus) {
               s.phase = "idle"
               s.preparing = undefined
               s.progress = undefined
-              if (e.reason === "cancelled") s.items.push({ kind: "notice", id: nextId(), text: "cancelled", level: "info" })
-              if (e.reason === "steps") s.items.push({ kind: "notice", id: nextId(), text: "stopped at the step limit", level: "warn" })
+              // A call still running when the turn ended never got its result: failed, not spinning.
+              for (const it of s.items) if (it.kind === "tool" && it.status === "running" && !it.jobId) it.status = "error"
+              const end = endItem(e.reason, failure)
+              if (end) s.items.push(end)
             }),
           )
+          failure = undefined
           break
       }
     })
@@ -435,14 +466,14 @@ export function createView(bus: Bus) {
       set(produce((s) => void s.items.push({ kind: "tool", id, name: "bash", args: { command }, status: "running", title: `! ${command.split("\n")[0]}` })))
       return id
     },
-    shellEnd(id: string, r: { output: string; title?: string; isError?: boolean }, ms: number) {
+    shellEnd(id: string, r: { output: string; title?: string; isError?: boolean; meta?: Record<string, unknown> }, ms: number) {
       set(
         "items",
         (it) => it.kind === "tool" && it.id === id,
         produce((it) => {
           if (it.kind !== "tool") return
           it.status = r.isError ? "error" : "done"
-          it.title = `${it.title} · ${r.title?.split(" · ").pop() ?? ""}`
+          it.facts = resultFacts("bash", undefined, r)
           it.output = r.output
           it.ms = ms
         }),
@@ -472,8 +503,8 @@ export function createView(bus: Bus) {
     toggleTools() {
       set("expandTools", (v) => !v)
     },
-    /** Show a stored conversation. */
-    load(messages: Message[]) {
+    /** Show a stored conversation. `ended`: how its last turn ended, when it did not finish. */
+    load(messages: Message[], ended?: { reason: string; error?: string }) {
       const items: Item[] = []
       const tools = new Map<string, Extract<Item, { kind: "tool" }>>()
       for (const m of messages) {
@@ -501,7 +532,7 @@ export function createView(bus: Bus) {
               try {
                 args = JSON.parse(p.args)
               } catch {}
-              const t: Extract<Item, { kind: "tool" }> = { kind: "tool", id: p.id, name: p.name, args, status: "done" }
+              const t: Extract<Item, { kind: "tool" }> = { kind: "tool", id: p.id, name: p.name, args, status: "done", title: callTitle(args) }
               tools.set(p.id, t)
               items.push(t)
             }
@@ -511,10 +542,13 @@ export function createView(bus: Bus) {
           if (t) {
             t.status = m.isError ? "error" : "done"
             t.output = m.content
-            t.title = m.content.split("\n")[0]!.slice(0, 100)
+            // A stored call keeps its title (its arguments are stored); its duration and facts were not.
+            if (m.isError) t.note = m.content.trim().split("\n")[0]!.slice(0, 100)
           }
         }
       }
+      const end = ended ? endItem(ended.reason, ended.error) : undefined
+      if (end) items.push(end)
       set({ items, usage: undefined, used: undefined })
     },
   }

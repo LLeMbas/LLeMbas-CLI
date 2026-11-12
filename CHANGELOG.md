@@ -47,6 +47,22 @@ Harness spec 3.7.0: one display in every client.
   `cmd.exe` — started without `-l`, which none of them takes. (The runtime's pseudo-terminal is
   documented for Linux and macOS only, and there is no Windows build of the CLI yet: where a
   terminal cannot be opened, the refusal now says so in a sentence.)
+- **Tool calls are shown as spec 3.7.0 says.** A call has one title from its start to its end —
+  the command, the pattern, the path — the same in the transcript, on the progress line, in
+  `lembas run` and over the link (a `bash` call used to be titled by its description in the
+  transcript and by its command elsewhere; a `grep` by its directory on the progress line). After
+  the title come what the result adds (`+12 −3`, `exit 2`, `14 hits`, the lines read) and how long
+  it took; a denied call shows its reason and no time; a call cut off by a stop no longer stays
+  "running".
+- **A reply that was stopped or failed says so on the reply**, in the spec's words — `Stopped: by
+  you`, `Stopped: step limit`, `Stopped: budget`, `Failed: …` — once, in place of the separate
+  "cancelled" notice and the raw error line; a session opened again from the store says it again.
+- **One clock on the working line**: the phase's own (`Running bash: bun test · 12s`); once the
+  turn has gone on longer than the phase it reads `12s of 1m 05s`, instead of a second
+  `turn 1m 05s`.
+- **`Waiting for subagents: N running` counts the subagents that are running** (it always said 1).
+- **Numbers in your locale's format** (`LC_ALL`, `LC_NUMERIC`, `LANG`): token counts, rates, hits.
+  Durations stay as they are; with no locale set, English grouping as before.
 - **Completing an `@file` or moving through the prompt box now counts columns as the box does**:
   with a wide character (CJK, an emoji) before the cursor, the `@` list could replace the wrong
   part of the line.

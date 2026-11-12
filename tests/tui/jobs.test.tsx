@@ -244,7 +244,7 @@ test("ctrl+b moves the foreground command to the background: the call returns, t
   t.input.pressEnter()
   expect(await t.until("Allow once")).toBe(true)
   await t.input.typeText("y")
-  expect(await t.until("wait a while …")).toBe(true)
+  expect(await t.until("echo early; sleep 20; echo late …")).toBe(true)
   await Bun.sleep(300)
   t.input.pressKey("b", { ctrl: true })
   expect(await t.until("Moved on.")).toBe(true)

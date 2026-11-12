@@ -7,6 +7,9 @@ import type { PlanReply, PlanRequest } from "./tool/plan_submit.ts"
 import type { IconSet } from "./tui/icons.ts"
 import { loadTheme, type Theme } from "./tui/palette.ts"
 import { duration } from "./duration.ts"
+import { blockOf, callTitle, resultFacts } from "./session/display.ts"
+import { endLine, endOf, type Progress } from "./session/progress.ts"
+import { num } from "./tui/locale.ts"
 
 /** The theme's colours as 24-bit escapes — the same theme the TUI uses (`theme` in config.yaml). */
 function escapes(theme: Theme) {
@@ -26,6 +29,8 @@ export function renderPlain(bus: Bus, opts: { color: boolean; showReasoning: boo
   let inReasoning = false
   let atLineStart = true
   let started = false
+  const titles = new Map<string, string | undefined>()
+  let failure: string | undefined
   const out = (s: string) => {
     if (!s) return
     process.stdout.write(s)
@@ -53,11 +58,20 @@ export function renderPlain(bus: Bus, opts: { color: boolean; showReasoning: boo
         inReasoning = true
         out(c(C.think, e.text))
         break
+      case "tool_start":
+        titles.set(e.id, e.title ?? callTitle(e.args))
+        break
       case "tool_end": {
+        // A call as every client shows it (harness display.md): its one title, what the result
+        // adds, how long it took.
         const verb = e.name.padEnd(6)
         const mark = e.result.isError ? c(C.err, "✗") : ""
-        const title = e.result.title ?? (e.result.isError ? e.result.output.split("\n")[0]!.slice(0, 120) : "")
-        line(`${c(C.dim, "┊")} ${icon(e.name)} ${c(C.label, verb)} ${title} ${c(C.dim, duration(e.ms))} ${mark}`)
+        const title = titles.get(e.id)
+        titles.delete(e.id)
+        const facts = resultFacts(blockOf(e.name), title, e.result, num)
+        if (e.result.isError && !facts.length) facts.push(e.result.output.trim().split("\n")[0]!.slice(0, 120))
+        const after = [...facts, duration(e.ms)].join(" · ")
+        line(`${c(C.dim, "┊")} ${icon(e.name)} ${c(C.label, verb)} ${title ? `${title} ${c(C.dim, `· ${after}`)}` : c(C.dim, after)} ${mark}`)
         break
       }
       case "sub_tool":
@@ -72,7 +86,7 @@ export function renderPlain(bus: Bus, opts: { color: boolean; showReasoning: boo
         else if (e.state === "end") line(`${c(C.dim, "┊")} ${c(C.label, e.job.id)} ${e.job.state}${e.job.exit !== undefined ? ` (${e.job.exit === null ? "stopped" : `exit ${e.job.exit}`})` : ""} · ${e.job.description}`)
         break
       case "tool_denied":
-        line(`${c(C.dim, "┊")} ${theme.icons.denied} ${c(C.warn, e.name.padEnd(6))} ${e.reason.split("\n")[0]!.slice(0, 140)}`)
+        line(`${c(C.dim, "┊")} ${theme.icons.denied} ${c(C.warn, e.name.padEnd(6))} ${e.title ? `${e.title} ${c(C.dim, "·")} ` : ""}${e.reason.split("\n")[0]!.slice(0, 140)}`)
         break
       case "retract":
         if (!atLineStart) out("\n")
@@ -82,12 +96,20 @@ export function renderPlain(bus: Bus, opts: { color: boolean; showReasoning: boo
         line(c(C.warn, `⚠ ${e.message}`))
         break
       case "error":
-        line(c(C.err, `✗ ${e.message}`))
+        // Said once, as the line that ends the reply.
+        failure = e.message
         break
-      case "done":
+      case "done": {
         if (!atLineStart) out("\n")
-        if (e.reason === "steps") line(c(C.warn, "⚠ stopped at the step limit"))
+        // How a reply that did not finish ended: the spec's line (display.md §4).
+        const end = endOf(e.reason, failure)
+        const text = end && endLine({ ...end, since: 0 } as Progress, 0, num)
+        if (text) line(end!.phase === "failed" ? c(C.err, `✗ ${text}`) : c(C.warn, `■ ${text}`))
+        const more = end?.phase === "failed" ? failure?.trim().split("\n").slice(1).join("\n").trim() : ""
+        if (more) line(c(C.err, more))
+        failure = undefined
         break
+      }
     }
   })
 }

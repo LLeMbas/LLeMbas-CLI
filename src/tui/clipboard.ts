@@ -5,6 +5,8 @@
 // machine itself, the system clipboard through wl-copy / xclip / xsel / pbcopy. VTE terminals
 // (GNOME Terminal, LXTerminal, Tilix) take neither OSC 52 nor synchronized output.
 
+import { num } from "./locale.ts"
+
 export interface ClipboardRenderer {
   readonly capabilities: { readonly remote: boolean; readonly osc52_support: "supported" | "unsupported" | "unknown" } | null
   copyToClipboardOSC52(text: string): boolean
@@ -55,7 +57,7 @@ export function copyText(r: ClipboardRenderer, text: string, env: Env = process.
  *  here (its probe often answers "unknown" and copies anyway — LXTerminal does), so a copy that
  *  went out is not second-guessed. Only one that could go nowhere says how to copy instead. */
 export function copiedMessage(n: number, c: Copied): { text: string; warn: boolean } {
-  const what = `${n.toLocaleString("en")} character${n === 1 ? "" : "s"}`
+  const what = `${num(n)} character${n === 1 ? "" : "s"}`
   if (c.via.length) return { text: `copied ${what}`, warn: false }
   return { text: `could not copy ${what}: hold Shift while you drag to select with the terminal itself, then Ctrl+Shift+C (or set mouse: false in config.yaml)`, warn: true }
 }

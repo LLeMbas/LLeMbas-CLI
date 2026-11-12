@@ -1,7 +1,8 @@
 // Display (harness spec 3.7.0, harness/display.md): what every client says about a tool call, the
 // end of a reply and a number — the title, the states, the facts after the title. Pure: the TUI,
 // the progress tracker and the ACP agent all read these.
-import { LOOP } from "../harness.ts"
+import { LOOP, TOOL_SPECS } from "../harness.ts"
+import { resolveCall } from "../tool/names.ts"
 import { fillPrompt } from "../prompt/fill.ts"
 import { duration } from "../duration.ts"
 
@@ -149,3 +150,26 @@ export function callFacts(f: { block?: string; diff?: string; exit?: number | nu
 
 /** Whether a tool's block is drawn as a call at all (display.md §3). */
 export const drawnBlock = (block: string | undefined) => !D.not_drawn.includes(block ?? "tool")
+
+/** What a finished call's result adds after its title in this client's transcript: the spec's
+ *  facts where the block has them (display.md §2), else what the tool's own summary says beyond
+ *  the title ("anything else an implementation knows"): the lines read, a job's state. */
+export function resultFacts(block: string | undefined, title: string | undefined, result: { title?: string; meta?: Record<string, unknown> }, num: NumberFormat = plainNumber): string[] {
+  const meta = result.meta ?? {}
+  const facts = callFacts(
+    { block, diff: typeof meta.diff === "string" ? meta.diff : undefined, exit: typeof meta.exit === "number" ? meta.exit : undefined, hits: typeof meta.hits === "number" ? meta.hits : undefined },
+    num,
+  )
+  // An edit says its change and a command that exited says its code (none for 0): nothing more.
+  if (facts.length || block === "edit" || (block === "shell" && typeof meta.exit === "number")) return facts
+  const said = result.title?.trim()
+  if (!said || said === title) return []
+  const cut = said.lastIndexOf(" · ")
+  if (cut >= 0) return [said.slice(cut + 3)]
+  if (title && said.startsWith(title)) return [said.slice(title.length).trim()].filter(Boolean)
+  return [said]
+}
+
+/** How a tool's call is read (its `block` in the spec), under its former names too; a tool the
+ *  spec does not know (an MCP tool) is the generic block. */
+export const blockOf = (name: string): string => TOOL_SPECS[resolveCall(name, {}).name]?.block ?? "tool"

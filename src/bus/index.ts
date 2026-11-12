@@ -26,9 +26,10 @@ export type Event =
   | { type: "tool_call_delta"; index: number; name?: string; argsDelta: string }
   /** The server reading the prompt, before the reply (llama.cpp): tokens in all, from its cache, read so far. */
   | { type: "progress"; total: number; cache: number; processed: number; ms: number }
-  | { type: "tool_start"; id: string; name: string; args: unknown }
+  /** `title`: the call's one short title (harness display.md §1), made from `args` when it starts. */
+  | { type: "tool_start"; id: string; name: string; args: unknown; title?: string }
   | { type: "tool_end"; id: string; name: string; result: ToolResult; ms: number }
-  | { type: "tool_denied"; id: string; name: string; reason: string }
+  | { type: "tool_denied"; id: string; name: string; reason: string; args?: unknown; title?: string }
   | {
       type: "usage"
       usage: Usage

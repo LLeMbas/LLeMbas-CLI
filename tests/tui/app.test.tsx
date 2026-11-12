@@ -32,7 +32,8 @@ test("a prompt runs; a bash call asks; y allows it; the answer renders as markdo
   const f = t.frame()
   expect(f).toContain("❯ Ask") // the y that answered did not also land in the prompt
   expect(f).toContain("┃ make a file")
-  expect(f).toContain("┊ 💻 bash   Write out.txt · exit 0")
+  // The call's one title — the command — and, finished, how long it took (spec 3.7.0 display.md).
+  expect(f).toMatch(/┊ 💻 bash   echo hi > out\.txt · \d+\.\ds/)
   expect(f).not.toContain("## Done") // heading marker concealed
   expect(f).toContain("ctx 12k/33k 37%")
   expect(await Bun.file(`${t.cwd}/out.txt`).text()).toBe("hi\n")
@@ -385,7 +386,8 @@ test("while it thinks: the thought says only Thinking…; the line at the bottom
   expect(await t.until("~15 tokens")).toBe(true)
   const frame = t.frame()
   expect(frame).toMatch(/^\s*Thinking\.{1,3}\s*$/m)
-  expect(frame).toMatch(/Thinking · \d+s · turn \d+s · ~15 tokens · esc to stop/)
+  // One clock: the phase's own; the turn's time joins it ("of 12s") only once it differs.
+  expect(frame).toMatch(/Thinking · \d+s( of \d+s)? · ~15 tokens · esc to stop/)
   expect(frame).not.toContain("HIDDEN-WHILE-THINKING")
   expect(await t.until("Done thinking.")).toBe(true)
   expect(t.frame()).toMatch(/Thought for \d\.\ds · ~15 tokens/)
@@ -403,7 +405,7 @@ test("the line at the bottom counts the whole task: the clock and the tokens go 
   // The spinner line redraws on its own tick, slower than the reply's text: on a slow machine the
   // frame that first shows "Half" can still carry the line from before. The 1.2 s gap holds this
   // state, so wait for the line within it rather than reading the first frame.
-  const counted = /Writing(: [\d.]+ tok\/s)? · \d+s · turn \d+s · ~4\d tokens · esc to stop/
+  const counted = /Writing(: [\d.]+ tok\/s)? · \d+s( of \d+s)? · ~4\d tokens · esc to stop/
   for (let i = 0; i < 20 && !counted.test(t.frame()); i++) await Bun.sleep(50), await t.settle()
   expect(t.frame()).toMatch(counted)
   expect(await t.until("way.")).toBe(true)
@@ -881,7 +883,7 @@ test("esc mid-reply, then ctrl+g: it continues, and the model sees what it had a
   t.input.pressEnter()
   expect(await t.until("Step one is done.")).toBe(true)
   t.input.pressEscape()
-  expect(await t.until("cancelled")).toBe(true)
+  expect(await t.until("■ Stopped: by you")).toBe(true)
   await t.settle()
   t.input.pressKey("g", { ctrl: true })
   expect(await t.until("↻ continue")).toBe(true)
@@ -930,7 +932,7 @@ test("while the server reads a long prompt: the line at the bottom says how far 
   t.input.pressEnter()
   // At 100 columns the line is cut in its middle; its start and its end are what is checked.
   expect(await t.until("~1m 40s left")).toBe(true)
-  expect(t.frame()).toContain("Reading the prompt: 90000 / 140000 tokens (64%")
+  expect(t.frame()).toContain("Reading the prompt: 90,000 / 140,000 tokens (64%")
   expect(await t.until("Read it all.")).toBe(true)
   await t.settle()
   expect(t.frame()).not.toContain("Reading the prompt")

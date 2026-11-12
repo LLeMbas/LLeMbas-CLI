@@ -31,6 +31,7 @@ import { ToolError } from "../tool/tool.ts"
 import { dropAttachments, preparePrompt, storedAttachments } from "./prompt.ts"
 import { addPendingDeleted, clearPendingDeleted, pendingDeleted } from "./pending.ts"
 import { pickShell, shellLaunch } from "./shellrc.ts"
+import { callTitle } from "../session/display.ts"
 import { sessionTurnFile, sessionTurns, TurnLog } from "./turns.ts"
 import { expandHome } from "../config/paths.ts"
 import { asMode, MODES, type Mode } from "../config/schema.ts"
@@ -303,7 +304,7 @@ export function permissionParams(sessionId: string, req: AskRequest, o: { patien
     sessionId,
     toolCall: {
       toolCallId: o.toolCallId ?? crypto.randomUUID(),
-      title: req.request.command ?? req.tool,
+      title: callTitle(req.args) ?? req.request.command ?? req.tool,
       kind: toolKind(req.tool),
       status: "pending",
       rawInput: req.args,
@@ -1442,17 +1443,26 @@ export class AcpAgent {
       case "reasoning":
         return this.update(s, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: e.text } })
       case "tool_start":
-        return this.update(s, { sessionUpdate: "tool_call", toolCallId: e.id, title: e.name, kind: toolKind(e.name), status: "in_progress", rawInput: e.args })
+        // One title for a call (display.md §1): the same as the transcript's and the progress line's.
+        return this.update(s, { sessionUpdate: "tool_call", toolCallId: e.id, title: e.title ?? callTitle(e.args) ?? e.name, kind: toolKind(e.name), status: "in_progress", rawInput: e.args })
       case "tool_end":
         return this.update(s, {
           sessionUpdate: "tool_call_update",
           toolCallId: e.id,
           status: e.result.isError ? "failed" : "completed",
-          ...(e.result.title ? { title: e.result.title } : {}),
           content: [{ type: "content", content: { type: "text", text: e.result.output.slice(0, 20_000) } }],
         })
       case "tool_denied":
-        return this.update(s, { sessionUpdate: "tool_call_update", toolCallId: e.id, status: "failed", content: [{ type: "content", content: { type: "text", text: e.reason } }] })
+        // Refused, not run: `failed` to a plain ACP client, `denied` to one that reads _meta.lembas.
+        // Refused, not run: `failed` to a plain ACP client, `denied` to one that reads _meta.lembas.
+        return this.update(s, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: e.id,
+          status: "failed",
+          ...(e.title ? { title: e.title } : {}),
+          content: [{ type: "content", content: { type: "text", text: e.reason } }],
+          _meta: { lembas: { denied: true } },
+        })
       case "plan":
         return this.update(s, planUpdate(e.plan))
       case "mode":

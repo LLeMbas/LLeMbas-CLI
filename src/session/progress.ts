@@ -3,6 +3,7 @@
 import { LOOP } from "../harness.ts"
 import { fillPrompt } from "../prompt/fill.ts"
 import { duration } from "../duration.ts"
+import { callTitle, plainNumber, type NumberFormat } from "./display.ts"
 
 const P = LOOP.progress
 
@@ -40,29 +41,28 @@ export const PHASES = P.phases as readonly Phase[]
 
 const fill = (t: string, v: Record<string, string | number>) => fillPrompt(t, Object.fromEntries(Object.entries(v).map(([k, x]) => [k, String(x)])))
 
-/** A call's short title as `what`: one line, at most what_max characters. */
-export function shortWhat(s: string | undefined): string | undefined {
-  if (!s) return undefined
-  const line = s.split("\n")[0]!.trim()
-  if (!line) return undefined
-  return line.length > P.what_max ? `${line.slice(0, P.what_max - 1)}…` : line
+/** An error or a reason as one line (progress.md §2: "one line"). */
+export function oneLine(s: string | undefined): string | undefined {
+  const line = s?.trim().split("\n")[0]?.trim()
+  return line || undefined
 }
 
-/** The phase's text (progress.md §2), its fields filled; `now` for retrying's countdown. */
-export function progressText(p: Progress, now = Date.now()): string {
+/** The phase's text (progress.md §2), its fields filled; `now` for retrying's countdown; `num`
+ *  how numbers are written — plain unless the client passes its locale's (display.md §6). */
+export function progressText(p: Progress, now = Date.now(), num: NumberFormat = plainNumber): string {
   const T = P.texts as Record<string, string>
   switch (p.phase) {
     case "queued":
-      return p.ahead !== undefined ? fill(T["queued.ahead"]!, { ahead: p.ahead }) : T.queued!
+      return p.ahead !== undefined ? fill(T["queued.ahead"]!, { ahead: num(p.ahead) }) : T.queued!
     case "waiting_for_model":
       return fill(T.waiting_for_model!, { model: p.model ?? "", reason: (P.reason as Record<string, string>)[p.reason ?? ""] ?? p.reason ?? "" })
     case "loading_model":
       return fill(T.loading_model!, { model: p.model ?? "" })
     case "reading_prompt":
       if (p.total === undefined || p.done === undefined || p.total <= 0) return T["reading_prompt.bare"]!
-      return fill(T.reading_prompt!, { done: p.done, total: p.total, percent: Math.floor((p.done * 100) / p.total) })
+      return fill(T.reading_prompt!, { done: num(p.done), total: num(p.total), percent: num(Math.floor((p.done * 100) / p.total)) })
     case "writing":
-      return p.rate !== undefined && Number.isFinite(p.rate) ? fill(T.writing!, { rate: p.rate.toFixed(1) }) : T["writing.bare"]!
+      return p.rate !== undefined && Number.isFinite(p.rate) ? fill(T.writing!, { rate: num(p.rate, 1) }) : T["writing.bare"]!
     case "running_tool":
       return p.what ? fill(T.running_tool!, { tool: p.tool ?? "", what: p.what }) : fill(T["running_tool.bare"]!, { tool: p.tool ?? "" })
     case "waiting_for_person": {
@@ -71,7 +71,7 @@ export function progressText(p: Progress, now = Date.now()): string {
       return fill(T.waiting_for_person!, { what })
     }
     case "waiting_for_subagents":
-      return fill(T.waiting_for_subagents!, { running: p.running ?? 0 })
+      return fill(T.waiting_for_subagents!, { running: num(p.running ?? 0) })
     case "retrying": {
       const left = Math.max(0, (p.in ?? 0) - Math.floor((now - p.since) / 1000))
       return fill(T.retrying!, { in: left, reason: p.reason ?? "" })
@@ -87,17 +87,25 @@ export function progressText(p: Progress, now = Date.now()): string {
 
 /** The line a client draws (progress.md §3): the text and the time since it began, or the text
  *  alone for stopped and failed. */
-export function progressLine(p: Progress, now = Date.now()): string {
-  const text = progressText(p, now)
+export function progressLine(p: Progress, now = Date.now(), num: NumberFormat = plainNumber): string {
+  const text = progressText(p, now, num)
   if ((P.no_elapsed as string[]).includes(p.phase)) return text
   return fill(P.line, { text, elapsed: duration(now - p.since, true) })
 }
 
 /** The line that stays on a reply that did not finish (display.md §4): the text of `stopped` or
  *  `failed`, alone; nothing for a reply that finished, or a phase that is not an end. */
-export function endLine(p: Progress | null | undefined, now = Date.now()): string | undefined {
+export function endLine(p: Progress | null | undefined, now = Date.now(), num: NumberFormat = plainNumber): string | undefined {
   if (!p || !LOOP.display.end.includes(p.phase)) return undefined
-  return progressLine(p, now)
+  return progressLine(p, now, num)
+}
+
+/** How a turn that did not finish ended, from the engine's `done` reason (and the error said
+ *  before it): the progress whose line stays on the reply (display.md §4). */
+export function endOf(reason: string, error?: string): Pick<Progress, "phase" | "reason"> | undefined {
+  if (reason === "stop") return undefined
+  if (reason === "error") return { phase: "failed", reason: oneLine(error) ?? "error" }
+  return { phase: "stopped", reason: reason === "cancelled" ? "person" : reason }
 }
 
 /** Whether two objects are the same phase for the same thing (so `since` is kept). */
@@ -110,14 +118,6 @@ export function samePhase(a: Progress | null | undefined, b: Omit<Progress, "sin
   return true
 }
 
-/** What a tool call does, in a line (`what` of running_tool): the command, the path, the query. */
-export function callWhat(args: unknown): string | undefined {
-  if (!args || typeof args !== "object") return undefined
-  const a = args as Record<string, unknown>
-  for (const k of ["command", "path", "file_path", "pattern", "query", "url", "description", "name"]) if (typeof a[k] === "string" && a[k]) return shortWhat(a[k] as string)
-  return undefined
-}
-
 type BusLike = { on(fn: (e: any) => void): () => void; emit(e: any): void }
 
 /** The progress of one engine, derived from the events it emits (progress.md §4), and said on its
@@ -128,6 +128,7 @@ export class ProgressTracker {
   current: Progress | null = null
   private rate: number | undefined
   private running = new Map<string, Omit<Progress, "since">>()
+  private subagents = new Set<string>()
   private lastEmit = 0
   private pendingTimer: ReturnType<typeof setTimeout> | undefined
   private error: string | undefined
@@ -196,6 +197,19 @@ export class ProgressTracker {
     this.bus.emit({ type: "phase", progress: this.current ? { ...this.current } : null })
   }
 
+  /** waiting_for_subagents with the count as it is now: the foreground task calls of this step,
+   *  or every subagent of the session that is running, whichever is more. */
+  private counted(p: Omit<Progress, "since">): Omit<Progress, "since"> {
+    if (p.phase !== "waiting_for_subagents") return p
+    const calls = [...this.running.values()].filter((x) => x.phase === "waiting_for_subagents").length
+    return { ...p, running: Math.max(1, calls, this.subagents.size) }
+  }
+
+  /** The count changed while the phase holds: the same phase, its data anew (`since` kept). */
+  private recount() {
+    if (this.current?.phase === "waiting_for_subagents") this.set(this.counted({ phase: "waiting_for_subagents" }))
+  }
+
   private on(e: any) {
     switch (e.type) {
       case "task":
@@ -220,22 +234,31 @@ export class ProgressTracker {
         return
       case "tool_start": {
         const a = (e.args ?? {}) as Record<string, unknown>
-        const p: Omit<Progress, "since"> = e.name === "task" && a.background !== true ? { phase: "waiting_for_subagents", running: 1 } : { phase: "running_tool", tool: e.name, ...(callWhat(e.args) ? { what: callWhat(e.args) } : {}) }
+        // One title for a call (display.md §1): the event's, made when the call started.
+        const what: string | undefined = e.title ?? callTitle(e.args)
+        const p: Omit<Progress, "since"> = e.name === "task" && a.background !== true ? { phase: "waiting_for_subagents", running: 1 } : { phase: "running_tool", tool: e.name, ...(what ? { what } : {}) }
         this.running.set(e.id, p)
-        if (this.running.size === 1) this.set(p)
+        if (this.running.size === 1) this.set(this.counted(p))
+        else this.recount()
         return
       }
       case "tool_end": {
         this.running.delete(e.id)
         const next = this.running.values().next()
-        if (!next.done) this.set(next.value)
+        if (!next.done) this.set(this.counted(next.value))
         return
       }
+      case "job":
+        // The subagents working now, for waiting_for_subagents' count: this session's jobs.
+        if (e.job?.kind !== "subagent") return
+        if (e.state !== "end" && e.job.state === "running") this.subagents.add(e.job.id)
+        else this.subagents.delete(e.job.id)
+        return this.recount()
       case "notice":
-        if (e.retry) this.set({ phase: "retrying", reason: shortWhat(e.retry.reason) ?? "", in: e.retry.in, ...(e.retry.attempt ? { attempt: e.retry.attempt } : {}) })
+        if (e.retry) this.set({ phase: "retrying", reason: oneLine(e.retry.reason) ?? "", in: e.retry.in, ...(e.retry.attempt ? { attempt: e.retry.attempt } : {}) })
         return
       case "error":
-        this.error = shortWhat(String(e.message ?? "")) ?? "error"
+        this.error = oneLine(String(e.message ?? "")) ?? "error"
         return
       case "done":
         this.running.clear()

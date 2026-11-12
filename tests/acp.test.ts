@@ -332,7 +332,32 @@ test("an approval nobody answers is a denial", async () => {
   await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "x" }] })
   const u = updates.find((x) => x.sessionUpdate === "tool_call_update" && x.toolCallId === "t1")
   expect(u.status).toBe("failed")
+  // Refused, not run (spec 3.7.0 display.md): marked denied, under the call's one title.
+  expect(u._meta.lembas.denied).toBe(true)
+  expect(u.title).toBe("echo never")
   expect(fake.requests[1].messages.at(-1).content).toContain("Nobody answered")
+})
+
+test("a tool call's title over the link is the call's short title, and its result does not change it", async () => {
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "t1", "bash", JSON.stringify({ command: "echo one\necho two", description: "Say two things" })), toolCall(1, "t2", "job_list", "{}")] },
+    { chunks: [delta({ content: "ok" })] },
+  ])
+  config(fake.url, "mode: auto\n")
+  const root = project()
+  const { c, updates, events } = await client({ roots: [root], maxMode: "auto", approvalTimeoutMs: 50, requireTrust: true })
+  const s: any = await c.request("session/new", { cwd: root })
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "x" }] })
+  const call = updates.find((x) => x.sessionUpdate === "tool_call" && x.toolCallId === "t1")
+  expect(call.title).toBe("echo one")
+  // A call with nothing to title it by goes by its tool's name.
+  expect(updates.find((x) => x.sessionUpdate === "tool_call" && x.toolCallId === "t2").title).toBe("job_list")
+  const done = updates.find((x) => x.sessionUpdate === "tool_call_update" && x.toolCallId === "t1")
+  expect(done.status).toBe("completed")
+  expect(done.title).toBeUndefined()
+  // The same title on the engine's own event, and as `what` of the progress.
+  expect(events.find((e: any) => e.type === "tool_start" && e.id === "t1").title).toBe("echo one")
+  expect(events.find((e: any) => e.type === "phase" && e.progress?.phase === "running_tool").progress.what).toBe("echo one")
 })
 
 test("the link dials out with the token, says hello, is driven, and stops when refused", async () => {

@@ -72,7 +72,7 @@ export function Boot(p: { options: TuiOptions; onQuit: () => void; onReload?: (a
       else if (id)
         void releaseForResume(id).then((why) => {
           if (why) fresh(`not resumed: ${why}`)
-          else view.load(a.resume(id))
+          else view.load(a.resume(id), a.engine.storedEnd())
         })
       else fresh("no earlier session in this project to continue")
     }

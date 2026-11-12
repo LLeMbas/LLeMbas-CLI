@@ -24,8 +24,21 @@ import { memoryResults, presentIds, ResultContext } from "./results.ts"
 import { render } from "../plan/plan.ts"
 import { personTexts } from "../team/subagents.ts"
 import { ProgressTracker } from "./progress.ts"
+import { callTitle } from "./display.ts"
 import type { Verdict } from "../team/delegation.ts"
 import { compactAsk, isNote, NO_CHANGING, noteFor, offeredFor, PREFIX_META, summaryOf, today, toldAt, unavailable, type Changing, type Kept, type Now, type Requirement, type Told } from "./prefix.ts"
+
+/** A refused call's arguments and title, for those who draw it: the arguments as the model wrote
+ *  them, when they are an object at all. */
+function deniedTitle(raw: string): { args?: unknown; title?: string } {
+  try {
+    const args: unknown = raw.trim() ? JSON.parse(raw) : {}
+    const title = callTitle(args)
+    return { args, ...(title ? { title } : {}) }
+  } catch {
+    return {}
+  }
+}
 
 export interface EngineOptions {
   bus: Bus
@@ -137,6 +150,8 @@ const MAX_NUDGES = LOOP.nudges.max
 const wrapUpText = (limit: string) => fillPrompt(LOOP.wrap_up.message, { limit })
 /** The session_meta key the plan is kept under. */
 export const PLAN_META = "plan"
+/** How the session's last turn ended when it did not finish (display.md §4): `{ reason, error? }`. */
+export const END_META = "ended"
 
 export class Engine {
   messages: Message[] = []
@@ -205,6 +220,15 @@ export class Engine {
 
   constructor(readonly o: EngineOptions) {
     this.progress = new ProgressTracker(o.bus)
+    // How a turn ended is kept with the session, so a reply that was stopped or failed says so
+    // again when the session is shown from the store (display.md §4).
+    let failure: string | undefined
+    o.bus.on((e) => {
+      if (e.type === "error") failure = e.message
+      if (e.type !== "done") return
+      if (this.o.store && this.sessionId) this.o.store.setMeta(this.sessionId, END_META, e.reason === "stop" ? null : { reason: e.reason, ...(e.reason === "error" && failure ? { error: failure } : {}) })
+      failure = undefined
+    })
     this.mode = o.mode
     this._effort = o.effort
     this.model = o.model
@@ -351,6 +375,13 @@ export class Engine {
    *  only at a result still in this conversation. */
   private resultsFor(sessionId: string | undefined): ResultContext {
     return new ResultContext(this.o.store && sessionId ? this.o.store.results(sessionId) : memoryResults(), () => presentIds(this.messages))
+  }
+
+  /** How this session's last turn ended, when it did not finish — from the store. */
+  storedEnd(): { reason: string; error?: string } | undefined {
+    if (!this.o.store || !this.sessionId) return undefined
+    const e = this.o.store.meta<{ reason?: unknown; error?: unknown } | null>(this.sessionId, END_META)
+    return e && typeof e.reason === "string" ? { reason: e.reason, ...(typeof e.error === "string" ? { error: e.error } : {}) } : undefined
   }
 
   /** The plan the store holds for this session, if any. */
@@ -843,7 +874,7 @@ export class Engine {
         const decided = await this.decide(call, toolMap, cut)
         if ("result" in decided) {
           results.set(call.id, decided.result)
-          if (decided.denied) bus.emit({ type: "tool_denied", id: call.id, name: call.name, reason: decided.result.output })
+          if (decided.denied) bus.emit({ type: "tool_denied", id: call.id, name: call.name, reason: decided.result.output, ...deniedTitle(call.args) })
         } else {
           runnable.push({ call, ...decided })
           argsOf.set(call.id, decided.args)
@@ -883,7 +914,8 @@ export class Engine {
       for (const group of groups) {
         await Promise.all(
           group.map(async ({ call, tool, args, edited }) => {
-            bus.emit({ type: "tool_start", id: call.id, name: call.name, args })
+            const title = callTitle(args)
+            bus.emit({ type: "tool_start", id: call.id, name: call.name, args, ...(title ? { title } : {}) })
             const t0 = performance.now()
             let result: ToolResult
             try {

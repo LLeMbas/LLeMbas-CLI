@@ -3,6 +3,8 @@ import { duration } from "../../duration.ts"
 import { progressLine } from "../../session/progress.ts"
 import { useTui } from "../context.ts"
 import { fmtTokens } from "./status.tsx"
+import { LOOP } from "../../harness.ts"
+import { num } from "../locale.ts"
 
 /** "reading the prompt 64% · 90k of 140k · ~2m left": the server's own count (llama.cpp's
  *  return_progress). The time left is guessed from the reading so far, once there is enough of it;
@@ -34,6 +36,15 @@ export function Spinner() {
   const sp = () => theme().spinner
   const pick = (list: string[], every: number) => list[Math.floor(tick() / every) % list.length] ?? ""
   const elapsed = () => (tick(), view.state.busySince ? duration(Date.now() - view.state.busySince, true) : "0s")
+  // One clock on the line. The spec's line carries the phase's own (`Thinking · 12s`,
+  // progress.md §3); the turn's time is said beside it only once it is another number — the turn
+  // has gone through more than this phase — and then as "12s of 1m 05s", not as a second clock.
+  const ofTurn = () => {
+    const s = view.state
+    if (!s.now || (LOOP.progress.no_elapsed as string[]).includes(s.now.phase) || !s.busySince) return ""
+    const turn = Date.now() - s.busySince
+    return Math.floor(turn / 1000) - Math.floor((Date.now() - s.now.since) / 1000) >= 2 ? ` of ${duration(turn, true)}` : ""
+  }
   const tokens = () => {
     tick()
     const { n, estimated } = view.taskTokens()
@@ -49,7 +60,7 @@ export function Spinner() {
       const reading = s.now.phase === "reading_prompt" && s.progress
       const now = reading ? { ...s.now, done: s.progress!.done, total: s.progress!.total } : s.now
       const eta = reading ? etaOf(s.progress!) : ""
-      return `${progressLine(now)}${eta ? ` · ${eta}` : ""}`
+      return `${progressLine(now, Date.now(), num)}${ofTurn()}${eta ? ` · ${eta}` : ""}`
     }
     if (s.preparing) return `preparing ${s.preparing}`
     if (s.phase === "waiting" && s.progress) return reading(s.progress)
@@ -64,7 +75,8 @@ export function Spinner() {
         <span style={{ fg: theme().colors.accent }}>{pick(sp().frames, 1)} </span>
         <span style={{ fg: theme().colors.muted }}>{what()}{view.state.now ? " · " : "… "}</span>
         <span style={{ fg: theme().colors.dim }}>
-          {view.state.now ? `turn ${elapsed()}` : elapsed()} · {tokens()} · esc to stop
+          {view.state.now ? "" : `${elapsed()} · `}
+          {tokens()} · esc to stop
         </span>
       </text>
     </box>

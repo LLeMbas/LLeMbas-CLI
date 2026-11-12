@@ -466,7 +466,7 @@ export class JobRegistry {
         case "tool_end":
         case "tool_denied": {
           job.tools = (job.tools ?? 0) + 1
-          const title = e.type === "tool_end" ? (e.result.title ?? e.name) : `denied — ${e.reason.split("\n")[0]!.slice(0, 80)}`
+          const title = e.type === "tool_end" ? (e.result.title ?? e.name) : `${e.title ? `${e.title} · ` : ""}denied — ${e.reason.split("\n")[0]!.slice(0, 80)}`
           const isError = e.type === "tool_denied" || e.result.isError === true
           this.append(job, `\n[${e.name}] ${title}${isError && e.type === "tool_end" ? " (error)" : ""}\n`)
           if (job.ownerCallId) owner?.bus.emit({ type: "sub_tool", callId: job.ownerCallId, jobId: job.id, name: e.name, title, ...(isError ? { isError } : {}) })

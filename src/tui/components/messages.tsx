@@ -5,30 +5,16 @@ import { estimateTokens } from "../../provider/tokens.ts"
 import { useTui } from "../context.ts"
 import type { Item } from "../state.ts"
 import { clipDiff } from "../diffclip.ts"
-import { TOOL_SPECS } from "../../harness.ts"
-import { resolveCall } from "../../tool/names.ts"
+import { blockOf, callDuration, callTitle, drawnBlock, type CallState } from "../../session/display.ts"
+import { num } from "../locale.ts"
 import { splitPrototypes } from "../../prototype/fence.ts"
 
 /** A call the transcript does not draw: a plan change (the panel above the prompt follows it) or a
  *  tool the spec marks hidden — under its former name too (a stored session's `todo`). */
-const undrawn = (name: string) => {
-  const block = TOOL_SPECS[resolveCall(name, {}).name]?.block
-  return block === "plan" || block === "hidden"
-}
+const undrawn = (name: string) => !drawnBlock(blockOf(name))
 
 const FILETYPES: Record<string, string> = { ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", mjs: "javascript", md: "markdown", zig: "zig" }
 export const filetypeOf = (diff: string) => FILETYPES[/^\+\+\+ \S*\.(\w+)/m.exec(diff)?.[1] ?? ""]
-
-/** The one-line summary of a call before its result says more, e.g. the command or the path. */
-function argSummary(args: unknown): string {
-  if (!args || typeof args !== "object") return ""
-  const a = args as Record<string, unknown>
-  if (Array.isArray(a.questions)) return (a.questions as { header?: string }[]).map((q) => q.header).filter(Boolean).join(" · ") || "asking"
-  if (Array.isArray(a.phases)) return String(a.title ?? "").slice(0, 120)
-  if (typeof a.patch === "string") return [...a.patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((m) => m[1]).join(", ")
-  const v = a.description ?? a.command ?? a.path ?? a.pattern ?? a.id ?? ""
-  return String(v).split("\n")[0]!.slice(0, 120)
-}
 
 function UserMessage(p: { item: Extract<Item, { kind: "user" }> }) {
   const { theme } = useTui()
@@ -95,7 +81,7 @@ function Reasoning(p: { item: Extract<Item, { kind: "reasoning" }> }) {
   })
   const tokens = () => {
     const n = p.item.tokens ?? estimateTokens(p.item.text)
-    return `${p.item.tokens === undefined ? "~" : ""}${n.toLocaleString("en")} token${n === 1 ? "" : "s"}`
+    return `${p.item.tokens === undefined ? "~" : ""}${num(n)} token${n === 1 ? "" : "s"}`
   }
   const dots = () => ".".repeat(1 + (Math.floor((now() - p.item.started) / 400) % 3))
   const line = () => (p.item.streaming ? `Thinking${dots()}` : p.item.ms !== undefined ? `Thought for ${duration(p.item.ms)} · ${tokens()}` : `Thought · ${tokens()}`)
@@ -124,8 +110,15 @@ function ToolLine(p: { item: Extract<Item, { kind: "tool" }> }) {
   const { theme, view } = useTui()
   const c = () => theme().colors
   const emoji = () => (p.item.status === "denied" ? theme().icons.denied : (theme().toolEmoji[p.item.name] ?? (p.item.name.startsWith("mcp__") ? theme().icons.mcp : theme().icons.other)))
-  const title = () => p.item.title ?? argSummary(p.item.args)
-  const time = () => (p.item.status === "running" ? "…" : p.item.ms !== undefined ? duration(p.item.ms) : "")
+  // One title for a call, in every state (display.md §1); what its result adds comes after it.
+  const title = () => p.item.title ?? callTitle(p.item.args) ?? ""
+  const state = (): CallState => (p.item.status === "error" ? "failed" : p.item.status)
+  /** After the title: the facts, a failure's or a refusal's first line, and how long it took —
+   *  never for a call that is running (a mark) or was denied (it did not run). */
+  const after = () => {
+    if (state() === "running") return "…"
+    return [...(p.item.facts ?? []), ...(p.item.note ? [p.item.note] : []), ...[callDuration(state(), p.item.ms)].filter((x): x is string => !!x)].join(" · ")
+  }
   const tail = () => (p.item.output ?? "").trimEnd().split("\n").slice(-12).join("\n")
   // Short in the transcript, whole with ctrl+o; always a diff the renderer can parse.
   const shown = () => (view.state.expandTools ? { diff: p.item.diff ?? "", hidden: 0 } : clipDiff(p.item.diff ?? "", 24))
@@ -135,8 +128,8 @@ function ToolLine(p: { item: Extract<Item, { kind: "tool" }> }) {
         <span style={{ fg: c().dim }}>{theme().branding.toolPrefix} </span>
         {emoji()}{" "}
         <span style={{ fg: p.item.status === "denied" ? c().warn : c().label, attributes: p.item.status === "denied" ? TextAttributes.STRIKETHROUGH : 0 }}>{p.item.name.padEnd(6)}</span>{" "}
-        <span style={{ fg: p.item.status === "error" ? c().error : p.item.status === "denied" ? c().warn : c().text }}>{title()}</span>{" "}
-        <span style={{ fg: c().dim }}>{time()}</span>
+        <span style={{ fg: p.item.status === "error" ? c().error : p.item.status === "denied" ? c().warn : c().text }}>{title()}</span>
+        <span style={{ fg: c().dim }}>{after() ? `${title() && after() !== "…" ? " · " : " "}${after()}` : ""}</span>
         <Show when={p.item.status === "error"}>
           <span style={{ fg: c().error }}> ✗</span>
         </Show>
@@ -261,6 +254,27 @@ function ErrorLine(p: { item: Extract<Item, { kind: "error" }> }) {
   )
 }
 
+/** How a reply that did not finish ended: the spec's line, kept on the reply (display.md §4). */
+function EndLine(p: { item: Extract<Item, { kind: "end" }> }) {
+  const { theme } = useTui()
+  const fg = () => (p.item.failed ? theme().colors.error : theme().colors.muted)
+  return (
+    <box paddingLeft={1} marginTop={p.item.failed ? 1 : 0} flexDirection="column">
+      <text fg={fg()} wrapMode="word">
+        {p.item.failed ? "✗ " : "■ "}
+        {p.item.line}
+      </text>
+      <Show when={p.item.more}>
+        <box paddingLeft={2}>
+          <text fg={fg()} wrapMode="word">
+            {p.item.more}
+          </text>
+        </box>
+      </Show>
+    </box>
+  )
+}
+
 export function Messages() {
   const { view } = useTui()
   return (
@@ -284,6 +298,9 @@ export function Messages() {
           </Match>
           <Match when={item.kind === "diff"}>
             <DiffBlock item={item as Extract<Item, { kind: "diff" }>} />
+          </Match>
+          <Match when={item.kind === "end"}>
+            <EndLine item={item as Extract<Item, { kind: "end" }>} />
           </Match>
           <Match when={item.kind === "error"}>
             <ErrorLine item={item as Extract<Item, { kind: "error" }>} />

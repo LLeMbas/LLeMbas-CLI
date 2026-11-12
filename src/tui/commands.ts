@@ -562,7 +562,7 @@ export const COMMANDS: Command[] = [
           if (other(id)) return c.view.info(`that session is in ${store.session(id)?.root} — resume it there (lembas -c, /sessions)`, "warn")
           const why = await (c.share?.release(id) ?? Promise.resolve(undefined))
           if (why) return c.view.info(`not resumed: ${why}`, "warn")
-          c.view.load(c.app.resume(id))
+          c.view.load(c.app.resume(id), c.app.engine.storedEnd())
           c.view.info(`resumed ${id}`)
         },
       })
