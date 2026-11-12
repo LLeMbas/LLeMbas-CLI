@@ -17,6 +17,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import { ToolListChangedNotificationSchema, PromptListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js"
+import { clean } from "./clean.ts"
 import type { McpServer } from "../config/schema.ts"
 import { expandHome } from "../config/paths.ts"
 import { scanThreats } from "../memory/threats.ts"
@@ -79,6 +80,12 @@ const sanitize = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, "_")
  *  `memory` tool keeps its name and stands in for this machine's; notes, knowledge and skills stay
  *  this machine's (spec 3.0.0). */
 export const LIBRARY_SERVER = "lembas-library"
+/** A server's prompt as the command it is registered as: `<server>:<prompt>`, both spelled with
+ *  letters, digits, `_` and `-` only. */
+export function promptCommand(server: string, prompt: string): string {
+  return `${sanitize(server)}:${sanitize(prompt)}`
+}
+
 /** mcp__<server>__<tool>, at most 64 characters (the providers' limit); longer ones keep a hash. */
 export function toolName(server: string, tool: string): string {
   const full = `mcp__${sanitize(server)}__${sanitize(tool)}`
@@ -149,13 +156,14 @@ export class McpManager {
 
   /** The name a server's tool goes by among this program's tools — its permission key too. */
   nameOf(server: string, tool: string): string {
-    return this.names.get(`${server}\u0000${tool}`) ?? (server === LIBRARY_SERVER ? sanitize(tool) : toolName(server, tool))
+    return this.names.get(`${server}\u0000${tool}`) ?? toolName(server, tool)
   }
   private listeners: (() => void)[] = []
 
   /** Called whenever a server's status, tools or prompts change. */
-  onChange(f: () => void) {
+  onChange(f: () => void): () => void {
     this.listeners.push(f)
+    return () => void (this.listeners = this.listeners.filter((x) => x !== f))
   }
 
   private changed() {
@@ -202,7 +210,8 @@ export class McpManager {
         await close()
       }
       t.stderr?.on("data", (chunk: Buffer) => {
-        s.stderr.push(...chunk.toString().split("\n").filter(Boolean))
+        // Somebody else's text from here on (mcp/clean.ts): no control characters are kept.
+        s.stderr.push(...chunk.toString().split("\n").map((l) => clean(l)).filter(Boolean))
         if (s.stderr.length > 20) s.stderr.splice(0, s.stderr.length - 20)
       })
       return t
@@ -294,7 +303,7 @@ export class McpManager {
 
   private fail(s: ServerState, why: string): ServerState {
     s.status = "failed"
-    s.error = why
+    s.error = clean(why, true)
     this.changed()
     return s
   }
@@ -342,10 +351,15 @@ export class McpManager {
       const r = await c.listPrompts(cursor ? { cursor } : undefined)
       return { items: r.prompts as RemotePrompt[], next: r.nextCursor }
     }) : []
-    s.tools = tools.filter((t) => toolAllowed(t.name, s.cfg.tools))
-    s.prompts = prompts
+    // Where a server's words enter: descriptions are text to be shown, so control characters go
+    // (clean.ts). Names stay as the server spells them — they are what it is called by — and are
+    // cleaned where they are shown.
+    s.tools = tools
+      .filter((t) => toolAllowed(t.name, s.cfg.tools))
+      .map((t) => ({ ...t, ...(t.description === undefined ? {} : { description: clean(t.description, true) }), ...(t.annotations?.title === undefined ? {} : { annotations: { ...t.annotations, title: clean(t.annotations.title) } }) }))
+    s.prompts = prompts.map((p) => ({ ...p, ...(p.description === undefined ? {} : { description: clean(p.description, true) }), ...(p.arguments ? { arguments: p.arguments.map((a) => ({ ...a, ...(a.description === undefined ? {} : { description: clean(a.description) }) })) } : {}) }))
     s.resources = !!caps.resources && s.cfg.resources !== false
-    const ins = s.cfg.instructions === false ? undefined : c.getInstructions()?.trim()
+    const ins = s.cfg.instructions === false ? undefined : clean(c.getInstructions() ?? "", true).trim() || undefined
     s.instructions = undefined
     if (ins) {
       // The server wrote this, not the user: anything aimed at the agent is left out.
@@ -391,19 +405,34 @@ export class McpManager {
   /** Every connected server's tools as LLeMbas CLI tools, and list/read tools for resources. */
   tools(): Tool[] {
     const out: Tool[] = []
-    // Different names can come out the same (get.user and get_user; server a.b and a_b): the
-    // second gets a hash of what it really is, so every tool stays reachable and names stay unique.
+    // Different names can come out the same (get.user and get_user; server a.b and a_b). Every
+    // one of such a set gets a hash of what it really is — not only the second to arrive — so a
+    // server that lists its tools in another order cannot move a name, and with it an "always
+    // allow", from one tool onto another.
+    const bare = (s: ServerState, tool: string) => s.name === LIBRARY_SERVER && (s.cfg.tools?.include ?? []).includes(tool)
+    const counts = new Map<string, number>()
+    for (const s of this.servers.values()) {
+      if (s.status !== "connected") continue
+      for (const t of s.tools) {
+        const n = bare(s, t.name) ? sanitize(t.name) : toolName(s.name, t.name)
+        counts.set(n, (counts.get(n) ?? 0) + 1)
+      }
+    }
     const used = new Set<string>()
     const unique = (server: string, tool: string) => {
       let n = toolName(server, tool)
-      if (used.has(n)) n = `${n.slice(0, 55)}_${createHash("sha256").update(`${server}\u0000${tool}`).digest("hex").slice(0, 8)}`
+      if ((counts.get(n) ?? 0) > 1 || used.has(n)) n = `${n.slice(0, 55)}_${createHash("sha256").update(`${server}\u0000${tool}`).digest("hex").slice(0, 8)}`
       used.add(n)
       return n
     }
     for (const s of this.servers.values()) {
       if (s.status !== "connected") continue
       for (const t of s.tools) {
-        const library = s.name === LIBRARY_SERVER
+        // The LLeMbas server's library stands in for this machine's memory tool, so that one tool
+        // (what its config includes) goes by the bare name and under the memory tool's rules;
+        // anything else such a server offered is an MCP tool like any other, with a name and a
+        // permission of its own — never a bare name a built-in tool already has.
+        const library = bare(s, t.name)
         const name = library ? sanitize(t.name) : unique(s.name, t.name)
         if (library) used.add(name)
         this.names.set(`${s.name}\u0000${t.name}`, name)
@@ -478,7 +507,7 @@ export class McpManager {
   prompts(): McpPromptCommand[] {
     return [...this.servers.values()]
       .filter((s) => s.status === "connected")
-      .flatMap((s) => s.prompts.map((p) => ({ name: `${sanitize(s.name)}:${sanitize(p.name)}`, description: p.description ?? `prompt from ${s.name}`, args: (p.arguments ?? []).map((a) => a.name), server: s.name, prompt: p.name })))
+      .flatMap((s) => s.prompts.map((p) => ({ name: promptCommand(s.name, p.name), description: p.description ?? `prompt from ${s.name}`, args: (p.arguments ?? []).map((a) => a.name), server: s.name, prompt: p.name })))
   }
 
   /** A prompt's text with the typed words as its arguments, in order (the last takes the rest). */

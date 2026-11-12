@@ -7,7 +7,9 @@ import type { Option } from "./components/dialog.tsx"
 import type { Mark } from "./notices.ts"
 import { applyRule } from "./menus.ts"
 import type { ServerState } from "../mcp/index.ts"
-import { persistProjectMcpEnabled } from "../project/root.ts"
+import { persistProjectMcpEnabled, projectMcpEnabled } from "../project/root.ts"
+import { promptCommand } from "../mcp/index.ts"
+import { clean, errorLine, redactUrls } from "../mcp/clean.ts"
 import { offers, sourceOf, SOURCE_WORDS, STATE_WORDS, whereOf } from "../mcp/text.ts"
 
 const MARK_OF: Record<ServerState["status"], Mark> = { connected: "on", connecting: "busy", failed: "failed", needs_auth: "attention", disabled: "off" }
@@ -20,8 +22,13 @@ const SECTION = { library: "From the LLeMbas server", project: "This project (.a
 
 /** Where switching a server on or off holds: the session, and — in a trusted project, for a
  *  server that is not the login's own — the project's config, so it starts that way next time. */
-const persists = (c: CommandCtx, s: ServerState) => c.app.trusted && sourceOf(s) !== "library"
+const persists = (c: CommandCtx, s: ServerState) => c.app.trusted && sourceOf(s) !== "library" && !offByUser(c, s)
 const scope = (c: CommandCtx, s: ServerState) => (persists(c, s) ? "for this project" : "for this session")
+/** Why "on" is the session's only for a server the person's own config switches off. */
+const OFF_BY_USER = "Your own config switches this server off (mcp: enabled: false). A project cannot switch it on, so this holds for the session; change your config to keep it on."
+/** Switched off in the person's own config (not by this project): a project's `enabled: true`
+ *  would be ignored at the next start, so switching it on is the session's only. */
+const offByUser = (c: CommandCtx, s: ServerState) => s.cfg.enabled === false && s.cfg.source === "global" && projectMcpEnabled(c.app.project, s.name) === undefined
 
 /** A sign-in waiting for the person to paste the address the browser ended on (/mcp code). */
 export const pendingCodes = new Map<string, (text: string) => void>()
@@ -29,7 +36,7 @@ export const pendingCodes = new Map<string, (text: string) => void>()
 /** What one server's row says after its name. */
 function rowWords(s: ServerState): string {
   if (s.status === "connected") return offers(s)
-  if (s.status === "failed") return `${STATE_WORDS.failed}: ${(s.error ?? "no reason given").split("\n")[0]}`
+  if (s.status === "failed") return `${STATE_WORDS.failed}: ${errorLine(s.error) || "no reason given"}`
   return STATE_WORDS[s.status]
 }
 
@@ -38,7 +45,7 @@ export function openMcpMenu(c: CommandCtx, select?: string) {
   const mcp = c.app.mcp
   const order = { library: 0, project: 1, user: 2 }
   const servers = [...mcp.servers.values()].sort((a, b) => order[sourceOf(a)] - order[sourceOf(b)] || a.name.localeCompare(b.name))
-  const options: Option[] = servers.map((s) => ({ label: s.name, value: s.name, mark: MARK_OF[s.status], description: rowWords(s), section: SECTION[sourceOf(s)], detail: whereOf(s) }))
+  const options: Option[] = servers.map((s) => ({ label: clean(s.name), value: s.name, mark: MARK_OF[s.status], description: rowWords(s), section: SECTION[sourceOf(s)], detail: whereOf(s) }))
   c.openDialog({
     title: `MCP servers${servers.length ? ` — ${servers.filter((s) => s.status === "connected").length} of ${servers.length} connected` : ""}`,
     options,
@@ -63,35 +70,36 @@ export function openMcpServer(c: CommandCtx, name: string, select?: string) {
   const act = (id: string, label: string, description: string): Option => ({ label, value: `${ACTION}${id}`, description, section: "Actions" })
   const actions: Option[] = [
     ...(s.status === "disabled"
-      ? [act("on", "Switch on", `connect it — ${scope(c, s)}`)]
+      ? [{ ...act("on", "Switch on", `connect it — ${scope(c, s)}`), ...(offByUser(c, s) && c.app.trusted ? { detail: OFF_BY_USER } : {}) }]
       : [act("reconnect", s.status === "connected" ? "Reconnect" : "Connect again", "close the connection and make it anew"), act("off", "Switch off", `its tools are withdrawn — ${scope(c, s)}`)]),
     ...(signIn ? [act("auth", s.status === "needs_auth" ? "Sign in" : "Sign in again", "opens the server's sign-in page in your browser")] : []),
-    ...(signIn ? [act("logout", "Sign out", "forget the stored sign-in for this server")] : []),
-    ...(s.error ? [act("error", "Read the last error in full", s.error.split("\n")[0]!)] : []),
+    ...(signIn ? [act("logout", "Sign out", "forget the stored sign-in for this server (asks first)")] : []),
+    ...(s.error ? [act("error", "Read the last error in full", errorLine(s.error))] : []),
   ]
   const tools: Option[] =
     s.status === "connected"
       ? s.tools.map((t) => {
           const called = mcp.nameOf(s.name, t.name)
           const rule = c.app.engine.ruleFor(called) ?? "ask"
-          const first = (t.description ?? "").trim().split("\n")[0] ?? ""
+          const first = clean((t.description ?? "").trim().split("\n")[0])
           return {
-            label: t.name,
+            label: clean(t.name),
             value: `${TOOL}${t.name}`,
             mark: RULE_MARK[rule],
             description: `${RULE_WORDS[rule]}${t.annotations?.readOnlyHint ? " · read-only" : ""}${first ? ` · ${first}` : ""}`,
             section: `Tools (${s.tools.length}) — enter changes what a tool may do`,
-            detail: `${called}\n${(t.description ?? "No description.").trim()}`,
+            detail: `${clean(called)}\n${clean(t.description ?? "No description.", true).trim()}`,
           }
         })
       : []
   const prompts: Option[] =
     s.status === "connected"
-      ? s.prompts.map((p) => ({ label: `/${s.name}:${p.name}`, value: `${PROMPT}${p.name}`, description: (p.description ?? "").split("\n")[0], section: `Prompts (${s.prompts.length}) — enter puts one in the box`, detail: p.description ?? "" }))
+      ? // By the name the command is registered under (mcp/index.ts promptCommand), which is what the box understands.
+        s.prompts.map((p) => ({ label: `/${promptCommand(s.name, p.name)}`, value: `${PROMPT}${p.name}`, description: clean((p.description ?? "").split("\n")[0]), section: `Prompts (${s.prompts.length}) — enter puts one in the box`, detail: clean(p.description ?? "", true) }))
       : []
   c.openDialog({
-    title: `MCP · ${s.name}`,
-    body: [`${STATE_WORDS[s.status]}${s.status === "connected" ? ` — ${offers(s)}` : ""} · from ${SOURCE_WORDS[sourceOf(s)]}`, whereOf(s), ...(s.status === "failed" && s.error ? [`failed: ${s.error.split("\n")[0]}`] : [])],
+    title: `MCP · ${clean(s.name)}`,
+    body: [`${STATE_WORDS[s.status]}${s.status === "connected" ? ` — ${offers(s)}` : ""} · from ${SOURCE_WORDS[sourceOf(s)]}`, whereOf(s), ...(s.status === "failed" && s.error ? [`failed: ${errorLine(s.error)}`] : [])],
     options: [...actions, ...tools, ...prompts],
     // Searchable as soon as there is more than a handful of tools.
     filter: tools.length + prompts.length > 6,
@@ -100,7 +108,7 @@ export function openMcpServer(c: CommandCtx, name: string, select?: string) {
     onBack: () => openMcpMenu(c, s.name),
     onSelect: (v) => {
       if (v.startsWith(TOOL)) return openToolRule(c, s.name, v.slice(TOOL.length))
-      if (v.startsWith(PROMPT)) return c.setInput(`/${s.name}:${v.slice(PROMPT.length)} `)
+      if (v.startsWith(PROMPT)) return c.setInput(`/${promptCommand(s.name, v.slice(PROMPT.length))} `)
       void runAction(c, s.name, v.slice(ACTION.length))
     },
   })
@@ -114,8 +122,8 @@ function openToolRule(c: CommandCtx, server: string, tool: string) {
   const remote = mcp.servers.get(server)?.tools.find((t) => t.name === tool)
   const where = c.app.trusted ? "this session, and saved to this project's .agent/config.yaml" : "this session (the project is not trusted, so nothing is saved)"
   c.openDialog({
-    title: `${server} · ${tool}`,
-    body: [called, ...(remote?.description ? [remote.description.trim().split("\n")[0]!] : []), `Applies to ${where}.`],
+    title: `${clean(server)} · ${clean(tool)}`,
+    body: [clean(called), ...(remote?.description ? [clean(remote.description.trim().split("\n")[0])] : []), `Applies to ${where}. A narrower, stricter rule — and your own config — keeps winning.`],
     options: [
       { label: "Ask each time", value: "ask", current: now === "ask", description: "a card before every call" },
       { label: "Always allow", value: "allow", current: now === "allow", description: "runs without asking" },
@@ -124,7 +132,7 @@ function openToolRule(c: CommandCtx, server: string, tool: string) {
     filter: false,
     onBack: () => openMcpServer(c, server, `${TOOL}${tool}`),
     onSelect: (action) => {
-      applyRule(c, { permission: called, pattern: "*", action: action as "ask" | "allow" | "deny" }, tool)
+      applyRule(c, { permission: called, pattern: "*", action: action as "ask" | "allow" | "deny" }, clean(tool))
       openMcpServer(c, server, `${TOOL}${tool}`)
     },
   })
@@ -134,33 +142,49 @@ function openToolRule(c: CommandCtx, server: string, tool: string) {
 function openError(c: CommandCtx, server: string) {
   const s = c.app.mcp.servers.get(server)
   const width = Math.max(20, Math.min(72, c.renderer.width - 4) - 6)
-  const lines = [...(s?.error ?? "no error").split("\n"), ...(s?.stderr.length ? ["", "What the program wrote before it stopped:", ...s.stderr] : [])].flatMap((l) => (l.length <= width ? [l] : Array.from({ length: Math.ceil(l.length / width) }, (_, i) => l.slice(i * width, (i + 1) * width))))
+  // In full, here on the person's own screen — cleaned, and without the credentials an address may carry.
+  const lines = [...redactUrls(clean(s?.error ?? "no error", true)).split("\n"), ...(s?.stderr.length ? ["", "What the program wrote before it stopped:", ...s.stderr.map((l) => redactUrls(clean(l)))] : [])].flatMap((l) => (l.length <= width ? [l] : Array.from({ length: Math.ceil(l.length / width) }, (_, i) => l.slice(i * width, (i + 1) * width))))
   c.openDialog({
     title: `MCP · ${server} · the last error`,
-    options: lines.map((l, i) => ({ label: l || " ", value: String(i) })),
+    options: lines.map((l, i) => ({ label: l || " ", value: String(i), inert: true })),
     filter: false,
     hint: "↑↓ pgup/pgdn scroll · esc back",
     onBack: () => openMcpServer(c, server, `${ACTION}error`),
-    onSelect: () => openMcpServer(c, server, `${ACTION}error`),
+    onSelect: () => {},
   })
 }
 
 /** Do one thing to a server, say how it went in a line, and show the server again. */
-export async function runAction(c: CommandCtx, name: string, action: string, o: { menu?: boolean; code?: string } = { menu: true }): Promise<void> {
+export async function runAction(c: CommandCtx, name: string, action: string, o: { menu?: boolean; code?: string; confirmed?: boolean } = { menu: true }): Promise<void> {
   const mcp = c.app.mcp
   const back = () => (o.menu ? openMcpServer(c, name) : undefined)
   if (action === "error") return openError(c, name)
+  /** Whether the transcript got a line about this server since `mark` — a server that fails or
+   *  needs a sign-in is announced once, by whoever watches the servers (app.ts); it is not said twice. */
+  const mark = c.view.state.items.length
+  const announced = () => c.view.state.items.slice(mark).some((i) => i.kind === "notice" && i.text.startsWith(`MCP ${clean(name)} `))
+  /** Keep a switch for the project, where that holds; what to say when it could not be written. */
+  const keep = (s: ServerState, on: boolean): string => {
+    if (!persists(c, s)) return offByUser(c, s) && c.app.trusted ? "for this session — your own config switches it off, and a project cannot switch it on" : scope(c, s)
+    try {
+      persistProjectMcpEnabled(c.app.project, name, on)
+      return "for this project"
+    } catch (e) {
+      return `for this session only — it could not be saved to the project: ${(e as Error).message.split("\n")[0]}`
+    }
+  }
   try {
     if (action === "reconnect" || action === "on") {
-      c.flash(`MCP ${name}: connecting…`)
+      c.flash(`MCP ${clean(name)}: connecting…`)
+      // Read before it is switched on: what the configs said of it decides where "on" can be kept.
+      const where = action === "on" ? keep(mcp.servers.get(name)!, true) : ""
       const s = action === "on" ? await mcp.setEnabled(name, true) : await mcp.connect(name)
-      if (action === "on" && persists(c, s)) persistProjectMcpEnabled(c.app.project, name, true)
-      if (s.status === "connected") c.view.info(`MCP ${name}: connected — ${offers(s)}`, "success")
-      else c.view.info(`MCP ${name} did not connect: ${(s.error ?? s.status).split("\n")[0]}`, "warn")
+      if (s.status === "connected") c.view.info(`MCP ${clean(name)}: connected — ${offers(s)}${where ? ` · switched on ${where}` : ""}`, "success")
+      else if (!announced()) c.view.info(`MCP ${clean(name)} did not connect: ${errorLine(s.error) || STATE_WORDS[s.status]}`, "warn")
     } else if (action === "off") {
-      const s = await mcp.setEnabled(name, false)
-      if (persists(c, s)) persistProjectMcpEnabled(c.app.project, name, false)
-      c.view.info(`MCP ${name}: switched off ${scope(c, s)} — /mcp ${name} switches it on again`)
+      const where = keep(mcp.servers.get(name)!, false)
+      await mcp.setEnabled(name, false)
+      c.view.info(`MCP ${clean(name)}: switched off ${where} — /mcp ${clean(name)} switches it on again`, where.includes("could not") ? "warn" : "info")
     } else if (action === "auth") {
       const pasted = new Promise<string>((resolve) => pendingCodes.set(name, resolve))
       const s = await mcp.auth(
@@ -169,8 +193,8 @@ export async function runAction(c: CommandCtx, name: string, action: string, o: 
         pasted,
       )
       pendingCodes.delete(name)
-      if (s.status === "connected") c.view.info(`MCP ${name}: signed in — ${offers(s)}`, "success")
-      else c.view.info(`MCP ${name}: ${(s.error ?? s.status).split("\n")[0]}`, "warn")
+      if (s.status === "connected") c.view.info(`MCP ${clean(name)}: signed in — ${offers(s)}`, "success")
+      else if (!announced()) c.view.info(`MCP ${clean(name)}: ${errorLine(s.error) || STATE_WORDS[s.status]}`, "warn")
       // The sign-in page was read meanwhile: the menu is not put back over it.
       return c.refresh()
     } else if (action === "code") {
@@ -178,12 +202,26 @@ export async function runAction(c: CommandCtx, name: string, action: string, o: 
       if (!give) return c.view.info(`no sign-in to ${name} is waiting — /mcp auth ${name} starts one`, "warn")
       return give(o.code ?? "")
     } else if (action === "logout") {
+      // Asked once in the menu: signing in again means the browser and the server's page.
+      if (o.menu && !o.confirmed)
+        return c.openDialog({
+          title: `Sign out of ${clean(name)}?`,
+          body: ["The stored sign-in for this server is forgotten; using it again means signing in in the browser."],
+          options: [
+            { label: "Sign out", value: "yes" },
+            { label: "Keep the sign-in", value: "no", current: true },
+          ],
+          select: "no",
+          filter: false,
+          onBack: () => openMcpServer(c, name, `${ACTION}logout`),
+          onSelect: (v) => (v === "yes" ? void runAction(c, name, "logout", { ...o, confirmed: true }) : openMcpServer(c, name, `${ACTION}logout`)),
+        })
       mcp.logout(name)
-      c.view.info(`MCP ${name}: the stored sign-in is removed`)
+      c.view.info(`MCP ${clean(name)}: the stored sign-in is removed`)
     } else return c.view.info(`unknown: /mcp ${action} — reconnect, on, off, auth, code or logout`, "warn")
   } catch (e) {
     pendingCodes.delete(name)
-    c.view.info(`MCP ${name}: ${(e as Error).message.split("\n")[0]}`, "warn")
+    if (!announced()) c.view.info(`MCP ${clean(name)}: ${errorLine((e as Error).message)}`, "warn")
   }
   c.refresh()
   back()

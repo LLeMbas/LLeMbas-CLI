@@ -126,6 +126,18 @@ export function persistProjectMcpEnabled(project: Project, name: string, on: boo
   writeFileSync(file, doc.toString())
 }
 
+/** What the project's own config.yaml says of a server's `enabled`, if anything. */
+export function projectMcpEnabled(project: Project, name: string): boolean | undefined {
+  const file = join(project.dir, "config.yaml")
+  if (!existsSync(file)) return undefined
+  try {
+    const v = parseDocument(readFileSync(file, "utf8")).getIn(["mcp", name, "enabled"])
+    return typeof v === "boolean" ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Take a rule out of the project's config.yaml again (one a menu saved there); whether it was
  *  there. A permission left with no pattern goes too. */
 export function forgetProjectRule(project: Project, rule: Pick<Rule, "permission" | "pattern">): boolean {
