@@ -28,6 +28,12 @@ import { callTitle } from "./display.ts"
 import type { Verdict } from "../team/delegation.ts"
 import { compactAsk, isNote, NO_CHANGING, noteFor, offeredFor, PREFIX_META, summaryOf, today, toldAt, unavailable, type Changing, type Kept, type Now, type Requirement, type Told } from "./prefix.ts"
 
+/** Whether a finished job's line says it did not end well: a non-zero exit, a signal, a failure,
+ *  a subagent out of context or lost. */
+export function noteNeedsAttention(line: string): boolean {
+  return /exited with (?!0\b)|stopped \(SIG|\bfail(ed|ure)?\b|\berror\b|\blost\b|out of context|could not|\bcancelled\b|\bstopped\b/i.test(line)
+}
+
 export interface EngineOptions {
   bus: Bus
   asker: Asker
@@ -738,7 +744,10 @@ export class Engine {
     if (notes.length) {
       this.push({ role: "user", parts: [{ type: "text", text: notes.join("\n\n") }], turn: false })
       // Said as what happened, not as its mark: the line after it.
-      this.o.bus.emit({ type: "notice", level: "info", message: notes.map((n) => n.split("\n").find((l, i) => i > 0 && l.trim()) ?? n.split("\n")[0]!).join("; ") })
+      // A job that ended as meant is a plain line; one that failed, was stopped or was lost
+      // needs a look, and keeps the warning sign.
+      const said = notes.map((n) => n.split("\n").find((l, i) => i > 0 && l.trim()) ?? n.split("\n")[0]!).join("; ")
+      this.o.bus.emit({ type: "notice", level: noteNeedsAttention(said) ? "warn" : "info", message: said })
     }
     if (this.busyInput !== "steer" || !this.inbox.length) return notes.length > 0
     const texts = this.inbox.splice(0)

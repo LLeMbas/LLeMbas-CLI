@@ -18,7 +18,7 @@ const GROUPS: [string, string[]][] = [
   ["This session", ["new", "sessions", "search", "rename", "delete", "continue", "undo", "redo", "compact", "context", "copy", "remote"]],
   ["Model and how it works", ["model", "effort", "mode", "permissions", "plan", "plans", "personality", "team", "agents", "jobs"]],
   ["The project", ["diff", "commit", "branch", "checkpoint", "checkpoints", "review", "init", "changelog", "release", "tasks", "decisions", "decide", "prototype", "trust"]],
-  ["What it knows and can use", ["memory", "skills", "skill", "kb", "mcp", "schedule"]],
+  ["What it knows and can use", ["memory", "skills", "skill", "command", "kb", "mcp", "schedule"]],
   ["Account and settings", ["status", "login", "logout", "usage", "settings", "voice", "speak"]],
   ["Look", ["theme", "icons", "terminal"]],
 ]
@@ -38,7 +38,7 @@ export function openHelp(c: CommandCtx, commands: Command[], keys: string[], run
     }),
   )
   // A key line is "keys what they do · keys what they do": one row each, so they can be found too.
-  const keyRows: Option[] = keys.flatMap((line) => line.split(" · ")).map((k, i) => ({ label: k, value: `${KEY}${i}`, section: "Keys" }))
+  const keyRows: Option[] = keys.flatMap((line) => line.split(" · ")).map((k, i) => ({ label: k, value: `${KEY}${i}`, section: "Keys", inert: true }))
   c.openDialog({
     title: "Help — commands and keys",
     options: [...options, ...keyRows],
@@ -185,7 +185,7 @@ export function openStatus(c: CommandCtx, run: (line: string) => void) {
   const width = Math.max(...ordered.map((r) => r.label.length))
   c.openDialog({
     title: "Status",
-    options: ordered.map((r, i) => ({ label: `${r.label.padEnd(width)}  ${r.value}`, value: String(i), section: r.section, mark: r.attention ? "attention" : "on", detail: `${r.value}${r.command ? `\nenter: /${r.command}` : ""}` })),
+    options: ordered.map((r, i) => ({ label: `${r.label.padEnd(width)}  ${r.value}`, value: String(i), section: r.section, mark: r.attention ? "attention" : "on", detail: `${r.value}${r.command ? `\nenter: /${r.command}` : ""}`, inert: !r.command })),
     filter: false,
     width: 96,
     hint: "↑↓ move · enter open what changes it · esc close",

@@ -1,5 +1,5 @@
 import { RGBA, TextAttributes } from "@opentui/core"
-import { useKeyboard } from "@opentui/solid"
+import { useKeyboard, usePaste } from "@opentui/solid"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import { useTui } from "../context.ts"
 import { MARKS, type Mark } from "../notices.ts"
@@ -17,6 +17,8 @@ export interface Option {
   /** More about the highlighted row than its line holds — a tool's whole description — shown
    *  under the list, wrapped, while the row is highlighted. */
   detail?: string
+  /** A row to read, not to choose: Enter on it does nothing, and the menu stays. */
+  inert?: boolean
   /** A two-handle range on this row (the Subagents setting, harness team.md §2: one range from 1
    *  to the cap, Min and Max). While the row is highlighted ←→ move the handle in focus and tab
    *  moves the focus; Min never passes Max. Enter calls `onSubmit` with both, not `onSelect`. */
@@ -148,8 +150,17 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
     })
     return out
   })
-  // What the screen leaves for the list: less the body above it and the detail below.
-  const visible = () => Math.max(3, Math.min(22, dims().height - 10 - Math.min(body().length, BODY_ROWS) - (detail().length ? DETAIL_ROWS + 1 : 0)))
+  // The rows there are, shared out. The box has a border (2), a footer (1) and, when it filters,
+  // the filter's row; it stands a little down from the top where there is room. The list gets at
+  // least three rows; the detail under it and then the body above it give way first on a short
+  // terminal. A menu whose rows have a detail keeps that space whether or not the highlighted row
+  // has one, so the list does not jump as the cursor moves.
+  const top = () => (dims().height >= 20 ? Math.max(1, Math.floor(dims().height / 6)) : dims().height >= 12 ? 1 : 0)
+  const inside = () => Math.max(1, dims().height - top() - 3 - (filterable() ? 1 : 0))
+  const hasDetail = createMemo(() => p.spec.options.some((o) => o.detail))
+  const detailRows = () => (hasDetail() && inside() >= 3 + DETAIL_ROWS + 1 ? DETAIL_ROWS + 1 : 0)
+  const bodyRows = () => Math.max(0, Math.min(body().length, BODY_ROWS, inside() - detailRows() - 3))
+  const visible = () => Math.max(1, Math.min(22, inside() - detailRows() - bodyRows()))
   const offset = () => {
     const at = rows().findIndex((r) => "option" in r && r.index === sel())
     const first = Math.max(0, Math.min(at - Math.floor(visible() / 2), rows().length - visible()))
@@ -165,6 +176,16 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
     const n = shown().length
     return n > visible() ? `${base} · ${sel() + 1}/${n}` : base
   }
+
+  // A paste goes where typing goes: into the filter, or the text a menu takes ("Add a rule").
+  usePaste((e) => {
+    if (!filterable()) return
+    const text = new TextDecoder().decode(e.bytes).replace(/[\r\n\t]+/g, " ").replace(/[\u0000-\u001f\u007f]/g, "")
+    if (!text) return
+    setQuery((q) => q + text)
+    setSel(0)
+    e.preventDefault()
+  })
 
   useKeyboard((key) => {
     const n = shown().length
@@ -189,7 +210,7 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
     else if (key.name === "down" || (key.ctrl && key.name === "n")) setSel((i) => (i + 1) % Math.max(n, 1))
     else if (key.name === "return") {
       const o = shown()[sel()]
-      if (o) {
+      if (o && !o.inert) {
         // Props are live: closing clears the spec, so take the callback first.
         const onSelect = p.spec.onSelect
         const custom = p.spec.custom
@@ -212,12 +233,12 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
   })
 
   return (
-    <box position="absolute" zIndex={100} left={0} top={0} width={dims().width} height={dims().height} alignItems="center" paddingTop={Math.max(1, Math.floor(dims().height / 6))} backgroundColor={RGBA.fromInts(0, 0, 0, 140)}>
+    <box position="absolute" zIndex={100} left={0} top={0} width={dims().width} height={dims().height} alignItems="center" paddingTop={top()} backgroundColor={RGBA.fromInts(0, 0, 0, 140)}>
       <box width={width()} border borderStyle="rounded" borderColor={c().border} backgroundColor={c().menu} flexDirection="column" paddingLeft={1} paddingRight={1} title={` ${p.spec.title} `} titleColor={c().title}>
         <Show when={filterable()}>
           <text fg={query() ? c().text : c().dim}>{query() ? `› ${query()}` : "› type to filter"}</text>
         </Show>
-        <For each={body().slice(0, BODY_ROWS)}>{(l) => <text fg={c().muted} wrapMode="none" truncate>{l || " "}</text>}</For>
+        <For each={body().slice(0, bodyRows())}>{(l) => <text fg={c().muted} wrapMode="none" truncate>{l || " "}</text>}</For>
         <For each={rows().slice(offset(), offset() + visible())}>
           {(row) => {
             if ("head" in row)
@@ -270,8 +291,8 @@ export function Dialog(p: { spec: DialogSpec; close: () => void }) {
             {query() ? "nothing matches" : (p.spec.empty ?? "nothing here")}
           </text>
         </Show>
-        <Show when={detail().length}>
-          <box flexDirection="column" height={DETAIL_ROWS + 1} border={["top"]} borderColor={c().border}>
+        <Show when={detailRows()}>
+          <box flexDirection="column" height={DETAIL_ROWS + 1} flexShrink={0} border={["top"]} borderColor={c().border}>
             <For each={detail()}>{(l) => <text fg={c().muted} wrapMode="none" truncate>{l || " "}</text>}</For>
           </box>
         </Show>
