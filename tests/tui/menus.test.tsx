@@ -23,7 +23,6 @@ test("/help is a menu: commands under headings, found by typing; enter runs one,
   expect(f).toContain("This session")
   expect(f).toContain("/new")
   expect(f).toContain("type to find")
-  expect(f).not.toContain("⚠")
   // Typing finds a command by what it does, not only by its name.
   for (const ch of "permission rules") t.input.pressKey(ch)
   await t.settle()

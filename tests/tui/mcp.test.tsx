@@ -17,10 +17,12 @@ test("a server that connects says nothing at start: no warning sign, no block �
   await t.app.mcpReady
   await t.settle(200)
   const f = t.frame()
-  expect(f).not.toContain(NOTICES.warn.glyph)
-  expect(f).not.toContain("connected")
+  // (Other notices may be there — the whole suite shares one config directory — but none of MCP.)
+  const said = t.view.state.items.filter((i) => i.kind === "notice").map((i) => (i as { text: string }).text)
+  expect(said.filter((x) => /MCP|mcp__|connected/.test(x))).toEqual([])
+  expect(f).not.toContain(`${NOTICES.warn.glyph} MCP`)
+  expect(f).not.toContain("connected —")
   expect(f).not.toContain("mcp__")
-  expect(t.view.state.items.filter((i) => i.kind === "notice")).toEqual([])
   expect(f.split("\n").at(-2)).toContain("MCP 1 · ")
 })
 
@@ -28,7 +30,7 @@ test("a server that fails gets one plain line naming it and /mcp; the status bar
   t = await tui([], { width: 140, height: 30 }, `mcp:\n${local("fix")}${broken("gone")}`)
   await t.app.mcpReady
   await t.settle(300)
-  const notices = t.view.state.items.filter((i) => i.kind === "notice") as { text: string; level: string }[]
+  const notices = (t.view.state.items.filter((i) => i.kind === "notice") as { text: string; level: string }[]).filter((n) => n.text.startsWith("MCP "))
   expect(notices.length).toBe(1)
   expect(notices[0]!.level).toBe("warn")
   expect(notices[0]!.text).toStartWith("MCP gone did not connect: ")
