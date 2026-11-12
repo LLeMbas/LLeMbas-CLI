@@ -18,7 +18,7 @@ import { JobView } from "./components/jobview.tsx"
 import { SubagentView } from "./components/subagent.tsx"
 import { Bus } from "../bus/index.ts"
 import { FocusWatch, noticeSequence, noticeText } from "./notify.ts"
-import { Prompt, type PaletteEntry } from "./components/prompt.tsx"
+import { Prompt, type PaletteEntry, type PromptHandle } from "./components/prompt.tsx"
 import { FileIndex } from "../project/files.ts"
 import { attachmentsFor } from "../project/attach.ts"
 import { customCommands, expandCommand, type CustomCommand } from "../project/commands.ts"
@@ -112,6 +112,10 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   })
   let scroll: ScrollBoxRenderable | undefined
   let input: TextareaRenderable | undefined
+  let box: PromptHandle | undefined
+  /** What is selected, as it is copied: a selection in the prompt box in full (a paste placeholder
+   *  as what it stands for), anything else as it reads. */
+  const selectedText = (visible: string) => (visible && input?.hasSelection() && input.getSelectedText() === visible ? (box?.expandedSelection() ?? visible) : visible)
   let quitArmed = 0
 
   const dims = useTerminalDimensions()
@@ -334,7 +338,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
         if (!left.length) return reason
         const joined = left.join("\n\n")
         if (reason === "cancelled") {
-          const now = input?.plainText.trim() ?? ""
+          const now = (box?.expanded() ?? input?.plainText ?? "").trim()
           input?.setText(now ? `${joined}\n\n${now}` : joined)
           input?.gotoBufferEnd()
           view.info("stopped — what you sent meanwhile is back in the box")
@@ -435,7 +439,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   }
 
   /** false: refused — the text stays in the box. */
-  const submit = (text: string): boolean | void => {
+  const submit = (text: string, shown?: string): boolean | void => {
     const t = text.trim()
     // Inside a subagent, what is typed is for it; commands are still the session's.
     if (entered() && !t.startsWith("/")) return void sendToJob(t)
@@ -467,7 +471,8 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     // While a task runs, a message joins it: at the next step, or after it (queue).
     if (app.turns.steer(t)) return
     if (busy()) return (view.info("still working — esc stops the current reply", "warn"), false)
-    void send(t)
+    // `shown`: the box as it looked, paste placeholders in place of what they stand for.
+    void send(t, shown?.trim() || t)
   }
 
   /** The messages waiting to go in, for ↑ in the box. */
@@ -563,7 +568,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
       key.preventDefault()
     } else if (key.ctrl && key.name === "c" && (key.shift || renderer.hasSelection)) {
       // Ctrl+Shift+C (where the terminal passes it on), or Ctrl+C over a selection: copy it.
-      const sel = renderer.getSelection()?.getSelectedText() ?? ""
+      const sel = selectedText(renderer.getSelection()?.getSelectedText() ?? "")
       if (sel) copy(sel)
       else flash("nothing selected — drag over text, or /copy the last reply")
       renderer.clearSelection()
@@ -620,7 +625,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     else flash(m.text)
   }
   const onSelection = (sel: { getSelectedText(): string } | null) => {
-    const text = sel?.getSelectedText() ?? ""
+    const text = selectedText(sel?.getSelectedText() ?? "")
     if (text.trim()) copy(text)
   }
   renderer.on("selection", onSelection)
@@ -663,7 +668,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
             <Spinner />
           </Show>
           <Queued />
-          <Prompt focused={() => !dialog() && !jobPanel() && !view.state.pending && !view.state.question && !view.state.plan} busy={busy} commands={palette} files={files} onSubmit={submit} ref={(r) => (input = r)} queue={queueAccess} onWheel={(dir, lines) => scroll?.scrollBy(dir * lines)} onBackground={backgroundNow} />
+          <Prompt focused={() => !dialog() && !jobPanel() && !view.state.pending && !view.state.question && !view.state.plan} busy={busy} commands={palette} files={files} onSubmit={submit} ref={(r) => (input = r)} handle={(h) => (box = h)} queue={queueAccess} onWheel={(dir, lines) => scroll?.scrollBy(dir * lines)} onBackground={backgroundNow} />
           <StatusBar mode={mode} model={model} effort={effort} branch={branch()} voice={voiceStatus} flash={flashText} remote={() => (rev(), share.label())} spend={spend} team={teamWord} />
         </box>
         <Show when={dialog()}>

@@ -60,6 +60,14 @@
       "description": "When a reply finishes, or the agent waits for you, while the terminal is not focused: ring the bell and ask the terminal for a desktop notification (OSC 9) naming the session — never what the reply says. Default true; false: neither.",
       "type": "boolean"
     },
+    "paste": {
+      "description": "A long paste into the prompt box (3 lines or more, or over 150 characters) and a pasted image: placeholder (default) — shown as [Pasted text 40 lines] or [Image 1], sent in full; full — the text itself, and an image as its @path.",
+      "type": "string",
+      "enum": [
+        "placeholder",
+        "full"
+      ]
+    },
     "icons": {
       "description": "emoji (default), or plain: one-column symbols for a terminal font that has no emoji.",
       "type": "string",

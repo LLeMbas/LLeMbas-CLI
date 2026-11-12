@@ -323,8 +323,14 @@ test("thinking stops the clock when the model starts a call, even if the call th
   expect(await t.until("done")).toBe(true)
 })
 
-test("pasting an image's path (quoted, as a file manager does) inserts an @reference", async () => {
+test("pasting an image's path (quoted, as a file manager does): [Image 1], or its @reference with paste: full", async () => {
   t = await tui([])
+  await Bun.write(`${t.cwd}/my shot.png`, "x")
+  await t.input.pasteBracketedText(`'${t.cwd}/my shot.png'`)
+  await t.settle()
+  expect(t.frame()).toContain("❯ [Image 1]")
+  t.stop()
+  t = await tui([], undefined, "paste: full\n")
   await Bun.write(`${t.cwd}/my shot.png`, "x")
   await t.input.pasteBracketedText(`'${t.cwd}/my shot.png'`)
   await t.settle()

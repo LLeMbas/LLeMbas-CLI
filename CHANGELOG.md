@@ -21,6 +21,14 @@ Harness spec 3.7.0: one display in every client.
   answer for three situations; the spec now has one each — no page of the chat is open (and where
   to open it), the page did not answer, the run took too long.
 
+- **Paste placeholders in the prompt box.** A paste of three lines or more, or of more than 150
+  characters, shows as `[Pasted text 40 lines]` (or `[Pasted text 300 chars]`), and an image as
+  `[Image 1]`, `[Image 2]`…; what is sent is the text itself and the image. One backspace removes
+  a placeholder and what it stands for; pasting the same text again right after its placeholder
+  opens it. The transcript shows the placeholder; prompt history, `/undo` and copying from the box
+  give the text in full. `paste: full` in the config (or `/settings`) shows pastes whole, as
+  before.
+
 ### Changed
 
 - **The terminal opened from the web UI or Desktop picks a shell that exists.** `$SHELL` when
@@ -28,6 +36,9 @@ Harness spec 3.7.0: one display in every client.
   `cmd.exe` — started without `-l`, which none of them takes. (The runtime's pseudo-terminal is
   documented for Linux and macOS only, and there is no Windows build of the CLI yet: where a
   terminal cannot be opened, the refusal now says so in a sentence.)
+- **Completing an `@file` or moving through the prompt box now counts columns as the box does**:
+  with a wide character (CJK, an emoji) before the cursor, the `@` list could replace the wrong
+  part of the line.
 - **Plainer refusals when a terminal or a folder cannot be used**: each says what to do —
   `lembas remote terminal on`, `lembas remote add <dir>`, close one of the open terminals.
 
