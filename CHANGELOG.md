@@ -4,7 +4,7 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.0.0-beta.9] — 2026-11-12
 
 Harness spec 3.7.0: one display in every client.
 
