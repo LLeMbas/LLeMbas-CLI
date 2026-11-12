@@ -2,3 +2,7 @@
 # catch it. Not a credential. (gitleaks fingerprints: the commit that added it, and the file now.)
 f9bad01ed7a06988bdd02bddaac14baad841d6d4:tests/memory.test.ts:stripe-access-token:95
 tests/memory.test.ts:stripe-access-token:95
+# A made-up key-shaped value that tests/mcp-clean.test.ts feeds the redaction of MCP errors,
+# which must take it out. Not a credential.
+db7e7f05ffe5c7d88ef96eaa3ee900f3796b5f89:tests/mcp-clean.test.ts:generic-api-key:31
+tests/mcp-clean.test.ts:generic-api-key:31
