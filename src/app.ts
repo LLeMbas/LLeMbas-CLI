@@ -795,8 +795,10 @@ export function createApp(o: AppOptions): App {
     for (const s of mcp.servers.values()) {
       if (seen.get(s.name) === s.status) continue
       seen.set(s.name, s.status)
-      if (s.status === "connected") bus.emit({ type: "notice", message: `MCP ${s.name}: connected — ${s.tools.length} tool${s.tools.length === 1 ? "" : "s"}${s.prompts.length ? `, ${s.prompts.length} prompt${s.prompts.length === 1 ? "" : "s"}` : ""}` })
-      else if (s.status === "failed" || s.status === "needs_auth") bus.emit({ type: "notice", message: `MCP ${s.name}: ${s.error ?? s.status}` })
+      // A server that connected says nothing: that is what was meant to happen, and the status
+      // bar counts it. One that did not gets one line that says which, why, and where to go.
+      if (s.status === "failed") bus.emit({ type: "notice", level: "warn", message: `MCP ${s.name} did not connect: ${(s.error ?? "failed").split("\n")[0]} — /mcp ${s.name} shows more and reconnects` })
+      else if (s.status === "needs_auth") bus.emit({ type: "notice", level: "warn", message: `MCP ${s.name} needs you to sign in — /mcp ${s.name}` })
     }
   })
   const mcpReady = mcp.start()

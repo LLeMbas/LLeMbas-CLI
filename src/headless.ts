@@ -10,6 +10,7 @@ import { duration } from "./duration.ts"
 import { blockOf, callTitle, resultFacts } from "./session/display.ts"
 import { endLine, endOf, type Progress } from "./session/progress.ts"
 import { num } from "./tui/locale.ts"
+import { NOTICES } from "./tui/notices.ts"
 
 /** The theme's colours as 24-bit escapes — the same theme the TUI uses (`theme` in config.yaml). */
 function escapes(theme: Theme) {
@@ -92,9 +93,12 @@ export function renderPlain(bus: Bus, opts: { color: boolean; showReasoning: boo
         if (!atLineStart) out("\n")
         started = false
         break
-      case "notice":
-        line(c(C.warn, `⚠ ${e.message}`))
+      case "notice": {
+        // The same table as the TUI's transcript (tui/notices.ts): a warning sign means attention.
+        const kind = NOTICES[e.level ?? "warn"]
+        line(c({ info: C.dim, success: C.ok, warn: C.warn, error: C.err }[e.level ?? "warn"], `${kind.glyph} ${e.message}`))
         break
+      }
       case "error":
         // Said once, as the line that ends the reply.
         failure = e.message

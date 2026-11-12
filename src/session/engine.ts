@@ -559,7 +559,7 @@ export class Engine {
       return
     }
     this.autoCompactions++
-    this.o.bus.emit({ type: "notice", message: `context at ${Math.round((used / window) * 100)}% of ${window}: compacting the conversation` })
+    this.o.bus.emit({ type: "notice", level: "info", message: `context at ${Math.round((used / window) * 100)}% of ${window}: compacting the conversation` })
     this.progress.set({ phase: "compacting" })
     try {
       await this.summarise(signal)
@@ -579,7 +579,7 @@ export class Engine {
           ...(note ? [{ type: "text" as const, text: note }] : []),
         ],
       })
-      this.o.bus.emit({ type: "notice", message: "compacted — carrying on from the summary, with your request kept word for word" })
+      this.o.bus.emit({ type: "notice", level: "info", message: "compacted — carrying on from the summary, with your request kept word for word" })
     } catch (e) {
       this.o.bus.emit({ type: "notice", message: `automatic compaction failed: ${(e as Error).message}` })
     }
@@ -676,7 +676,7 @@ export class Engine {
     if (notes.length) {
       this.push({ role: "user", parts: [{ type: "text", text: notes.join("\n\n") }], turn: false })
       // Said as what happened, not as its mark: the line after it.
-      this.o.bus.emit({ type: "notice", message: notes.map((n) => n.split("\n").find((l, i) => i > 0 && l.trim()) ?? n.split("\n")[0]!).join("; ") })
+      this.o.bus.emit({ type: "notice", level: "info", message: notes.map((n) => n.split("\n").find((l, i) => i > 0 && l.trim()) ?? n.split("\n")[0]!).join("; ") })
     }
     if (this.busyInput !== "steer" || !this.inbox.length) return notes.length > 0
     const texts = this.inbox.splice(0)

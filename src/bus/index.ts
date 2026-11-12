@@ -48,7 +48,9 @@ export type Event =
   | { type: "steered"; texts: string[]; ids?: string[] }
   /** A task — one prompt, with every step and tool it takes — starts or ends; `turnId` as on `prompt`. */
   | { type: "task"; state: "start" | "end"; turnId?: string }
-  | { type: "notice"; message: string; level?: "info" | "warn"; /** Spec 3.4.0: a request that will be sent again. */ retry?: { reason: string; in: number; attempt?: number } }
+  /** `level` (tui/notices.ts): info — something happened; success; warn — needs attention (what a
+   *  notice with no level is taken for); error. */
+  | { type: "notice"; message: string; level?: "info" | "success" | "warn" | "error"; /** Spec 3.4.0: a request that will be sent again. */ retry?: { reason: string; in: number; attempt?: number } }
   /** Discard the reply streamed so far in this step: it is being retried. */
   | { type: "retract" }
   /** The session's plan was written, changed or cleared (plan_write, plan_update, /new). */

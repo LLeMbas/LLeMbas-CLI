@@ -4,6 +4,19 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **An MCP server that connects no longer says so with a warning sign at every start.** Nothing is
+  printed when the servers connect; the status bar carries a quiet count (`MCP 2`, or `MCP 1/2`
+  when one that is switched on is not connected). A server that failed or needs a sign-in gets
+  one plain line that names it and points at `/mcp <name>`.
+- **One look for the lines the program says**: `·` something happened, `✓` done, `⚠` needs
+  attention, `✗` failed — in the transcript and in `lembas run`. A warning sign now always means
+  something to look at: compaction starting and finishing, a job's note and the like are plain
+  lines.
+
 ## [2.0.0-beta.9] — 2026-11-12
 
 Harness spec 3.7.0: one display in every client.

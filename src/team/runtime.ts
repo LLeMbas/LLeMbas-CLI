@@ -212,7 +212,7 @@ export class TeamRuntime {
       this.changed()
       return true
     }
-    this.o.bus.emit({ type: "notice", message: `waiting for a free slot: the model serves ${parallelFrom(this.team.capacityOf(this.team.model))} requests at once and the team's members hold them` })
+    this.o.bus.emit({ type: "notice", level: "info", message: `waiting for a free slot: the model serves ${parallelFrom(this.team.capacityOf(this.team.model))} requests at once and the team's members hold them` })
     this.o.lead.waiting?.(this.team.model)
     this.changed()
     return await new Promise<boolean>((resolve) => {

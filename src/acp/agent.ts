@@ -1055,7 +1055,7 @@ export class AcpAgent {
     if (turn) return this.runScheduled(s, prepared, turnId, turn)
     const done = (meta: Record<string, unknown>): PromptResult => ({ stopReason: "end_turn", _meta: { lembas: { turnId, ...meta } } })
     if (prepared.kind === "message") {
-      app.bus.emit({ type: "notice", message: `/${prepared.name}: ${prepared.text}` })
+      app.bus.emit({ type: "notice", level: "info", message: `/${prepared.name}: ${prepared.text}` })
       return done({ command: prepared.name, message: prepared.text })
     }
     if (prepared.kind === "action") {
@@ -1068,7 +1068,7 @@ export class AcpAgent {
       }
       if (prepared.name === "undo") {
         const r = app.turns.undo()
-        app.bus.emit({ type: "notice", message: r ? (r.files.length ? `undone — restored ${r.files.join(", ")}` : "undone — no files had changed") : "nothing to undo in this session" })
+        app.bus.emit({ type: "notice", level: r ? "info" : "warn", message: r ? (r.files.length ? `undone — restored ${r.files.join(", ")}` : "undone — no files had changed") : "nothing to undo in this session" })
         return done({ command: "undo", undone: r ?? null })
       }
       const mode = this.limits ? clampMode("plan", this.limits.maxMode) : "plan"

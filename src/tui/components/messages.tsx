@@ -7,6 +7,7 @@ import type { Item } from "../state.ts"
 import { clipDiff } from "../diffclip.ts"
 import { blockOf, callDuration, callTitle, drawnBlock, type CallState } from "../../session/display.ts"
 import { num } from "../locale.ts"
+import { NOTICES } from "../notices.ts"
 import { splitPrototypes } from "../../prototype/fence.ts"
 
 /** A call the transcript does not draw: a plan change (the panel above the prompt follows it) or a
@@ -233,11 +234,12 @@ function DiffBlock(p: { item: Extract<Item, { kind: "diff" }> }) {
 
 function Notice(p: { item: Extract<Item, { kind: "notice" }> }) {
   const { theme } = useTui()
+  // One table says what each kind of line looks like (tui/notices.ts).
+  const kind = () => NOTICES[p.item.level]
   return (
     <box paddingLeft={1}>
-      <text fg={p.item.level === "warn" ? theme().colors.warn : theme().colors.muted} wrapMode="word">
-        {p.item.level === "warn" ? "⚠ " : "· "}
-        {p.item.text}
+      <text fg={theme().colors[kind().color]} wrapMode="word">
+        {kind().glyph} {p.item.text}
       </text>
     </box>
   )
@@ -247,8 +249,8 @@ function ErrorLine(p: { item: Extract<Item, { kind: "error" }> }) {
   const { theme } = useTui()
   return (
     <box paddingLeft={1} marginTop={1}>
-      <text fg={theme().colors.error} wrapMode="word">
-        ✗ {p.item.text}
+      <text fg={theme().colors[NOTICES.error.color]} wrapMode="word">
+        {NOTICES.error.glyph} {p.item.text}
       </text>
     </box>
   )
@@ -261,7 +263,7 @@ function EndLine(p: { item: Extract<Item, { kind: "end" }> }) {
   return (
     <box paddingLeft={1} marginTop={p.item.failed ? 1 : 0} flexDirection="column">
       <text fg={fg()} wrapMode="word">
-        {p.item.failed ? "✗ " : "■ "}
+        {p.item.failed ? `${NOTICES.error.glyph} ` : "■ "}
         {p.item.line}
       </text>
       <Show when={p.item.more}>

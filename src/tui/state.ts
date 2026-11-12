@@ -20,6 +20,7 @@ import { isNote } from "../session/prefix.ts"
 import { blockOf, callTitle, resultFacts as factsOf } from "../session/display.ts"
 import { endLine, endOf, type Progress } from "../session/progress.ts"
 import { num } from "./locale.ts"
+import type { NoticeLevel } from "./notices.ts"
 
 const resultFacts = (name: string, title: string | undefined, result: { title?: string; meta?: Record<string, unknown> }) => factsOf(blockOf(name), title, result, num)
 
@@ -55,7 +56,7 @@ export type Item =
       jobId?: string
       job?: JobInfo
     }
-  | { kind: "notice"; id: string; text: string; level: "info" | "warn" }
+  | { kind: "notice"; id: string; text: string; level: NoticeLevel }
   | { kind: "diff"; id: string; title: string; patch: string }
   | { kind: "error"; id: string; text: string }
   /** How a reply that did not finish ended: the spec's line (`Stopped: by you`, `Failed: …`),
@@ -349,7 +350,7 @@ export function createView(bus: Bus) {
           set("livePlan", e.plan ? structuredClone(e.plan) : undefined)
           break
         case "notice":
-          set(produce((s) => void s.items.push({ kind: "notice", id: nextId(), text: e.message, level: "warn" })))
+          set(produce((s) => void s.items.push({ kind: "notice", id: nextId(), text: e.message, level: e.level ?? "warn" })))
           break
         case "error":
           // Said once, as the line that ends the reply (`Failed: …`), when the turn is done.
@@ -460,7 +461,7 @@ export function createView(bus: Bus) {
       set(produce((s) => void s.items.push({ kind: "user", id: nextId(), text })))
       set({ phase: "waiting", busySince: Date.now() })
     },
-    info(text: string, level: "info" | "warn" = "info") {
+    info(text: string, level: NoticeLevel = "info") {
       set(produce((s) => void s.items.push({ kind: "notice", id: nextId(), text, level })))
     },
     /** A `!` command the user ran: shown like a tool call, without touching the phase. */

@@ -29,7 +29,7 @@ import { CONTINUE_PROMPT } from "../session/engine.ts"
 import { bashTool } from "../tool/bash.ts"
 import { MODES } from "../config/schema.ts"
 import { Queued, Spinner } from "./components/spinner.tsx"
-import { StatusBar } from "./components/status.tsx"
+import { mcpWord, StatusBar } from "./components/status.tsx"
 import { currentBranch } from "../git/branch.ts"
 import { Welcome } from "./components/welcome.tsx"
 import { Share, type SharedPrompt } from "../acp/share.ts"
@@ -64,6 +64,8 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   const effort = () => (rev(), levelLabel(app.engine.model, app.engine.effort))
   // "team 3/4 · 2 working" while the lead has members (team.md, the TUI's status).
   const teamWord = () => (rev(), teamLabel(app.team.team))
+  // The status bar follows the MCP servers as they connect (and nothing is said in the transcript).
+  app.mcp.onChange(() => refresh())
   const busy = () => view.state.phase !== "idle"
   const branch = () => (rev(), app.project.gitRoot ? currentBranch(app.project.gitRoot) : undefined)
   // A word in the status bar that goes by itself (a copy): it says something happened without
@@ -681,7 +683,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
           </Show>
           <Queued />
           <Prompt focused={() => !dialog() && !jobPanel() && !view.state.pending && !view.state.question && !view.state.plan} busy={busy} commands={palette} files={files} onSubmit={submit} ref={(r) => (input = r)} handle={(h) => (box = h)} remote={() => isRemote(renderer as never)} terminal={terminal} note={(text, warn) => (warn ? view.info(text, "warn") : text.length > 60 ? view.info(text) : flash(text))} queue={queueAccess} onWheel={(dir, lines) => scroll?.scrollBy(dir * lines)} onBackground={backgroundNow} />
-          <StatusBar mode={mode} model={model} effort={effort} branch={branch()} voice={voiceStatus} flash={flashText} remote={() => (rev(), share.label())} spend={spend} team={teamWord} />
+          <StatusBar mode={mode} model={model} effort={effort} branch={branch()} voice={voiceStatus} flash={flashText} remote={() => (rev(), share.label())} spend={spend} team={teamWord} mcp={() => (rev(), mcpWord(app.mcp.servers.values()))} />
         </box>
         <Show when={dialog()}>
           <Dialog spec={dialog()!} close={() => setDialog(undefined)} />
