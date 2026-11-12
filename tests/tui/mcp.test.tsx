@@ -231,16 +231,18 @@ test("without a menu — over the link, in lembas run — /mcp is a plain table,
   const text = (all as { text: string }).text
   expect(text.split("\n")).toEqual([
     "MCP servers:",
-    "  alpha           connected — 2 tools  (your config)",
-    "  beta            failed: connect ECONNREFUSED  (your config)",
-    "  lembas-library  connected — 1 tool  (the LLeMbas server's library)",
+    "- alpha — connected — 2 tools (your config)",
+    "- beta — failed: connect ECONNREFUSED (your config)",
+    "- lembas-library — connected — 1 tool (the LLeMbas server's library)",
     "",
     "/mcp <name> lists one server's tools. A tool asks before it runs unless a permission rule allows it.",
   ])
   const one = (expandSlash(t.app, "/mcp alpha") as { text: string }).text
   expect(one).toContain("alpha — connected — 2 tools")
-  expect(one).toContain("  mcp__alpha__tool_0 — asks — Does thing 0.")
-  expect(one).toContain("  mcp__alpha__tool_1 — always allowed — Does thing 1.")
+  expect(one).toContain("\n- mcp__alpha__tool_0 — asks — Does thing 0.")
+  expect(one).toContain("\n- mcp__alpha__tool_1 — always allowed — Does thing 1.")
+  // One to a line in a terminal and where a reply is drawn as markdown: list lines, none indented.
+  expect(text.split("\n").some((l) => /^ {1,3}\S/.test(l))).toBe(false)
   expect((expandSlash(t.app, "/mcp beta") as { text: string }).text).toContain("at the second line")
   expect((expandSlash(t.app, "/mcp off alpha") as { text: string }).text).toContain("done at the terminal")
   expect(mcpText(t.app.mcp, "nosuch")).toContain('No MCP server "nosuch"')

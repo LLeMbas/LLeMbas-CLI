@@ -41,7 +41,7 @@ export function permissionsText(app: App): string {
   for (const { rule, from: f } of rules) {
     if (f !== from) lines.push("", `${RULE_FROM[f]}:`)
     from = f
-    lines.push(`  ${rule.action.padEnd(5)}  ${ruleLine(rule)}`)
+    lines.push(`- ${rule.action}: ${ruleLine(rule)}`)
   }
   return lines.join("\n")
 }
@@ -89,13 +89,12 @@ export function statusRows(app: App): StatusRow[] {
 
 export function statusText(app: App): string {
   const rows = statusRows(app)
-  const width = Math.max(...rows.map((r) => r.label.length))
   const out: string[] = []
   let section = ""
   for (const r of rows) {
     if (r.section !== section) out.push(...(out.length ? [""] : []), `${r.section}:`)
     section = r.section
-    out.push(`  ${r.label.padEnd(width)}  ${r.value}${r.attention ? "  (needs attention)" : ""}`)
+    out.push(`- ${r.label}: ${r.value}${r.attention ? " (needs attention)" : ""}`)
   }
   return out.join("\n")
 }

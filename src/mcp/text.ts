@@ -1,6 +1,8 @@
 // What is said about the MCP servers in words: the states, where a server comes from, and the
-// plain table `/mcp` prints where there is no menu (`lembas run`, a prompt sent over the link —
-// the web UI shows it as a reply). The TUI's menu (tui/mcpmenu.ts) reads the same words.
+// plain list `/mcp` prints where there is no menu (`lembas run`, a prompt sent over the link —
+// the web UI shows it as a reply). Lines of a list begin with "- ": they read as they are in a
+// terminal and stay one to a line where the reply is drawn as markdown (indented lines would run
+// together there). The TUI's menu (tui/mcpmenu.ts) reads the same words.
 import type { McpManager, ServerState } from "./index.ts"
 import { LIBRARY_SERVER } from "./index.ts"
 
@@ -47,23 +49,22 @@ export function mcpText(mcp: McpManager, name = "", rule: (tool: string) => stri
   if (name) {
     const s = mcp.servers.get(name)
     if (!s) return `No MCP server "${name}" — the servers: ${servers.map((x) => x.name).join(", ")}.`
-    const lines = [`${s.name} — ${stateLine(s)}`, `  from ${SOURCE_WORDS[sourceOf(s)]} · ${whereOf(s)}`]
-    if (s.error && s.error.includes("\n")) lines.push("", ...s.error.split("\n").map((l) => `  ${l}`))
+    const lines = [`${s.name} — ${stateLine(s)}`, "", `From ${SOURCE_WORDS[sourceOf(s)]} · ${whereOf(s)}`]
+    if (s.error && s.error.includes("\n")) lines.push("", "The error in full:", "", ...s.error.split("\n").map((l) => `    ${l}`))
     if (s.status === "connected") {
       if (s.tools.length) lines.push("", "Tools:")
       for (const t of s.tools) {
         const called = mcp.nameOf(s.name, t.name)
         const said = { allow: "always allowed", deny: "denied", ask: "asks" }[rule(called) ?? "ask"] ?? "asks"
-        lines.push(`  ${called} — ${said}${t.annotations?.readOnlyHint ? ", read-only" : ""}${t.description ? ` — ${t.description.trim().split("\n")[0]}` : ""}`)
+        lines.push(`- ${called} — ${said}${t.annotations?.readOnlyHint ? ", read-only" : ""}${t.description ? ` — ${t.description.trim().split("\n")[0]}` : ""}`)
       }
-      if (s.prompts.length) lines.push("", "Prompts:", ...s.prompts.map((p) => `  /${s.name}:${p.name}${p.description ? ` — ${p.description.split("\n")[0]}` : ""}`))
+      if (s.prompts.length) lines.push("", "Prompts:", ...s.prompts.map((p) => `- /${s.name}:${p.name}${p.description ? ` — ${p.description.split("\n")[0]}` : ""}`))
     }
     return lines.join("\n")
   }
-  const width = Math.max(...servers.map((s) => s.name.length))
   return [
     "MCP servers:",
-    ...servers.map((s) => `  ${s.name.padEnd(width)}  ${stateLine(s)}  (${SOURCE_WORDS[sourceOf(s)]})`),
+    ...servers.map((s) => `- ${s.name} — ${stateLine(s)} (${SOURCE_WORDS[sourceOf(s)]})`),
     "",
     "/mcp <name> lists one server's tools. A tool asks before it runs unless a permission rule allows it.",
   ].join("\n")
