@@ -1,7 +1,7 @@
 // Local mode (`lembas -l`): everything under the project, the user's login read and nothing more,
 // and what would reach or be kept on a server turned off.
-import { afterEach, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { afterAll, afterEach, expect, test } from "bun:test"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { addPendingDeleted, pendingDeleted } from "../src/acp/pending.ts"
@@ -15,6 +15,13 @@ import { evaluate } from "../src/permission/evaluate.ts"
 import { protectedPath } from "../src/permission/hardline.ts"
 import { enterLocal, LocalError } from "../src/project/local.ts"
 import { delta, fakeProvider } from "./fake-provider.ts"
+
+// The whole suite shares one config directory: the login this file writes there is taken away
+// again, or every later start-up says "not signed in to …" about it.
+afterAll(() => {
+  rmSync(join(globalPaths.config, "lembas.json"), { force: true })
+  rmSync(join(globalPaths.config, "lembas"), { recursive: true, force: true })
+})
 
 const cli = join(import.meta.dir, "../src/cli.ts")
 const xdgData = process.env.XDG_DATA_HOME

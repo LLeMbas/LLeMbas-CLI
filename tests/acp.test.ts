@@ -1,8 +1,8 @@
 // ACP: the JSON-RPC peer, LLeMbas CLI as an agent (serve --stdio and the LLeMbas link
 // share it), the device's own limits on remote work, the link itself against a fake LLeMbas, the
 // service unit, and library: lembas.
-import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs"
+import { afterAll, afterEach, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AcpAgent, clampMode, underRoots, type Limits } from "../src/acp/agent.ts"
@@ -12,6 +12,13 @@ import { paths } from "../src/config/paths.ts"
 import { setTrust } from "../src/project/root.ts"
 import { unitText } from "../src/service.ts"
 import { delta, fakeProvider, toolCall, type Fake } from "./fake-provider.ts"
+
+// The whole suite shares one config directory: the login this file writes there is taken away
+// again, or every later start-up says "not signed in to …" about it.
+afterAll(() => {
+  rmSync(join(paths.config, "lembas.json"), { force: true })
+  rmSync(join(paths.config, "lembas"), { recursive: true, force: true })
+})
 
 let fake: Fake | undefined
 const stops: (() => void)[] = []

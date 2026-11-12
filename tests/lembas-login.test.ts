@@ -2,7 +2,7 @@
 // discovery document, signed in by device code, one connection named after the instance with the key
 // in a 0600 file — and the models, their settings, the voice and the search read from the instance
 // at every start rather than copied into the config. `logout` revokes and removes exactly that.
-import { afterEach, beforeEach, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test"
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { parse } from "yaml"
@@ -16,6 +16,13 @@ import { search } from "../src/search/index.ts"
 import { webuiFetch } from "../src/search/webui.ts"
 import { wav } from "../src/voice/audio.ts"
 import { synthesize, transcribe } from "../src/voice/speech.ts"
+
+// The whole suite shares one config directory: the login this file writes there is taken away
+// again, or every later start-up says "not signed in to …" about it.
+afterAll(() => {
+  rmSync(join(paths.config, "lembas.json"), { force: true })
+  rmSync(join(paths.config, "lembas"), { recursive: true, force: true })
+})
 
 interface Fake {
   url: string
