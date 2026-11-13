@@ -471,7 +471,7 @@ export class Share {
       // A turn id taken already: the original's answer.
       if (this.turns.has(turnId)) return this.turns.run(turnId, () => Promise.reject(new Error("unreachable")))
       // What the client holds for the session (its instructions, personalization, library scope,
-      // prototypes), passed on by the hub: read into the prompt here as the service would.
+      // the scope), passed on by the hub: read into the prompt here as the service would.
       if (p?.context && typeof p.context === "object") this.app.setContext(p.context as SessionContext, typeof p?.instance === "string" ? p.instance : undefined)
       // The blocks, expanded here as this terminal's keyboard would; `text` from a hub of
       // an earlier build.
