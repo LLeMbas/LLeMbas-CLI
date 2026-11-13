@@ -193,6 +193,7 @@ export const LOOP: {
     notify: {
       values: string[]
       default: string
+      one_shot_default: string
       default_condition: string
       labels: Record<"always" | "when" | "never", string>
       texts: Record<"always" | "when", string>
@@ -202,7 +203,18 @@ export const LOOP: {
     }
   }
   /** HTML pages in answers (spec 3.8.0, harness/pages.md). */
-  pages: { fence: string; title_max: number; untitled: string; variables: string[]; note: string; where: string; projection: string; never: string[] }
+  pages: {
+    fence: string
+    title_max: number
+    untitled: string
+    variables: string[]
+    note: string
+    where: string
+    projection: string
+    never: string[]
+    /** pages.md §6: what a static page may hold. */
+    static: { elements: string[]; attributes: string[]; attribute_prefixes: string[]; address_attributes: string[]; addresses: string[]; image_types: string[] }
+  }
   /** Display (spec 3.7.0, harness/display.md): a tool call's title, states and facts, the blocks,
    *  the phases that end a reply, what each card offers. */
   display: {

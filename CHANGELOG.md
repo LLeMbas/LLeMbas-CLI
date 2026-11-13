@@ -16,8 +16,8 @@ Harness spec 3.8.0: reports from scheduled runs, HTML pages in answers, which pe
   attention"), or never. `[SILENT]` is retired. On a linked computer the CLI offers
   `report_write` to a scheduled run's model and hands the report back with the run's answer.
 - **Harness spec 3.8.0: HTML pages in answers** (`harness/pages.md`), experimental and off unless
-  the server switches it on: a reply may carry a complete page in an `html-view` block, shown in
-  a sealed frame by the web UI and Desktop. A terminal shows a note in its place — *This answer
+  the server switches it on: a reply may carry a complete page in an `html-view` block — static:
+  HTML, CSS and inline SVG, no script — shown in a sealed frame by the web UI and Desktop. A terminal shows a note in its place — *This answer
   has a page: title* — and keeps the page as a file (`/pages`). A terminal's own model is never
   offered pages.
 - **`/reports`**: the reports your schedules filed, read from your LLeMbas server — unread first,

@@ -16,6 +16,7 @@ import { apply, fromTodos, normalise, type Plan } from "../src/plan/plan.ts"
 import { ToolCallAccumulator, toOpenAIMessages } from "../src/provider/openai-chat.ts"
 import type { Message } from "../src/provider/types.ts"
 import { pageNote, pagesOf, pagesOffered, textProjection } from "../src/pages/fence.ts"
+import { staticFaults } from "../src/pages/static.ts"
 import { resolveBase } from "../src/library/store.ts"
 import { NarrowError, narrowParameters, type Narrow } from "../src/harness.ts"
 import { fillPrompt } from "../src/prompt/fill.ts"
@@ -125,6 +126,10 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
         return { note: pageNote(c.title as string) }
       case "offered":
         return { offered: pagesOffered(c as { instance?: boolean; model?: boolean; chat?: boolean; where?: string }) }
+      case "static": {
+        const why = staticFaults(c.html as string)
+        return why.length ? { static: false, why } : { static: true }
+      }
       case "note_line":
         return { line: c.change === "on" ? fillText(CONTEXT.note.pages_on, { pages_text: c.pages_text as string }) : CONTEXT.note.pages_off }
       default:
