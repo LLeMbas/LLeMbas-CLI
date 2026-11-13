@@ -182,6 +182,10 @@
                   "description": "The model reads images: @image files, pasted paths and view_image.",
                   "type": "boolean"
                 },
+                "html_pages": {
+                  "description": "The server's word that this model can write HTML pages (harness pages.md). Read and kept, never used here: a terminal's model is not offered pages.",
+                  "type": "boolean"
+                },
                 "tools": {
                   "description": "false: a model without tool calls — it can only talk.",
                   "type": "boolean"
