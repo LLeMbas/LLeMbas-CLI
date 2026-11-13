@@ -104,7 +104,7 @@ describe("web tools", () => {
   test("webfetch on the local network asks; the public web does not", () => {
     const perm = { mode: "manual" as const, rules: toRules(DEFAULT_RULES), hardline: hardlineRules(), root: "/p" }
     expect(evaluate(webFetchTool.permission({ url: "https://docs.example.com/x" }, ctx()), perm).action).toBe("allow")
-    for (const u of ["http://192.168.1.10/", "http://localhost:3000", "https://nas.lan/admin", "http://[::1]/", "http://printer/"])
+    for (const u of ["http://192.168.1.10/", "http://localhost:3000", "https://files.lan/admin", "http://[::1]/", "http://device/"])
       expect(evaluate(webFetchTool.permission({ url: u }, ctx()), perm).action).toBe("ask")
     expect(isPrivateHost("100.100.1.1")).toBe(true) // tailnet
     expect(isPrivateHost("8.8.8.8")).toBe(false)
@@ -121,7 +121,7 @@ describe("web tools", () => {
 // Audit: private addresses in other spellings, redirects, and pages built to stall a regex.
 import { fetchPage as fp13, htmlToMarkdown as h13, isPrivateHost as ip13, PrivateAddressError as PAE13 } from "../src/search/fetch.ts"
 test("private in every spelling; public names starting with fc/fd are not", () => {
-  for (const h of ["[::ffff:127.0.0.1]", "[::ffff:7f00:1]", "[::]", "[::ffff:a9fe:a9fe]", "localhost.", "printer.lan.", "[fe90::1]", "[fd12::1]"]) expect(ip13(h)).toBe(true)
+  for (const h of ["[::ffff:127.0.0.1]", "[::ffff:7f00:1]", "[::]", "[::ffff:a9fe:a9fe]", "localhost.", "device.lan.", "[fe90::1]", "[fd12::1]"]) expect(ip13(h)).toBe(true)
   for (const h of ["fcc.gov", "fdroid.org", "example.com", "[2001:db8::1]"]) expect(ip13(h)).toBe(false)
 })
 test("a redirect to another local address is not followed, even from an approved local host", async () => {

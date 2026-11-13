@@ -32,6 +32,10 @@ if ! command -v bun >/dev/null 2>&1; then
 fi
 bun --version
 
+# The repository is public: nothing private in its tracked files (scripts/hygiene.sh).
+step "hygiene"
+scripts/hygiene.sh
+
 step "dependencies"
 bun install --frozen-lockfile
 
