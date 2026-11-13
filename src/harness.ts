@@ -38,6 +38,7 @@ import t_read from "../harness/tools/read.json"
 import t_recall from "../harness/tools/recall.json"
 import t_release from "../harness/tools/release.json"
 import t_report from "../harness/tools/report.json"
+import t_report_write from "../harness/tools/report_write.json"
 import t_rm from "../harness/tools/rm.json"
 import t_search from "../harness/tools/search.json"
 import t_session_search from "../harness/tools/session_search.json"
@@ -95,7 +96,7 @@ export interface ToolSpecDef {
    *  `team` (3.2.0): the team setting allows more than one agent (harness/team.md §2). `phone`
    *  (3.6.0): a message came from the LLeMbas app on the person's phone (harness/phone.md) — the
    *  server's alone. */
-  requires?: ("display" | "page" | "forge" | "plan" | "team" | "phone")[]
+  requires?: ("display" | "page" | "forge" | "plan" | "team" | "phone" | "scheduled")[]
   /** What a call answers, word for word, when a requirement went away after the offer. */
   unavailable?: string
   /** Spec 3.7.0: a tool's other fixed answers, by key (python: no_answer, timeout). */
@@ -187,7 +188,21 @@ export const LOOP: {
     statuses: string[]
     monitor: { timeout_seconds: { default: number; min: number; max: number }; excerpt_chars: number; output_max_bytes: number }
     texts: Record<"off" | "plan" | "denied" | "monitor_asks" | "monitor_denied" | "no_reply", string>
+    /** Spec 3.8.0 (reports.md): a schedule's notify-when — its values, the instruction texts,
+     *  what report_write answers, the limits of the history line and of a made-up summary. */
+    notify: {
+      values: string[]
+      default: string
+      default_condition: string
+      labels: Record<"always" | "when" | "never", string>
+      texts: Record<"always" | "when", string>
+      result: Record<"filed" | "replaced", string>
+      note_max: number
+      summary_max: number
+    }
   }
+  /** HTML pages in answers (spec 3.8.0, harness/pages.md). */
+  pages: { fence: string; title_max: number; untitled: string; variables: string[]; note: string; where: string; projection: string; never: string[] }
   /** Display (spec 3.7.0, harness/display.md): a tool call's title, states and facts, the blocks,
    *  the phases that end a reply, what each card offers. */
   display: {
@@ -245,7 +260,7 @@ export const LOOP: {
     env: { project: string; started: string }
     /** A note on the next user message (spec 3.1.0, context.md §10): its tags and its lines, in
      *  the order they are said. */
-    note: { open: string; close: string; date: string; mode: string; plan: string; memory: string; instructions: string; personality: string; mcp: string; empty: string
+    note: { open: string; close: string; date: string; mode: string; plan: string; memory: string; instructions: string; personality: string; pages_on: string; pages_off: string; mcp: string; empty: string
       /** What a note names the person's own instructions by (the instructions block's `{{path}}`). */
       personal: string
       /** For a chat, whose modes have no text of their own; the CLI says modes/<mode>.md. */
@@ -339,7 +354,7 @@ export function narrowParameters(parameters: Record<string, unknown>, narrow: Na
 }
 
 export const TOOL_SPECS: Record<string, ToolSpecDef> = Object.fromEntries(
-  ([t_apply_patch, t_ask_user, t_bash, t_branch, t_commit, t_decisions, t_edit, t_glob, t_grep, t_job_list, t_job_output, t_job_send, t_job_stop, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_merge, t_mkdir, t_multiedit, t_mv, t_note_manage, t_note_view, t_notes_search, t_phone_action, t_plan_submit, t_plan_update, t_plan_write, t_pr, t_python, t_read, t_recall, t_release, t_report, t_rm, t_search, t_session_search, t_settings, t_show, t_skill_manage, t_skill_view, t_skills_list, t_tag, t_task, t_tasks, t_team_add, t_team_assign, t_team_decide, t_team_findings, t_team_finish, t_team_read, t_team_replace, t_team_request, t_team_send, t_team_stop, t_team_whoami, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
+  ([t_apply_patch, t_ask_user, t_bash, t_branch, t_commit, t_decisions, t_edit, t_glob, t_grep, t_job_list, t_job_output, t_job_send, t_job_stop, t_knowledge_get, t_knowledge_search, t_list, t_memory, t_merge, t_mkdir, t_multiedit, t_mv, t_note_manage, t_note_view, t_notes_search, t_phone_action, t_plan_submit, t_plan_update, t_plan_write, t_pr, t_python, t_read, t_recall, t_release, t_report, t_report_write, t_rm, t_search, t_session_search, t_settings, t_show, t_skill_manage, t_skill_view, t_skills_list, t_tag, t_task, t_tasks, t_team_add, t_team_assign, t_team_decide, t_team_findings, t_team_finish, t_team_read, t_team_replace, t_team_request, t_team_send, t_team_stop, t_team_whoami, t_view_image, t_web_fetch, t_web_search, t_write] as ToolSpecDef[]).map((t) => [t.name, t]),
 )
 
 /** Whether the spec gives a tool to this CLI: not the server's alone (`scope: llembas`), and

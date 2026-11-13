@@ -74,6 +74,11 @@ export interface ToolContext {
   /** Open a file in the user's viewer (the show tool): set only where a client over the link said
    *  it can show files (harness/acp.md, capability `show`). Absent: no display, and show is not offered. */
   show?: (req: import("./show.ts").ShowRequest, callId?: string) => Promise<import("./show.ts").ShowReply>
+  /** A scheduled run's report (harness reports.md): set only in a session a schedule opened for
+   *  its run that notifies at all. `active`: the turn running now is the schedule's (not a person
+   *  writing into the run's session); `file` keeps the report — the last one written is the
+   *  run's — and says how many this run has written. Absent: report_write is not offered. */
+  report?: { active(): boolean; file(report: { title: string; body: string; summary: string; importance: "normal" | "high" }): number }
   /** The scope sent on every call to the server's memory (`_meta.lembas.scope`, harness/acp.md
    *  *Memory*): the id of a session the client opened; none for a session of this device's own. */
   libraryScope?: string
@@ -131,7 +136,7 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
    *  display`). The tool list is the session's (harness context.md §10): one the session could
    *  never meet leaves the tool out; one that comes and goes (plan mode, a display) keeps it in, and
    *  a call while it is unmet answers the spec's `unavailable` text. */
-  requires?: "vision" | "plan" | "project" | "knowledge" | "display" | "team"
+  requires?: "vision" | "plan" | "project" | "knowledge" | "display" | "team" | "scheduled"
   description: string
   schema: S
   /** The JSON Schema sent to the model, when it does not come from `schema` (MCP tools). */

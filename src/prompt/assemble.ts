@@ -15,7 +15,7 @@ import blockAgentsMissing from "../../harness/prompts/blocks/agents-missing.md" 
 import blockAgentsGit from "../../harness/prompts/blocks/agents-git.md" with { type: "text" }
 import blockAgentsKeep from "../../harness/prompts/blocks/agents-keep.md" with { type: "text" }
 import blockLibrary from "../../harness/prompts/blocks/library.md" with { type: "text" }
-import blockPrototypes from "../../harness/prompts/blocks/prototypes.md" with { type: "text" }
+import blockHtmlPages from "../../harness/prompts/blocks/html-pages.md" with { type: "text" }
 import blockSubagent from "../../harness/prompts/blocks/subagent.md" with { type: "text" }
 import blockContext from "../../harness/prompts/blocks/context.md" with { type: "text" }
 import blockTeamLead from "../../harness/prompts/blocks/team_lead.md" with { type: "text" }
@@ -57,7 +57,9 @@ const BUILTIN: Record<string, string> = {
   "blocks/agents-git.md": blockAgentsGit,
   "blocks/agents-keep.md": blockAgentsKeep,
   "blocks/library.md": blockLibrary,
-  "blocks/prototypes.md": blockPrototypes,
+  // Spec 3.8.0 (pages.md): the server's to send — an agent chat is never offered pages. Here so the
+  // spec's texts are all one map (and for the note a chat seen over the link may quote).
+  "blocks/html-pages.md": blockHtmlPages,
   "blocks/subagent.md": blockSubagent,
   "blocks/context.md": blockContext,
   "blocks/team_lead.md": blockTeamLead,
@@ -126,9 +128,6 @@ const GIT_SECTION = [
   "- Before a commit, look at `git status`, `git diff` and recent `git log`, stage files by name, and write a message in the repository's style.",
   "- Never change git config, skip hooks, force-push or rewrite history unless the user explicitly asks.",
 ].join("\n")
-/** Where a prototype is seen from a terminal (blocks/prototypes.md's {{prototype_surface}}). */
-export const PROTOTYPE_SURFACE = "It is saved as a file you can open, and the LLeMbas web UI renders it live."
-
 /** `{{plan_context}}`: the plan with its ids under a heading, and the sentence to work to it. */
 export function planContext(plan: Plan | undefined): string {
   if (!plan) return ""
@@ -270,9 +269,6 @@ export interface PromptContext {
   library?: { scope: string }
   /** recall is offered: the tool results carry ids and may be stubs (blocks/context.md, spec 3.0.0). */
   context?: boolean
-  /** Prototypes are offered (blocks/prototypes.md); `sources` the sentence saying what a page
-   *  may load, or "" where nothing says. */
-  prototypes?: { sources: string }
 }
 
 const MAX_INSTRUCTION_CHARS = 40_000
@@ -381,12 +377,10 @@ export function assembleSystem(ctx: PromptContext): string {
       }).replace(/\n{3,}/g, "\n\n"),
     )
   else if (ctx.manageSkills && !ctx.subagent) sections.push(promptText("blocks/skills-empty.md"))
-  // The library and prototypes (shared blocks): the library whenever its tools are offered, named
-  // to the bases in scope; prototypes only where they are offered, with where the page is seen.
+  // The library (a shared block) whenever its tools are offered, named to the bases in scope.
   // How tool results are kept short (ids, stubs, recall): wherever recall is offered.
   if (ctx.context) sections.push(promptText("blocks/context.md"))
   if (ctx.library && !ctx.subagent) sections.push(fillPrompt(promptText("blocks/library.md"), { knowledge_scope: ctx.library.scope }))
-  if (ctx.prototypes && !ctx.subagent) sections.push(fillPrompt(promptText("blocks/prototypes.md"), { prototype_sources: ctx.prototypes.sources, prototype_surface: PROTOTYPE_SURFACE }))
 
   if (ctx.teamLead && !ctx.subagent) sections.push(promptText("blocks/team_lead.md"))
   if (ctx.subagent && ctx.member)

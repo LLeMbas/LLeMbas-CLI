@@ -1,7 +1,7 @@
 // What the CLI does with each conformance case (harness/conformance/*.json). The cases are the
 // harness spec's: LLeMbas runs the same files through its own implementation. The test compares
 // this with each case's `expect`; `bun run harness record` fills in an `expect` a new case lacks.
-import { alwaysPatterns, toRules, evaluate, DEFAULT_RULES, type PermissionRequest } from "../src/permission/evaluate.ts"
+import { alwaysPatterns, toRules, evaluate, judgeNewRule, ruleAction, DEFAULT_RULES, type PermissionRequest, type Rule } from "../src/permission/evaluate.ts"
 import { BUILTIN_HARDLINE, hardlineCommand, plainCommands } from "../src/permission/hardline.ts"
 import { splitCommand, words } from "../src/permission/bash.ts"
 import { prefix } from "../src/permission/arity.ts"
@@ -15,7 +15,7 @@ import type { Mode, PermissionConfig } from "../src/config/schema.ts"
 import { apply, fromTodos, normalise, type Plan } from "../src/plan/plan.ts"
 import { ToolCallAccumulator, toOpenAIMessages } from "../src/provider/openai-chat.ts"
 import type { Message } from "../src/provider/types.ts"
-import { parseInfo, titleFor } from "../src/prototype/fence.ts"
+import { pageNote, pagesOf, pagesOffered, textProjection } from "../src/pages/fence.ts"
 import { resolveBase } from "../src/library/store.ts"
 import { NarrowError, narrowParameters, type Narrow } from "../src/harness.ts"
 import { fillPrompt } from "../src/prompt/fill.ts"
@@ -35,7 +35,7 @@ import { endLine, progressLine, progressText, type Progress } from "../src/sessi
 import { callDuration, callFacts, callTitle, changeText, diffCounts, drawnBlock, type CallState } from "../src/session/display.ts"
 import { checkMode, requestRefusal, tighten, whoDecides, type Grant } from "../src/team/delegation.ts"
 import { fillPrompt as fillText } from "../src/prompt/fill.ts"
-import { isSilent, judgeCase, monitorHash, scheduledMode, stripSentinel } from "../src/acp/scheduled.ts"
+import { isSilent, judgeCase, monitorHash, notifyInstruction, reportResult, reportTool, runLeaves, scheduledMode, stripSentinel } from "../src/acp/scheduled.ts"
 
 type Case = Record<string, unknown>
 
@@ -115,10 +115,54 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
     if (c.op === "todos") return fromTodos(c.todos)
     throw new Error(`plan: unknown op ${String(c.op)}`)
   },
-  prototype: (c) => {
-    const info = parseInfo(c.info as string)
-    return info ? { kind: info.kind, title: titleFor(c.code as string, info.title) } : null
+  // HTML pages in answers (pages.md, spec 3.8.0): the fence, the note, the text projection, where
+  // pages are offered, the session note for a switch changed mid-chat.
+  pages: (c) => {
+    switch (c.show) {
+      case "fence":
+        return { pages: pagesOf(c.text as string), projection: textProjection(c.text as string) }
+      case "note":
+        return { note: pageNote(c.title as string) }
+      case "offered":
+        return { offered: pagesOffered(c as { instance?: boolean; model?: boolean; chat?: boolean; where?: string }) }
+      case "note_line":
+        return { line: c.change === "on" ? fillText(CONTEXT.note.pages_on, { pages_text: c.pages_text as string }) : CONTEXT.note.pages_off }
+      default:
+        throw new Error(`pages: unknown show ${String(c.show)}`)
+    }
   },
+  // Reports (reports.md, spec 3.8.0): where report_write is offered, the instruction in the run's
+  // prompt, the tool's answer, and what a run leaves.
+  reports: (c) => {
+    switch (c.show) {
+      case "offered": {
+        const tool = reportTool(c as { session: string; notify?: unknown; turn: string; subagent?: boolean })
+        return tool === "unavailable" ? { tool, text: TOOL_SPECS.report_write!.unavailable } : { tool }
+      }
+      case "instruction":
+        return { text: notifyInstruction(c.notify, c.condition) }
+      case "result":
+        return { text: reportResult(c.calls as number) }
+      case "run":
+        return runLeaves(c as never)
+      default:
+        throw new Error(`reports: unknown show ${String(c.show)}`)
+    }
+  },
+  // Which permission rule decides, and what making one does (permission/rules.md, spec 3.8.0).
+  rules: (c) => {
+    const written: Rule[] = [...(c.defaults ? toRules(DEFAULT_RULES, "default") : []), ...toRules((c.user ?? {}) as PermissionConfig, "global"), ...toRules((c.project ?? {}) as PermissionConfig, "project")]
+    // An "always" answer is a learned rule; one set in a menu is a project's rule, in the session as in the file.
+    const made: Rule[] = ((c.made ?? []) as { permission: string; pattern: string; action: Rule["action"]; by: string }[]).map((m) => ({ permission: m.permission, pattern: m.pattern, action: m.action, ...(m.by === "always" ? { learned: true } : { source: "project" as const }) }))
+    const bare = (r: Rule) => ({ permission: r.permission, pattern: r.pattern, action: r.action })
+    if (c.set) {
+      const j = judgeNewRule(c.set as Rule, written, [...written, ...made])
+      return j.result === "made" ? { result: "made", still: j.still.map(bare) } : j.result === "refused" ? { result: "refused", by: bare(j.by) } : { result: "unchanged" }
+    }
+    const q = c.request as { permission: string; pattern: string }
+    return ruleAction(q.permission, q.pattern, [...written, ...made]) ?? null
+  },
+
   fill: (c) => {
     try {
       return { text: fillPrompt(c.text as string, c.vars as Record<string, string>) }

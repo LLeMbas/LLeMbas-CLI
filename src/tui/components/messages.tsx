@@ -8,7 +8,7 @@ import { clipDiff } from "../diffclip.ts"
 import { blockOf, callDuration, callTitle, drawnBlock, type CallState } from "../../session/display.ts"
 import { num } from "../locale.ts"
 import { NOTICES } from "../notices.ts"
-import { splitPrototypes } from "../../prototype/fence.ts"
+import { pageNote, splitPages } from "../../pages/fence.ts"
 
 /** A call the transcript does not draw: a plan change (the panel above the prompt follows it) or a
  *  tool the spec marks hidden — under its former name too (a stored session's `todo`). */
@@ -35,27 +35,27 @@ function UserMessage(p: { item: Extract<Item, { kind: "user" }> }) {
   )
 }
 
-/** A reply as markdown — except a completed prototype fence, which is saved as a file
- *  (state.ts) and drawn as one line saying so in its place; while it still streams it is the
- *  code block it is so far. */
+/** A reply as markdown — except a finished page fence (harness pages.md): a terminal cannot show
+ *  a page, so the note stands in its place, with where the page was saved (state.ts); while it
+ *  still streams it is the code block it is so far. */
 function AssistantMessage(p: { item: Extract<Item, { kind: "assistant" }> }) {
   const { theme, md } = useTui()
-  const segments = () => (p.item.text.includes("```") || p.item.text.includes("~~~") ? splitPrototypes(p.item.text) : [])
-  const whole = () => !segments().some((s) => s.kind === "prototype")
+  const segments = () => (p.item.text.includes("```") || p.item.text.includes("~~~") ? splitPages(p.item.text) : [])
+  const whole = () => !segments().some((s) => s.kind === "page")
   return (
     <box paddingLeft={2} marginTop={1} flexDirection="column">
       <Show when={!whole()} fallback={<markdown content={p.item.text.trim()} syntaxStyle={md()} streaming={p.item.streaming} fg={theme().colors.text} conceal />}>
         <For each={segments()}>
           {(seg, i) => {
-            const saved = () => (seg.kind === "prototype" && seg.closed ? p.item.prototypes?.[seg.start] : undefined)
+            const saved = () => (seg.kind === "page" && seg.closed ? (p.item.pages?.[seg.start] ?? { title: seg.title }) : undefined)
             const last = () => i() === segments().length - 1
             return (
               <Show
                 when={saved()}
                 fallback={<markdown content={(seg.kind === "text" ? seg.text : seg.raw).trim()} syntaxStyle={md()} streaming={p.item.streaming && last()} fg={theme().colors.text} conceal />}
               >
-                <text fg={theme().colors.muted} wrapMode="none" truncate>
-                  {`prototype · ${saved()!.title || saved()!.kind} · saved to ${saved()!.path}`}
+                <text fg={theme().colors.muted} wrapMode="word">
+                  {`${pageNote(saved()!.title)}${saved()!.path ? ` — saved to ${saved()!.path}` : ""}`}
                 </text>
               </Show>
             )

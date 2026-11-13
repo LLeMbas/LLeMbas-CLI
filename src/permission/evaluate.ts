@@ -90,29 +90,35 @@ export function ruleAction(permission: string, pattern: string, rules: Rule[]): 
   return lookupRule(permission, pattern, rules)?.action
 }
 
+/** The rule that decides (harness permission/rules.md §2). The last matching rule is the
+ *  candidate. One made after the written ones — a project's, an "always" answer, one set in a
+ *  menu — gives way to whichever of these is stricter than it, the strictest deciding:
+ *  a narrower written rule (`read: allow` leaves `read *.env: ask` asking); the person's own
+ *  answer (their config's last matching rule, of any breadth); and, for an "always" answer, a
+ *  written deny. A candidate from the defaults or the person's own config decides as it is. */
 function lookupRule(permission: string, pattern: string, rules: Rule[]): Rule | undefined {
-  const hit = rules.findLast((r) => match(permission, r.permission) && match(pattern, r.pattern))
-  // A project's rule (or an "always" answer) that is looser than what the user's global config says
-  // for the same call gives way to it: the user's ask and deny are the floor a cloned repository
-  // stands on, not something it can write over.
-  if (hit && (hit.source === "project" || hit.learned)) {
-    const own = rules.findLast((r) => r.source === "global" && !r.learned && match(permission, r.permission) && match(pattern, r.pattern))
-    if (own && RANK[own.action] > RANK[hit.action]) return own
+  const matches = (r: Rule) => match(permission, r.permission) && match(pattern, r.pattern)
+  const hit = rules.findLast(matches)
+  if (!hit || !(hit.source === "project" || hit.learned)) return hit
+  const floors: Rule[] = rules.filter((r) => r !== hit && !r.learned && matches(r) && narrowerThan(r, hit))
+  const own = rules.findLast((r) => r.source === "global" && !r.learned && matches(r))
+  if (own) floors.push(own)
+  if (hit.learned) {
+    const written = rules.findLast((r) => !r.learned && matches(r))
+    if (written?.action === "deny") floors.push(written)
   }
-  // "Always allow git push *" must not undo a configured "git push --force *": deny.
-  if (hit?.learned) {
-    const written = rules.findLast((r) => !r.learned && match(permission, r.permission) && match(pattern, r.pattern))
-    if (written?.action === "deny") return written
-  }
-  // A rule made after the written ones — a project's, an "always" answer, one set in a menu —
-  // decides what a broader rule decided, never what a narrower one did: `read: allow` leaves
-  // `read *.env: ask` asking, `bash: allow` leaves `bash "git push *": ask`. The strictest
-  // narrower rule that matches this call keeps winning.
-  if (hit && (hit.source === "project" || hit.learned)) {
-    const narrower = rules.filter((r) => r !== hit && !r.learned && RANK[r.action] > RANK[hit.action] && match(permission, r.permission) && match(pattern, r.pattern) && narrowerThan(r, hit))
-    if (narrower.length) return narrower.reduce((a, b) => (RANK[b.action] > RANK[a.action] ? b : a))
-  }
-  return hit
+  return floors.reduce((best, r) => (RANK[r.action] > RANK[best.action] ? r : best), hit)
+}
+
+/** What making a rule would do (permission/rules.md §3), before anything is changed: nothing —
+ *  the action is already in force; refused, by the rule in its way; or made, leaving `still`, the
+ *  stricter narrower rules that go on applying. `written`: the rules of the defaults, the
+ *  person's config and the project; `all`: those and the session's own. */
+export function judgeNewRule(rule: Pick<Rule, "permission" | "pattern" | "action">, written: Rule[], all: Rule[] = written): { result: "unchanged" } | { result: "refused"; by: Rule } | { result: "made"; still: Rule[] } {
+  if (ruleAction(rule.permission, rule.pattern, all) === rule.action) return { result: "unchanged" }
+  const by = standsInTheWay(rule, written)
+  if (by) return { result: "refused", by }
+  return { result: "made", still: stillStricter(rule, written) }
 }
 
 /** Whether an allow would cover something a written rule denies (its pattern, read as text,

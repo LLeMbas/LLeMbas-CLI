@@ -31,6 +31,8 @@ export interface ScheduledMeta {
   title?: string
   mode?: unknown
   approval_wait_s?: unknown
+  /** Spec 3.8.0 (reports.md §6): the schedule's notify-when. Absent: a server before 3.8.0. */
+  notify?: unknown
 }
 
 /** A scheduled turn's settings, once the device has judged it. */
@@ -40,6 +42,10 @@ export interface ScheduledTurn {
   title: string
   mode: Mode
   waitMs: number
+  /** Spec 3.8.0: the schedule's notify-when, when the server said one — the run may then file a
+   *  report (unless `never`) and the retired sentinel means nothing. Absent: a 3.5–3.7 server,
+   *  whose runs are judged as before. */
+  notify?: Notify
 }
 
 /** The schedule's mode and approval wait as this device runs them, or why it refuses
@@ -107,7 +113,7 @@ export function finalReply(messages: Message[]): string {
 }
 
 /** The run's outcome, for `session/prompt`'s `_meta.lembas.scheduled`. */
-export function runOutcome(o: { runId: string; reason: string; text: string; error?: string }) {
+export function runOutcome(o: { runId: string; reason: string; text: string; error?: string; notify?: Notify; report?: Report }) {
   let status: "ok" | "silent" | "failed" | "cancelled"
   let error: string | null = null
   if (o.reason === "cancelled") status = "cancelled"
@@ -117,8 +123,10 @@ export function runOutcome(o: { runId: string; reason: string; text: string; err
   } else if (!o.text.trim()) {
     status = "failed"
     error = SCHEDULED.texts.no_reply
-  } else status = isSilent(o.text) ? "silent" : "ok"
-  return { run_id: o.runId, status, text: o.text, error }
+  } else status = o.notify === undefined && isSilent(o.text) ? "silent" : "ok"
+  // Spec 3.8.0: the report written in the turn travels with its answer — also from a turn that
+  // then failed: what was found is not thrown away with the error. `silent` is a status of 3.5.0.
+  return { run_id: o.runId, status, text: o.text, error, ...(o.report ? { report: o.report } : {}) }
 }
 
 // --- The watch command ---------------------------------------------------------------------
@@ -235,4 +243,65 @@ export function runMonitor(command: string, cwd: string, timeoutS: number, env: 
     child.on("close", (code) => finish(code))
     child.on("error", () => finish(127))
   })
+}
+
+// ---- Reports (harness reports.md, spec 3.8.0) ----
+
+const NOTIFY = SCHEDULED.notify
+export type Notify = "always" | "when" | "never"
+
+/** A report as report_write files it. */
+export interface Report {
+  title: string
+  body: string
+  summary: string
+  importance: "normal" | "high"
+}
+
+/** A schedule's notify-when as a value: a word nobody knows, or none, is the default. */
+export function notifyOf(v: unknown): Notify {
+  return (NOTIFY.values as string[]).includes(v as string) ? (v as Notify) : (NOTIFY.default as Notify)
+}
+
+/** The instruction placed in the run's prompt (reports.md §3): the text for the value, the
+ *  condition the person's words — one line, trimmed, without a closing full stop — or the default
+ *  one; "" for never. */
+export function notifyInstruction(notify: unknown, condition?: unknown): string {
+  const n = notifyOf(notify)
+  if (n === "never") return ""
+  if (n === "always") return NOTIFY.texts.always
+  const own = typeof condition === "string" ? condition.split(/\s+/).filter(Boolean).join(" ").replace(/\.+$/, "").trim() : ""
+  return fillPrompt(NOTIFY.texts.when, { condition: own || NOTIFY.default_condition })
+}
+
+/** Whether report_write is in a session's list, and what a call meets (reports.md §2): only a
+ *  session a schedule opened for its run, when it notifies at all, and never a subagent's; in
+ *  such a session a turn that is not the schedule's answers the tool's unavailable text. */
+export function reportTool(o: { session: string; notify?: unknown; turn: string; subagent?: boolean }): "offered" | "absent" | "unavailable" {
+  if (o.session !== "scheduled" || o.subagent || notifyOf(o.notify) === "never") return "absent"
+  return o.turn === "run" ? "offered" : "unavailable"
+}
+
+/** What report_write answers: the first report of a run is filed, a later one replaces it. */
+export const reportResult = (calls: number) => (calls > 1 ? NOTIFY.result.replaced : NOTIFY.result.filed)
+
+/** A report_write call's arguments as a report. */
+export function asReport(args: { title?: unknown; body?: unknown; summary?: unknown; importance?: unknown }): Report {
+  return { title: String(args.title ?? "").trim(), body: String(args.body ?? ""), summary: String(args.summary ?? "").trim(), importance: args.importance === "high" ? "high" : "normal" }
+}
+
+const cutTo = (s: string, max: number) => ([...s].length > max ? `${[...s].slice(0, max - 1).join("")}…` : s)
+
+/** What a run leaves (reports.md §4): its report — the last one written; under `always`, with
+ *  none written, the answer filed as one — and the history line. The retired sentinel is read as
+ *  nothing to tell (§5). */
+export function runLeaves(o: { notify?: unknown; title: string; calls: Parameters<typeof asReport>[0][]; answer: string }): { report: Report | null; note: string } {
+  const notify = notifyOf(o.notify)
+  const answer = (isSilent(o.answer ?? "") ? stripSentinel(o.answer) : (o.answer ?? "")).trim()
+  const first = answer.split(/\r?\n/).map((l) => l.trim()).find(Boolean)
+  const note = first ? cutTo(first, NOTIFY.note_max) : SCHEDULED.texts.no_reply
+  if (o.calls.length) return { report: asReport(o.calls[o.calls.length - 1]!), note }
+  if (notify !== "always" || !answer) return { report: null, note }
+  const paragraph = answer.split(/\r?\n\s*\r?\n/)[0]!.split(/\s+/).filter(Boolean).join(" ")
+  return { report: { title: o.title, body: answer, summary: cutTo(paragraph, NOTIFY.summary_max), importance: "normal" }, note }
 }

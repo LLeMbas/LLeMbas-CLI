@@ -91,8 +91,6 @@ export interface SessionContext {
   instructions?: string
   /** The account's personalization, in place of this device's; null: the device's own. */
   personalization?: { personality: string; personality_custom: string; instructions: string } | null
-  /** Whether the model may write a prototype, and what a page may load. */
-  prototypes?: { offered: boolean; sources: string }
 }
 
 export interface App {
@@ -352,8 +350,6 @@ export function createApp(o: AppOptions): App {
   const knowledgeOffered = () => library.bases().some((b) => b.documents > 0 && (!libraryCtx.bases || libraryCtx.bases.includes(b.name)))
   /** The library block's scope: this machine's `knowledge:`. */
   const libraryBlock = () => (knowledgeOffered() ? { scope: knowledgeScope(libraryCtx.bases) } : undefined)
-  /** Prototypes: offered by the client for this session, or by `prototypes: true` for a terminal's. */
-  const prototypesBlock = () => (context.prototypes?.offered || (!context.prototypes && loaded.config.prototypes === true) ? { sources: context.prototypes?.sources ?? "" } : undefined)
   /** The three personal keys this session uses: the client's for it, else the config's. */
   const personal = () => (context.personalization ? personalConfig({ enabled: true, available: true, ...context.personalization }) : loaded.config)
   /** What may change during the session, as it is now (session/prefix.ts `Changing`): what the
@@ -406,7 +402,6 @@ export function createApp(o: AppOptions): App {
       plan,
       ...(src.instance ? { instance: src.instance } : {}),
       library: libraryBlock(),
-      prototypes: prototypesBlock(),
       context: subagent ? subagent.recall : true,
       ...(member ? { member } : {}),
       // The lead's prompt says how to lead whenever the team tools are offered (team.md §10).

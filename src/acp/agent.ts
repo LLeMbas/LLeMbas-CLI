@@ -45,7 +45,7 @@ import type { Hub } from "./hub.ts"
 import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
 import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs, teamFindings, teamStop, teamTranscript, teamView, treeOf } from "./jobs.ts"
 import { isNote } from "../session/prefix.ts"
-import { deniedText, finalReply, judgeMonitor, monitorTimeout, permissionFor, refusalText, runMonitor, runOutcome, scheduledMode, type ScheduledTurn } from "./scheduled.ts"
+import { deniedText, finalReply, judgeMonitor, monitorTimeout, notifyOf, permissionFor, refusalText, runMonitor, runOutcome, scheduledMode, type Report, type ScheduledTurn } from "./scheduled.ts"
 
 export const ACP_VERSION = 1
 /** The link's version (LLeMbas `services/device_link.py:PROTOCOL`, harness/acp.md *Versions*). 3:
@@ -184,6 +184,10 @@ export interface Session {
   turns: TurnLog<PromptResult>
   /** The command set last sent to the client, to send it again only when it changed. */
   commands?: string
+  /** Spec 3.8.0: the report the run under way has written (the last one), for its answer. */
+  report?: Report
+  /** How the session was opened, when a schedule opened it: what its list of tools follows. */
+  opened?: ScheduledTurn
   /** The scheduled turn it runs now (spec 3.5.0): its mode is the ceiling, its approvals wait
    *  the schedule's wait and say so, and nobody answers a question or a plan. */
   scheduled?: ScheduledTurn
@@ -220,7 +224,6 @@ export function contextOf(meta: any): SessionContext | undefined {
     out.personalization = { personality: str(m.personalization.personality), personality_custom: str(m.personalization.personality_custom), instructions: str(m.personalization.instructions) }
   // `library` (an instance's knowledge bases, 1.1.0) is not read: the CLI's knowledge bases are its
   // own (spec 3.0.0), and a 3.0.0 instance sends none.
-  if (m.prototypes && typeof m.prototypes === "object") out.prototypes = { offered: m.prototypes.offered === true, sources: str(m.prototypes.sources) }
   return Object.keys(out).length ? out : undefined
 }
 
@@ -266,11 +269,10 @@ export const CAPABILITIES = [
   "model",
   "turns",
   // Harness spec 1.1.0: what only the client knows comes with the session (its instructions,
-  // personalization, library scope, prototypes), the plan travels as a structure, library calls
+  // personalization, library scope), the plan travels as a structure, library calls
   // carry the chat's scope, and a client may rewind a session.
   "context",
   "library",
-  "prototypes",
   "plan_state",
   "rewind",
   // Harness spec 2.0.0: the session's background jobs — the `job` and `job_note` events, the
@@ -290,6 +292,9 @@ export const CAPABILITIES = [
   // outcome in the answer, `scheduled` on an approval) and `_lembas/monitor`. Whether this device
   // accepts them now is `limits.scheduled`.
   "scheduled",
+  // Harness spec 3.8.0 (reports.md §6): `scheduled.notify` read; report_write offered to a run's
+  // model, and the report it writes carried in the turn's answer.
+  "reports",
 ] as const
 export const STOP: Record<string, string> = { stop: "end_turn", steps: "max_turn_requests", budget: "max_tokens", cancelled: "cancelled", error: "end_turn" }
 
@@ -613,7 +618,7 @@ export class AcpAgent {
     const wanted = asMode(p?._meta?.mode) ?? undefined
     // A scheduled session runs in the schedule's mode, never `_meta.mode`.
     const mode = scheduled ? scheduled.mode : L ? clampMode(wanted ?? L.maxMode, L.maxMode) : wanted
-    const session: Session = { id: "", cwd, prompting: false, app: undefined as unknown as App, turns: new TurnLog(), ...(scheduled ? { scheduled } : {}) }
+    const session: Session = { id: "", cwd, prompting: false, app: undefined as unknown as App, turns: new TurnLog(), ...(scheduled ? { scheduled, opened: scheduled } : {}) }
     // No model-made title: the client names its own conversations (LLeMbas has its chat's), and a
     // title request would be a second call the account pays for, for nothing.
     // The chat's model and effort: `lembas_model` is the instance's own name for it, the
@@ -799,12 +804,33 @@ export class AcpAgent {
    *  `_lembas/show`, where the client said it shows files; otherwise none, and show is not offered. */
   private equipShow(s: Session) {
     const ctx = s.app.engine.o.toolCtx
+    this.equipReport(s)
     // Nobody is looking at a scheduled run (spec 3.5.0): show is not offered there.
     if (!this.shows || s.scheduled) return void delete ctx.show
     ctx.show = async (req, callId) => {
       if (s.agent !== this || this.peer.isClosed) return { shown: false, reason: "the client is not connected" }
       const r = (await this.peer.request("_lembas/show", { sessionId: s.id, toolCallId: callId ?? "", ...req }, 30_000)) as { shown?: unknown; reason?: unknown } | undefined
       return r?.shown === true ? { shown: true } : { shown: false, reason: typeof r?.reason === "string" && r.reason ? r.reason : "the client did not show it" }
+    }
+  }
+
+  /** report_write for a session a schedule opened for its run (harness reports.md §2, §6): in the
+   *  list when the server said the schedule notifies; the report is kept on the session — the
+   *  last one written is the run's — and goes back with the turn's answer. A turn of the session
+   *  that is not the schedule's (the person writing into it) finds the tool unavailable. */
+  private equipReport(s: Session) {
+    const ctx = s.app.engine.o.toolCtx
+    if (ctx.report || !s.opened?.notify || s.opened.notify === "never") return
+    let calls = 0
+    let run = ""
+    ctx.report = {
+      active: () => s.scheduled !== undefined && s.prompting,
+      file: (report) => {
+        const id = s.scheduled?.runId ?? ""
+        if (id !== run) (calls = 0), (run = id)
+        s.report = report
+        return ++calls
+      },
     }
   }
 
@@ -1107,7 +1133,8 @@ export class AcpAgent {
     const judged = scheduledMode({ accept: L?.scheduled === true && L.enabled !== false && !L.sharedOnly, mode: m.mode, max_mode: L?.maxMode ?? "edit", approval_wait_s: m.approval_wait_s })
     if ("refused" in judged) throw new RpcError(INVALID_PARAMS, refusalText(judged.refused as "scheduled_off" | "plan"), { reason: judged.refused })
     const str = (v: unknown) => (typeof v === "string" ? v.slice(0, 200) : "")
-    return { scheduleId: str(m.schedule_id), runId: str(m.run_id), title: str(m.title), mode: judged.mode, waitMs: judged.wait_s * 1000 }
+    // Spec 3.8.0: `notify` from a server that has reports; none from an older one.
+    return { scheduleId: str(m.schedule_id), runId: str(m.run_id), title: str(m.title), mode: judged.mode, waitMs: judged.wait_s * 1000, ...(m.notify !== undefined ? { notify: notifyOf(m.notify) } : {}) }
   }
 
   /** One scheduled turn: the schedule's mode is the ceiling for the turn — a command in the prompt
@@ -1117,13 +1144,15 @@ export class AcpAgent {
     const meta = (extra: Record<string, unknown>, reason: string, text: string, error?: string) => ({
       turnId,
       ...extra,
-      scheduled: runOutcome({ runId: turn.runId, reason, text, error }),
+      scheduled: runOutcome({ runId: turn.runId, reason, text, error, notify: turn.notify, report: s.report }),
     })
     if (prepared.kind !== "run") {
       // A scheduled run's text is the server's; a command that is only an action has no reply.
       return { stopReason: "end_turn", _meta: { lembas: meta({ command: prepared.name }, "stop", "") } }
     }
     app.engine.mode = prepared.mode ? clampMode(prepared.mode, turn.mode) : turn.mode
+    // A run files at most one report, and each run its own.
+    delete s.report
     let error: string | undefined
     const off = app.bus.on((e) => {
       if (e.type === "error") error = e.message

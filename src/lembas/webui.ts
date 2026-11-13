@@ -99,6 +99,8 @@ export function specFor(m: ServedModel, connection: string): ModelSpec {
   if (m.effort) out.effort = m.effort
   if (m.thinking_switch === true) out.thinking_switch = true
   if (m.vision !== undefined) out.vision = m.vision
+  // Spec 3.8.0 (pages.md): kept as the server says it; nothing here offers pages.
+  if (m.html_pages !== undefined) out.html_pages = m.html_pages === true
   if (m.tools !== undefined) out.tools = m.tools
   if (m.notes) out.notes = m.notes.slice(0, 300)
   if (m.capacity?.single_session) out.single_session = true

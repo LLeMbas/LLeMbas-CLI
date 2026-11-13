@@ -153,7 +153,7 @@ test("spec 3.0.0: every tool says where it is offered; the CLI's are the agent's
   // plan_write's former name rather than a tool.
   expect(TOOL_SPECS.todo).toBeUndefined()
   expect(TOOL_SPECS.plan_write!.aliases.cli).toEqual(["todo"])
-  const shared = ["ask_user", "edit", "glob", "grep", "job_list", "job_output", "job_send", "job_stop", "list", "memory", "plan_submit", "plan_update", "plan_write", "read", "recall", "report", "session_search", "show", "skill_manage", "skill_view", "skills_list", "task", "team_add", "team_assign", "team_decide", "team_findings", "team_finish", "team_read", "team_replace", "team_request", "team_send", "team_stop", "team_whoami", "web_fetch", "web_search", "write"]
+  const shared = ["ask_user", "edit", "glob", "grep", "job_list", "job_output", "job_send", "job_stop", "list", "memory", "plan_submit", "plan_update", "plan_write", "read", "recall", "report", "report_write", "session_search", "show", "skill_manage", "skill_view", "skills_list", "task", "team_add", "team_assign", "team_decide", "team_findings", "team_finish", "team_read", "team_replace", "team_request", "team_send", "team_stop", "team_whoami", "web_fetch", "web_search", "write"]
   expect(Object.values(TOOL_SPECS).filter((t) => t.scope === "shared").map((t) => t.name).sort()).toEqual(shared.sort())
 })
 
@@ -232,11 +232,12 @@ test("every {{variable}} in a description is declared, and none reaches a model"
       else expect(system).not.toContain("The current plan")
     }
   }
-  app.setContext({ instructions: "Be brief.", prototypes: { offered: true, sources: "" } }, "example")
+  app.setContext({ instructions: "Be brief." }, "example")
   const withContext = app.engine.compose("manual", plan)
   expect(withContext).not.toContain("{{")
   expect(withContext).toContain("## Instructions from example\n\nBe brief.")
-  expect(withContext).toContain("prototype-page")
+  // Spec 3.8.0 (pages.md §4): an agent chat is never offered HTML pages.
+  expect(withContext).not.toContain("html-view")
 })
 
 test("acp.md names every _lembas method the code handles or sends, and every capability", async () => {

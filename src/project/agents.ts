@@ -26,7 +26,7 @@ export interface AgentSpec {
 
 /** Never given to a subagent: it cannot spawn more (so nothing to send to), and it has no user of
  *  its own to ask. */
-export const NOT_FOR_SUBAGENTS = new Set(["task", "job_send", "ask_user", "plan_submit", "plan_write", "plan_update", "tasks", "decisions", "memory", "skill_manage", "settings", "note_manage"])
+export const NOT_FOR_SUBAGENTS = new Set(["task", "job_send", "ask_user", "plan_submit", "plan_write", "plan_update", "tasks", "decisions", "memory", "skill_manage", "settings", "note_manage", "report_write"])
 
 export const BUILTIN_AGENTS: AgentSpec[] = [
   {

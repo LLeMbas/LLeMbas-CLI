@@ -129,6 +129,12 @@ function legacyKeys(all: Record<string, unknown>, file: string, notes: string[])
     all.compaction = rest
     notes.push(`${file}: compaction.prune was removed — old tool outputs are no longer cut afterwards; delete it`)
   }
+  // prototypes: true offered the 1.x prototype fences to a terminal's model. Harness spec 3.8.0 has
+  // HTML pages in their place, which only the server offers (pages.md §4): the key is gone.
+  if ("prototypes" in all) {
+    delete all.prototypes
+    notes.push(`${file}: prototypes was removed — a terminal's model is not offered HTML pages (the web UI and Desktop show them); delete it`)
+  }
   // One file written as a plain string, not a list: read as the list of that one, not dropped
   // without a word by the schema.
   if (typeof all.instruction_files === "string") {
@@ -198,7 +204,7 @@ function merge<T extends Record<string, unknown>>(a: T, b: Partial<T>): T {
 // instructions and a custom personality's text are the person's own words, put last in the system
 // prompt as theirs: a repository writing them would speak in the user's voice.
 // A personality preset's name is only a choice among the shipped texts, and stays a project's to make.
-const GLOBAL_ONLY = ["hardline_extra", "hardline_disable", "voice", "update", "settings_tool", "embedding", "remote", "library", "prototypes", "instructions", "personality_custom"] as const
+const GLOBAL_ONLY = ["hardline_extra", "hardline_disable", "voice", "update", "settings_tool", "embedding", "remote", "library", "instructions", "personality_custom"] as const
 
 export function loadConfig(opts: { projectConfigDir?: string; trusted?: boolean } = {}): Loaded {
   const warnings: string[] = []

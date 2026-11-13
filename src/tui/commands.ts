@@ -26,7 +26,7 @@ import { findSetting, show, type Scope } from "../config/settings.ts"
 import { ingest } from "../library/ingest.ts"
 import { findSkill, skillMessage, slug } from "../skill/index.ts"
 import { PERSONALITIES, personalityText } from "../prompt/personality.ts"
-import { listPrototypes } from "../prototype/store.ts"
+import { listPages } from "../pages/store.ts"
 import { keyMatcher } from "../voice/index.ts"
 import { PLAYER_NAMES, playerFor, recorderFor } from "../voice/audio.ts"
 import { duration } from "../duration.ts"
@@ -386,17 +386,17 @@ export const COMMANDS: Command[] = [
     },
   },
   {
-    name: "prototype",
+    name: "pages",
     args: "[n]",
-    description: "this session's prototypes — HTML pages the model wrote, saved as files; with a number, that one's path",
+    description: "the HTML pages in this session's replies, saved as files to open in a browser; with a number, that one's path",
     run(c, arg) {
       const id = c.app.engine.sessionId
-      const list = id ? listPrototypes(id) : []
-      if (!list.length) return c.view.info("no prototypes in this session yet")
+      const list = id ? listPages(id) : []
+      if (!list.length) return c.view.info("no pages in this session's replies")
       const wanted = arg.trim()
       if (wanted) {
         const one = list.find((p) => String(p.n) === wanted)
-        return one ? c.view.info(one.path) : c.view.info(`no prototype ${wanted} here — ${list.map((p) => p.n).join(", ")}`, "warn")
+        return one ? c.view.info(one.path) : c.view.info(`no page ${wanted} here — ${list.map((p) => p.n).join(", ")}`, "warn")
       }
       c.view.info(list.map((p) => `${p.n}  ${p.path}`).join("\n"))
     },

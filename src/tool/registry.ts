@@ -8,6 +8,7 @@ import { readTool } from "./read.ts"
 import { globTool, grepTool, listTool } from "./search.ts"
 import { viewImageTool } from "./view_image.ts"
 import { planSubmitTool } from "./plan_submit.ts"
+import { reportWriteTool } from "./report_write.ts"
 import { planUpdateTool } from "./plan_update.ts"
 import { planWriteTool } from "./plan_write.ts"
 import { taskTool } from "./task.ts"
@@ -60,6 +61,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   decisionsTool,
   askUserTool,
   planSubmitTool,
+  reportWriteTool,
   memoryTool,
   sessionSearchTool,
   notesSearchTool,

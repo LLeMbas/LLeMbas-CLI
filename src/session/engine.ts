@@ -8,7 +8,7 @@ import { isAbsolute } from "node:path"
 import type { Asker, AttachmentInfo, Bus } from "../bus/index.ts"
 import type { Mode } from "../config/schema.ts"
 import type { Level } from "../provider/effort.ts"
-import { evaluate, ruleAction, shadowsDeny, standsInTheWay, stillStricter, type Context as PermContext, type PermissionRequest, type Rule } from "../permission/evaluate.ts"
+import { evaluate, judgeNewRule, ruleAction, shadowsDeny, type Context as PermContext, type PermissionRequest, type Rule } from "../permission/evaluate.ts"
 import { ProviderError, type Client, type ImagePart, type Message, type ResolvedModel, type ToolCallPart, type Usage } from "../provider/types.ts"
 import type { Plan } from "../plan/plan.ts"
 import { LOOP } from "../harness.ts"
@@ -270,6 +270,8 @@ export class Engine {
     // The team tools' requirement: offered as the prompt is made; whether it is met is the team's
     // to answer at each call (team.md §2: one_agent or one_request).
     if (this.o.team?.offered()) could.add("team")
+    // A schedule's run that notifies (reports.md §2): report_write is in the list for the session.
+    if (this.o.toolCtx.report !== undefined) could.add("scheduled")
     const L = this.o.toolCtx.library
     const have = L?.lib.bases().filter((b) => b.documents > 0).map((b) => b.name) ?? []
     if (have.some((b) => !L!.bases || L!.bases.includes(b))) could.add("knowledge")
@@ -281,6 +283,8 @@ export class Engine {
     const met = this.could()
     if (this.mode !== "plan") met.delete("plan")
     if (this.o.toolCtx.show === undefined) met.delete("display")
+    // …and met only while the turn is the schedule's own.
+    if (!this.o.toolCtx.report?.active()) met.delete("scheduled")
     return met
   }
 
@@ -426,14 +430,14 @@ export class Engine {
    *    that still apply are named in `still`.
    *  - A save that fails leaves the rule in force for this session, and says why. */
   setRule(rule: Pick<Rule, "permission" | "pattern" | "action">): { saved: "project" | "session"; still: Rule[]; failed?: string } | { unchanged: true } | { refused: Rule } {
-    if (ruleAction(rule.permission, rule.pattern, this.rules) === rule.action) return { unchanged: true }
-    const floor = standsInTheWay(rule, this.o.perm.rules)
-    if (floor) return { refused: floor }
+    const judged = judgeNewRule(rule, this.o.perm.rules, this.rules)
+    if (judged.result === "unchanged") return { unchanged: true }
+    if (judged.result === "refused") return { refused: judged.by }
     this.sessionRules = this.sessionRules.filter((r) => !(r.permission === rule.permission && r.pattern === rule.pattern))
     const made: Rule = { ...rule, source: "project" }
     this.sessionRules.push(made)
     this.set.add(made)
-    const still = stillStricter(rule, this.o.perm.rules)
+    const still = judged.still
     if (!this.o.persistRule) return { saved: "session", still }
     try {
       this.o.persistRule({ ...rule })

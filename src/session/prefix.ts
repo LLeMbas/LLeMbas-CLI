@@ -120,7 +120,7 @@ export function today(at = new Date()): string {
 
 /** A requirement a tool can have (the spec's `requires`, and the CLI's own: vision, project,
  *  knowledge). */
-export type Requirement = "vision" | "plan" | "project" | "knowledge" | "display" | "page" | "forge" | "team"
+export type Requirement = "vision" | "plan" | "project" | "knowledge" | "display" | "page" | "forge" | "team" | "scheduled"
 
 /** Rule 4: the tool list is fixed for the session. A tool is offered when every requirement it has
  *  is one the session could meet at some point (`could`), decided once as the prompt is made; a

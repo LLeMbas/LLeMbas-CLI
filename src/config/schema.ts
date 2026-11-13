@@ -56,6 +56,7 @@ export const ModelSpec = z.strictObject({
   effort: z.union([z.enum(EFFORTS), z.literal("off"), z.literal("default")]).optional().describe("The level a conversation starts with, when the model offers it: an effort, `off` (thinking switched off, with thinking_switch) or `default` (nothing sent, for a model that takes no efforts)."),
   effort_style: z.enum(["top", "kwargs", "both"]).optional().describe("Where the effort goes in a request: top-level, in chat_template_kwargs, or both (the default: llama.cpp drops top-level)."),
   vision: z.boolean().optional().describe("The model reads images: @image files, pasted paths and view_image."),
+  html_pages: z.boolean().optional().describe("The server's word that this model can write HTML pages (harness pages.md). Read and kept, never used here: a terminal's model is not offered pages."),
   tools: z.boolean().optional().describe("false: a model without tool calls — it can only talk."),
   headers: z.record(z.string(), z.string()).optional().describe("Extra HTTP headers for this model's requests."),
   body: z.record(z.string(), z.unknown()).optional().describe("Merged into every request body for this model."),
@@ -310,7 +311,6 @@ export const Config = z.strictObject({
   subagents: z.boolean().optional().describe("false: no subagents — no task tool and no team."),
   settings_tool: z.enum(["ask", "allow", "off"]).optional().describe("Global config only. The agent's settings tool: ask (default) — each change is approved like any tool call; allow — changes go through without asking (a less strict mode still asks); off — no settings tool."),
   update: Update.optional().describe("Global config only. Updating LLeMbas CLI itself."),
-  prototypes: z.boolean().optional().describe("Global config only. Offer the model prototypes: a complete HTML page in a `prototype-chat` or `prototype-page` fence, saved as a file under the state directory (prototypes/<session>/) and listed by /prototype; the LLeMbas web UI renders the same fences live. Default false."),
   library: z.enum(["local", "lembas"]).optional().describe("Global config only. Where memory lives. lembas (the default when the login may reach it): the account's memory records on the LLeMbas server, through its /mcp — the same records its chats have. local: this machine's memory files. Notes, knowledge bases and skills are this machine's either way."),
   remote: z
     .strictObject({

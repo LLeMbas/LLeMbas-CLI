@@ -13,8 +13,8 @@ import type { QuestionReply, QuestionRequest } from "../tool/ask_user.ts"
 import { CONTINUE_PROMPT, STEER_MARK } from "../session/engine.ts"
 import { shownLine, stripMark } from "../jobs/note.ts"
 import type { JobInfo } from "../jobs/registry.ts"
-import { splitPrototypes, titleFor, type PrototypeKind } from "../prototype/fence.ts"
-import { savePrototype } from "../prototype/store.ts"
+import { splitPages } from "../pages/fence.ts"
+import { savePage } from "../pages/store.ts"
 import { CHARS_PER_TOKEN } from "../provider/tokens.ts"
 import { isNote } from "../session/prefix.ts"
 import { blockOf, callTitle, resultFacts as factsOf } from "../session/display.ts"
@@ -28,8 +28,9 @@ export type Item =
   /** `mid`: sent while the agent worked, and given to it at a step boundary. `machine`: the harness
    *  said it (a job's note), not the person. */
   | { kind: "user"; id: string; text: string; mid?: boolean; machine?: boolean }
-  /** `prototypes`: the prototype fences in the text that have been saved, by where each starts. */
-  | { kind: "assistant"; id: string; text: string; streaming: boolean; prototypes?: Record<number, SavedPrototype> }
+  /** `pages`: the page fences in the text (harness pages.md), by where each starts — its title,
+   *  and where it was saved when it could be. */
+  | { kind: "assistant"; id: string; text: string; streaming: boolean; pages?: Record<number, SavedPage> }
   | { kind: "reasoning"; id: string; text: string; streaming: boolean; started: number; ms?: number; tokens?: number }
   | {
       kind: "tool"
@@ -65,28 +66,28 @@ export type Item =
 
 export type Phase = "idle" | "waiting" | "thinking" | "writing" | "tools"
 
-/** A prototype the model wrote, saved as a file (prototype/store.ts). */
-export interface SavedPrototype {
-  kind: PrototypeKind
+/** A page in a reply: its title, and the file it was saved as (pages/store.ts) when there is a
+ *  session to keep it under. */
+export interface SavedPage {
   title: string
-  path: string
+  path?: string
 }
 
 /** Whether a reply might hold a fenced block at all, before it is split. */
 const mayFence = (text: string) => text.includes("```") || text.includes("~~~")
 
-/** Every completed prototype fence in a reply, saved the first time it is seen — the model's
- *  output as it is, under the state directory — and noted on the item, so the transcript draws
- *  one line in its place. Nothing without a session to keep it under. */
-function keepPrototypes(sessionId: string | undefined, it: Extract<Item, { kind: "assistant" }>) {
-  if (!sessionId || !mayFence(it.text)) return
-  for (const seg of splitPrototypes(it.text)) {
-    if (seg.kind !== "prototype" || !seg.closed || it.prototypes?.[seg.start]) continue
-    const title = titleFor(seg.code, seg.info.title)
+/** Every finished page fence in a reply, noted on the item so the transcript draws the note in
+ *  its place — and saved the first time it is seen, as written, under the state directory, where
+ *  there is a session to keep it under. */
+function keepPages(sessionId: string | undefined, it: Extract<Item, { kind: "assistant" }>) {
+  if (!mayFence(it.text)) return
+  for (const seg of splitPages(it.text)) {
+    if (seg.kind !== "page" || !seg.closed || it.pages?.[seg.start]) continue
+    let path: string | undefined
     try {
-      const path = savePrototype(sessionId, seg.code, { kind: seg.info.kind, title })
-      ;(it.prototypes ??= {})[seg.start] = { kind: seg.info.kind, title, path }
+      if (sessionId) path = savePage(sessionId, seg.code, seg.title)
     } catch {}
+    ;(it.pages ??= {})[seg.start] = { title: seg.title, ...(path ? { path } : {}) }
   }
 }
 
@@ -195,7 +196,7 @@ export function createView(bus: Bus) {
             if (last?.kind === "assistant" && last.streaming) last.text += c.text
             else s.items.push({ kind: "assistant", id: nextId(), text: c.text, streaming: true })
             const reply = s.items[s.items.length - 1]!
-            if (reply.kind === "assistant") keepPrototypes(s.sessionId, reply)
+            if (reply.kind === "assistant") keepPages(s.sessionId, reply)
             s.phase = "writing"
           } else {
             if (last?.kind === "reasoning" && last.streaming) last.text += c.text
@@ -215,7 +216,7 @@ export function createView(bus: Bus) {
       if ((it.kind === "assistant" || it.kind === "reasoning") && it.streaming) {
         it.streaming = false
         if (it.kind === "reasoning") it.ms = Date.now() - it.started
-        else keepPrototypes(s.sessionId, it)
+        else keepPages(s.sessionId, it)
       }
   }
 
@@ -528,7 +529,7 @@ export function createView(bus: Bus) {
           for (const p of m.parts) {
             if (p.type === "text" && p.text.trim()) {
               const it: Extract<Item, { kind: "assistant" }> = { kind: "assistant", id: nextId(), text: p.text, streaming: false }
-              keepPrototypes(state.sessionId, it)
+              keepPages(state.sessionId, it)
               items.push(it)
             }
             else if (p.type === "reasoning" && p.text.trim()) items.push({ kind: "reasoning", id: nextId(), text: p.text, streaming: false, started: 0 })

@@ -1040,10 +1040,6 @@
       },
       "additionalProperties": false
     },
-    "prototypes": {
-      "description": "Global config only. Offer the model prototypes: a complete HTML page in a `prototype-chat` or `prototype-page` fence, saved as a file under the state directory (prototypes/<session>/) and listed by /prototype; the LLeMbas web UI renders the same fences live. Default false.",
-      "type": "boolean"
-    },
     "library": {
       "description": "Global config only. Where memory lives. lembas (the default when the login may reach it): the account's memory records on the LLeMbas server, through its /mcp — the same records its chats have. local: this machine's memory files. Notes, knowledge bases and skills are this machine's either way.",
       "type": "string",

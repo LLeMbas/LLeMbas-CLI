@@ -6,7 +6,23 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+Harness spec 3.8.0: reports from scheduled runs, HTML pages in answers, which permission rule decides.
+
 ### Added
+
+- **Harness spec 3.8.0: reports** (`harness/reports.md`). A schedule's run files a report with the
+  new `report_write` tool — or leaves one line in the schedule's history. The schedule's *notify
+  when* decides: every run, only when your own condition holds (the default: "something needs my
+  attention"), or never. `[SILENT]` is retired. On a linked computer the CLI offers
+  `report_write` to a scheduled run's model and hands the report back with the run's answer.
+- **Harness spec 3.8.0: HTML pages in answers** (`harness/pages.md`), experimental and off unless
+  the server switches it on: a reply may carry a complete page in an `html-view` block, shown in
+  a sealed frame by the web UI and Desktop. A terminal shows a note in its place — *This answer
+  has a page: title* — and keeps the page as a file (`/pages`). A terminal's own model is never
+  offered pages.
+- **Harness spec 3.8.0: which permission rule decides** (`harness/permission/rules.md`): the
+  rule order this program has used since the menus is now the shared specification, with
+  conformance cases both sides run.
 
 - **A `/mcp` menu.** The servers with their state (connected, connecting, failed and why, needs
   sign-in, switched off), where each comes from (the LLeMbas server's library, this project, your
@@ -67,6 +83,13 @@ All notable changes to LLeMbas CLI. The format follows
   attention, `✗` failed — in the transcript and in `lembas run`. A warning sign now always means
   something to look at: compaction starting and finishing, a job's note and the like are plain
   lines.
+
+### Removed
+
+- **Prototypes** — the 1.x `prototype-chat` / `prototype-page` blocks a terminal could be offered
+  with `prototypes: true`. HTML pages take their place; the setting is dropped with a line saying
+  so, and `/prototype` is now `/pages`.
+
 
 ## [2.0.0-beta.9] — 2026-11-12
 

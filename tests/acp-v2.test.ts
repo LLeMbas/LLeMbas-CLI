@@ -309,7 +309,7 @@ test("initialize lists the 1.1.0 capabilities", async () => {
   fake = fakeProvider([])
   config(fake.url)
   const { init } = await client(limitsFor(project()))
-  for (const cap of ["context", "library", "prototypes", "plan_state", "rewind"]) expect(init._meta.lembas.capabilities).toContain(cap)
+  for (const cap of ["context", "library", "plan_state", "rewind"]) expect(init._meta.lembas.capabilities).toContain(cap)
 })
 
 test("show (spec 3.0.0): offered only to a client that shows files; the file goes over _lembas/show", async () => {
@@ -332,7 +332,7 @@ test("show (spec 3.0.0): offered only to a client that shows files; the file goe
   expect(fake.requests[2].tools.map((t: any) => t.function.name)).not.toContain("show")
 })
 
-test("the context reaches the prompt: the instance's instructions, its personalization, prototypes; not its knowledge bases", async () => {
+test("the context reaches the prompt: the instance's instructions, its personalization; not its knowledge bases, and no pages", async () => {
   fake = fakeProvider([{ chunks: [delta({ content: "one" })] }, { chunks: [delta({ content: "two" })] }, { chunks: [delta({ content: "three" })] }])
   config(fake.url, "personality: concise\ninstructions: local words\n")
   const root = project()
@@ -352,10 +352,10 @@ test("the context reaches the prompt: the instance's instructions, its personali
   expect(system()).not.toContain("local words")
   expect(system()).toContain("## Personality\n\n")
   expect(system()).toContain("formal")
-  // Prototypes offered, with what a page may load and where it is seen from a terminal.
-  expect(system()).toContain("prototype-chat")
-  expect(system()).toContain("The page may load nothing from the network.")
-  expect(system()).toContain("It is saved as a file you can open, and the LLeMbas web UI renders it live.")
+  // An older client's `prototypes` is not read, and an agent chat is never offered HTML pages
+  // (spec 3.8.0, pages.md §4).
+  expect(system()).not.toContain("prototype-chat")
+  expect(system()).not.toContain("html-view")
   // The instance's knowledge bases are not the device's (spec 3.0.0): an older client's `library`
   // names nothing to the model — nothing unfilled reaches it either.
   expect(system()).not.toContain("Manuals")

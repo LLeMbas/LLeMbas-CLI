@@ -12,6 +12,7 @@ import { paths } from "../src/config/paths.ts"
 import { remoteState } from "../src/config/remote.ts"
 import { setTrust } from "../src/project/root.ts"
 import { remoteCommand } from "../src/remote.ts"
+import { TOOL_SPECS } from "../src/harness.ts"
 import { delta, fakeProvider, toolCall, type Fake } from "./fake-provider.ts"
 
 let fake: Fake | undefined
@@ -188,4 +189,87 @@ test("lembas remote scheduled on|off writes remote.scheduled, and --json says it
   expect(remoteCommand(["scheduled", "off"], { out: () => {}, err: () => {} })).toBe(0)
   expect(remoteState().scheduled).toBe(false)
   expect(remoteCommand(["scheduled", "maybe"], { out: () => {}, err: () => {} })).toBe(2)
+})
+
+// ---- Reports (harness spec 3.8.0, reports.md) ----
+
+/** A tool result without the id every result carries (context.md). */
+const bare = (text: string) => text.replace(/^\[#\d+\]\n/, "")
+const toolNames = (i: number) => ((fake!.requests[i].tools ?? []) as { function: { name: string } }[]).map((t) => t.function.name)
+const R = (extra: Record<string, unknown> = {}) => JSON.stringify({ title: "Disk almost full", body: "## What\n\n`/var` is at 94%.", summary: "The log partition is at 94%.", importance: "high", ...extra })
+
+test("capability reports; a run that notifies is offered report_write, and the report it writes travels in the answer", async () => {
+  fake = fakeProvider([{ chunks: [toolCall(0, "c1", "report_write", R())] }, { chunks: [delta({ content: "Filed a report: the disk is almost full." })] }])
+  config(fake.url)
+  const root = project()
+  const { c, init, asked } = await client(limitsFor(root))
+  expect(init._meta.lembas.capabilities).toContain("reports")
+  const meta = { lembas: { scheduled: sched({ notify: "when" }) } }
+  const s: any = await c.request("session/new", { cwd: root, _meta: meta })
+  const r: any = await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "check the disks" }], _meta: { lembas: { turnId: "run7", ...meta.lembas } } })
+  expect(toolNames(0)).toContain("report_write")
+  // Allowed without asking: it writes nothing here.
+  expect(asked).toEqual([])
+  expect(r._meta.lembas.scheduled).toEqual({
+    run_id: "run7",
+    status: "ok",
+    text: "Filed a report: the disk is almost full.",
+    error: null,
+    report: { title: "Disk almost full", body: "## What\n\n`/var` is at 94%.", summary: "The log partition is at 94%.", importance: "high" },
+  })
+  // The model was told the report is filed and to end with one line.
+  expect(bare(fake.requests[1].messages.at(-1).content)).toBe(SCHEDULED.notify.result.filed)
+})
+
+test("one report per run: a second call replaces the first; the next run starts with none; the sentinel is no status any more", async () => {
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "c1", "report_write", R()), toolCall(1, "c2", "report_write", R({ title: "Disk fine again", importance: undefined }))] },
+    { chunks: [delta({ content: "Done." })] },
+    { chunks: [delta({ content: "Nothing needs attention.\n[SILENT]" })] },
+  ])
+  config(fake.url)
+  const root = project()
+  const { c } = await client(limitsFor(root))
+  const meta = (run: string) => ({ lembas: { turnId: run, scheduled: sched({ run_id: run, notify: "always" }) } })
+  const s: any = await c.request("session/new", { cwd: root, _meta: meta("run7") })
+  const r1: any = await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "check" }], _meta: meta("run7") })
+  expect(r1._meta.lembas.scheduled.report).toMatchObject({ title: "Disk fine again", importance: "normal" })
+  const results = (fake.requests[1].messages as { role: string; content: string }[]).filter((m) => m.role === "tool").map((m) => bare(m.content))
+  expect(results).toEqual([SCHEDULED.notify.result.filed, SCHEDULED.notify.result.replaced])
+  // The schedule's next run, in the same session: no report of its own, so none in its answer —
+  // and `silent` is not a status for a turn whose request said notify.
+  const r2: any = await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "check" }], _meta: meta("run8") })
+  expect(r2._meta.lembas.scheduled.report).toBeUndefined()
+  expect(r2._meta.lembas.scheduled.status).toBe("ok")
+})
+
+test("notify never, and a server that says no notify at all: the tool is not in the list; the person's own turn in a run's session finds it unavailable", async () => {
+  fake = fakeProvider([
+    { chunks: [delta({ content: "ok" })] },
+    { chunks: [delta({ content: "ok" })] },
+    { chunks: [delta({ content: "run" })] },
+    { chunks: [toolCall(0, "c9", "report_write", R())] },
+    { chunks: [delta({ content: "I cannot file one here." })] },
+  ])
+  config(fake.url)
+  const root = project()
+  const { c } = await client(limitsFor(root))
+  const run = async (scheduled: Record<string, unknown>, id: string) => {
+    const s: any = await c.request("session/new", { cwd: root, _meta: { lembas: { scheduled } } })
+    const r: any = await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "check" }], _meta: { lembas: { turnId: id, scheduled } } })
+    return { s, r }
+  }
+  await run(sched({ notify: "never" }), "a")
+  expect(toolNames(0)).not.toContain("report_write")
+  // A server before 3.8.0 sends no notify: as before, and the tool is not offered.
+  await run(sched(), "b")
+  expect(toolNames(1)).not.toContain("report_write")
+  // A run that notifies, then the person writes into its session: the list is the session's,
+  // and the tool answers the spec's unavailable text.
+  const { s } = await run(sched({ notify: "always" }), "c")
+  expect(toolNames(2)).toContain("report_write")
+  const mine: any = await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "and file that for me" }] })
+  expect(toolNames(3)).toContain("report_write")
+  expect(bare(fake.requests[4].messages.at(-1).content)).toBe(TOOL_SPECS.report_write!.unavailable!)
+  expect(mine._meta.lembas.scheduled).toBeUndefined()
 })
