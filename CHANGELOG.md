@@ -4,6 +4,18 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Harness spec 3.8.1: a page for what is to be seen, a shown file for what has to run.** The
+  text a model is given when HTML pages are on (`harness/prompts/blocks/html-pages.md`) now says
+  that something the person asks to see in the answer is written as a page, not as an HTML file
+  opened with `show`; and that a page is static, so anything that has to run — a calculator, a
+  game, something that reacts to a click — is not a page: the model says so and, where it can,
+  writes an HTML file and shows that. A text only; the CLI is never offered pages and behaves
+  as before.
+
 ## [2.0.0-beta.10] — 2026-11-13
 
 Harness spec 3.8.0: reports from scheduled runs, HTML pages in answers, which permission rule decides.

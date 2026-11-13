@@ -93,3 +93,20 @@ test("the old `prototypes: true` setting is dropped with a line saying so, never
     else writeFileSync(file, before)
   }
 })
+
+// Spec 3.8.1: with nothing said, a model asked to "show" a chart wrote an HTML file and opened it
+// with `show` — a card to open where the drawing was asked for. The block says which is for what.
+test("the block says a page is for what is to be seen and a shown file for what has to run", async () => {
+  const block = await Bun.file(new URL("../harness/prompts/blocks/html-pages.md", import.meta.url)).text()
+  const bullets = block.split("\n").filter((line) => line.startsWith("- "))
+  const seen = bullets.find((line) => line.includes("asks to see something in your answer"))
+  expect(seen).toBeDefined()
+  expect(seen).toContain("Do not write it to an HTML file and open that with `show`")
+  const runs = bullets.find((line) => line.includes("a page cannot be interactive"))
+  expect(runs).toBeDefined()
+  expect(runs).toContain("a page in an answer cannot run anything")
+  expect(runs).toContain("open that with `show`")
+  // The static rule comes between the two: what a page is, then what follows from it.
+  const order = [seen, bullets.find((line) => line.startsWith("- A page is static")), runs].map((line) => bullets.indexOf(line as string))
+  expect(order).toEqual([...order].sort((a, b) => a - b))
+})
