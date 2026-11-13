@@ -347,6 +347,29 @@ async function main() {
     await app.mcpReady
     // A command that only says something (/mcp, /agents, /team — what the TUI shows as a menu):
     // its text, and no model is asked.
+    // /reports reads the server, so it is answered here rather than among the commands that only
+    // read this process: the list, or one report by its id or title, as text.
+    const reportsArg = /^\/reports(?:\s+(\S[\s\S]*))?$/.exec(prompt.trim())
+    if (reportsArg) {
+      const R = await import("./lembas/reports.ts")
+      let text: string
+      let failed = false
+      try {
+        const all = await R.listReports()
+        const found = reportsArg[1] ? R.findReport(all, reportsArg[1]) : undefined
+        if (typeof found === "string") (text = found), (failed = true)
+        else text = found ? R.reportText(await R.getReport(found.id)) : R.listLines(all).join("\n")
+      } catch (e) {
+        text = `/reports: ${(e as Error).message}`
+        failed = true
+      }
+      if (values.json) {
+        app.bus.emit({ type: "notice", level: failed ? "error" : "info", message: text })
+        app.bus.emit({ type: "done", reason: failed ? "error" : "stop" })
+      } else (failed ? console.error : console.log)(text)
+      app.discardIfEmpty()
+      process.exit(failed ? 1 : 0)
+    }
     const said = expandSlash(app, prompt, { plain: true })
     if (said?.kind === "message") {
       // With --json the text is an event of the stream like any other, then the end; plainly, it

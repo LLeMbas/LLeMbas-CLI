@@ -20,6 +20,13 @@ Harness spec 3.8.0: reports from scheduled runs, HTML pages in answers, which pe
   a sealed frame by the web UI and Desktop. A terminal shows a note in its place — *This answer
   has a page: title* — and keeps the page as a file (`/pages`). A terminal's own model is never
   offered pages.
+- **`/reports`**: the reports your schedules filed, read from your LLeMbas server — unread first,
+  with the schedule and when. Enter opens one: read it here (Markdown, a page as its note; it is
+  marked read), reply (the report and your words go to this session's agent), mark it read, delete
+  it (asked once); in the list ctrl+r marks read and ctrl+d deletes. `/reports <id or title>`
+  reads one directly; `lembas run "/reports"` prints the list, or one report, as text.
+- **`/schedule new` asks when to notify**: when something needs your attention (the default),
+  when a condition you type holds, every run, or never; `/schedule` shows it for each schedule.
 - **Harness spec 3.8.0: which permission rule decides** (`harness/permission/rules.md`): the
   rule order this program has used since the menus is now the shared specification, with
   conformance cases both sides run.

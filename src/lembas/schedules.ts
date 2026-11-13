@@ -5,6 +5,7 @@
 import { remoteState } from "../config/remote.ts"
 import { apiCall, LembasError, SignInRejected } from "./client.ts"
 import { soleInstance } from "./personal.ts"
+import { LOOP } from "../harness.ts"
 
 export interface Run {
   id: string
@@ -18,6 +19,8 @@ export interface Run {
   model?: { name?: string | null } | null
   preview?: string
   error?: { class?: string; text?: string } | null
+  /** Spec 3.8.0: the report this run filed, if it filed one. */
+  report?: string | null
 }
 
 export interface Schedule {
@@ -31,6 +34,18 @@ export interface Schedule {
   running?: boolean
   runs_on?: { device?: string; device_name?: string; cwd?: string; mode?: string } | null
   watch?: { kind: string; url?: string; command?: string } | null
+  /** Spec 3.8.0 (harness reports.md §3): when its owner hears from it, and — for `when` — the
+   *  condition in their words. Absent on a server before 3.8.0. */
+  notify?: string | null
+  notify_when?: string | null
+}
+
+/** A schedule's notify-when in words, as the list and the form say it. */
+export function notifyWords(notify: string | null | undefined, condition?: string | null): string {
+  const N = LOOP.scheduled.notify
+  if (notify === "always") return "a report every run"
+  if (notify === "never") return "no reports"
+  return `a report when ${(condition ?? "").trim() || N.default_condition}`
 }
 
 export interface Compiled {
@@ -45,8 +60,8 @@ export interface Compiled {
   timezone?: string
 }
 
-/** One call to the schedule routes; the server's own refusal (`detail`) as the error. */
-async function api(method: string, path: string, body?: unknown): Promise<any> {
+/** One call to the schedule (and report) routes; the server's own refusal (`detail`) as the error. */
+export async function api(method: string, path: string, body?: unknown, what = "schedules"): Promise<any> {
   const one = soleInstance()
   if (!one) throw new LembasError("not logged in to one LLeMbas server (/login)")
   const r = await apiCall(one.instance.base_url, one.token, one.instance.ca ? { ca: one.instance.ca } : undefined, method, `/api/v2${path}`, body)
@@ -54,8 +69,8 @@ async function api(method: string, path: string, body?: unknown): Promise<any> {
   if (r.status === 401 && !detail) throw new SignInRejected("the server no longer accepts this sign-in — /login again")
   // A server from before spec 3.5.0 lets only an app's token reach /api/v2.
   if (r.status === 401 || (r.status === 403 && /scope|token/i.test(detail ?? "")))
-    throw new LembasError(`${one.instance.connection} does not let a linked computer manage schedules yet (it needs a newer LLeMbas server)`)
-  if (r.status === 404 && !detail) throw new LembasError(`${one.instance.connection} has no schedules here (an older LLeMbas server)`)
+    throw new LembasError(`${one.instance.connection} does not let a linked computer manage ${what} yet (it needs a newer LLeMbas server)`)
+  if (r.status === 404 && !detail) throw new LembasError(`${one.instance.connection} has no ${what} here (an older LLeMbas server)`)
   if (r.status >= 400) throw new LembasError(detail ?? `${method} ${path}: ${r.status}`)
   return r.json
 }
@@ -73,8 +88,10 @@ export const runResult = async (id: string, run: string): Promise<{ run: Run; te
 
 /** Create one from what compile said. `here`: it runs on this computer, in `cwd`, in Edit
  *  (`runs_on.device: "this"` is the calling device). */
-export async function createSchedule(c: Compiled, request: string, here?: { cwd: string }): Promise<Schedule> {
+export async function createSchedule(c: Compiled, request: string, here?: { cwd: string }, notify?: { notify: string; condition?: string }): Promise<Schedule> {
   const body: Record<string, unknown> = { title: c.title, instruction: c.instruction, request, rule: c.rule, ...(c.target ? { target: c.target } : {}) }
+  // Spec 3.8.0: notify when — the three values, and the person's own words for `when`.
+  if (notify) Object.assign(body, { notify: notify.notify, ...(notify.notify === "when" && notify.condition?.trim() ? { notify_when: notify.condition.trim() } : {}) })
   if (here) body.runs_on = { device: "this", cwd: here.cwd, mode: "edit" }
   return (await api("POST", "/schedules", body)).schedule
 }
@@ -111,6 +128,7 @@ export function runStatus(r: Run): string {
   if (r.status === "missed") return "missed"
   if (r.status === "unchanged") return "unchanged (nothing new)"
   if (r.status === "silent") return "nothing to report"
+  if (r.status === "ok" && r.report) return "ok — a report"
   return r.status
 }
 
@@ -123,8 +141,9 @@ export function listLines(all: Schedule[], now = new Date()): string[] {
     const last = s.last_run ? ` · last ${runStatus(s.last_run)}${s.last_run.finished_at ? ` ${when(s.last_run.finished_at, now)}` : ""}` : ""
     const where = s.runs_on ? ` · on ${s.runs_on.device_name || "a computer"}${s.runs_on.cwd ? ` in ${s.runs_on.cwd}` : ""}` : ""
     const watch = s.watch ? ` · watches ${s.watch.kind === "url" ? s.watch.url : s.watch.command}` : ""
+    const reports = s.notify ? ` · ${notifyWords(s.notify, s.notify_when)}` : ""
     out.push(`${s.title} (${s.id}) — ${s.description || "no rule"}`)
-    out.push(`  ${state}${last}${where}${watch}`)
+    out.push(`  ${state}${last}${where}${watch}${reports}`)
   }
   out.push("", "/schedule new <words> · pause|resume|run|history <id or title>")
   return out

@@ -30,8 +30,10 @@ import { listPages } from "../pages/store.ts"
 import { keyMatcher } from "../voice/index.ts"
 import { PLAYER_NAMES, playerFor, recorderFor } from "../voice/audio.ts"
 import { duration } from "../duration.ts"
+import { LOOP } from "../harness.ts"
 import { openMcpMenu, openMcpServer, runAction } from "./mcpmenu.ts"
 import { openAgents, openHelp, openPermissions, openStatus } from "./menus.ts"
+import { openReports, readReport } from "./reportsmenu.ts"
 import type { Job, JobInfo } from "../jobs/registry.ts"
 
 export interface CommandCtx extends Ctx {
@@ -1116,9 +1118,24 @@ export const COMMANDS: Command[] = [
             ],
             onSelect: (v) => {
               if (v === "cancel") return c.view.info("no schedule made")
-              void S.createSchedule(compiled, words, v === "here" ? { cwd } : undefined)
-                .then((made) => c.view.info(`made ${made.title} (${made.id}) — next ${S.when(made.next_run)}`))
-                .catch((e) => c.view.info(`/schedule: ${(e as Error).message}`, "warn"))
+              // Then: when to hear from it (harness reports.md §3) — every run, when something
+              // the person names holds, or never. Typing gives the condition in their own words.
+              const N = LOOP.scheduled.notify
+              const create = (notify: string, condition?: string) =>
+                void S.createSchedule(compiled, words, v === "here" ? { cwd } : undefined, { notify, condition })
+                  .then((made) => c.view.info(`made ${made.title} (${made.id}) — next ${S.when(made.next_run)} · ${S.notifyWords(notify, condition)}`, "success"))
+                  .catch((e) => c.view.info(`/schedule: ${(e as Error).message}`, "warn"))
+              c.openDialog({
+                title: "Notify when — when should it file a report?",
+                body: ["A run that files no report leaves one line in the schedule's history. Type your own condition to say when a report is wanted."],
+                options: [
+                  { label: `When ${N.default_condition}`, value: "when", current: true, description: "the model decides" },
+                  { label: N.labels.always, value: "always", description: "a report every time, also when nothing was found" },
+                  { label: N.labels.never, value: "never", description: "no reports: the history only" },
+                ],
+                custom: { label: "When", onSubmit: (condition) => create("when", condition) },
+                onSelect: (n) => create(n),
+              })
             },
           })
           return
@@ -1141,6 +1158,23 @@ export const COMMANDS: Command[] = [
         say([`usage: /schedule ${COMMANDS.find((x) => x.name === "schedule")!.args}`], "warn")
       } catch (e) {
         say([`/schedule: ${(e as Error).message}`], "warn")
+      }
+    },
+  },
+  {
+    name: "reports",
+    args: "[<id or title>]",
+    description: "the reports your schedules filed: unread first — read one, reply, mark it read, delete it",
+    async run(c, arg) {
+      if (!arg.trim()) return openReports(c)
+      // A name: that report, read here.
+      const R = await import("../lembas/reports.ts")
+      try {
+        const found = R.findReport(await R.listReports(), arg)
+        if (typeof found === "string") return c.view.info(found, "warn")
+        await readReport(c, found.id)
+      } catch (e) {
+        c.view.info(`/reports: ${(e as Error).message}`, "warn")
       }
     },
   },

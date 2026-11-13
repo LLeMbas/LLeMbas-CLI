@@ -18,7 +18,7 @@ const GROUPS: [string, string[]][] = [
   ["This session", ["new", "sessions", "search", "rename", "delete", "continue", "undo", "redo", "compact", "context", "copy", "remote"]],
   ["Model and how it works", ["model", "effort", "mode", "permissions", "plan", "plans", "personality", "team", "agents", "jobs"]],
   ["The project", ["diff", "commit", "branch", "checkpoint", "checkpoints", "review", "init", "changelog", "release", "tasks", "decisions", "decide", "pages", "trust"]],
-  ["What it knows and can use", ["memory", "skills", "skill", "command", "kb", "mcp", "schedule"]],
+  ["What it knows and can use", ["memory", "skills", "skill", "command", "kb", "mcp", "schedule", "reports"]],
   ["Account and settings", ["status", "login", "logout", "usage", "settings", "voice", "speak"]],
   ["Look", ["theme", "icons", "terminal"]],
 ]

@@ -462,6 +462,19 @@ export function createView(bus: Bus) {
       set(produce((s) => void s.items.push({ kind: "user", id: nextId(), text })))
       set({ phase: "waiting", busySince: Date.now() })
     },
+    /** A report read here (harness reports.md): its title and where it came from as a line, then
+     *  its body as a reply is drawn — Markdown, a page as its note. Of the transcript only: it is
+     *  not part of the conversation. */
+    report(title: string, meta: string, body: string) {
+      set(
+        produce((s) => {
+          s.items.push({ kind: "notice", id: nextId(), text: `Report: ${title}${meta ? ` — ${meta}` : ""}`, level: "info" })
+          const it: Extract<Item, { kind: "assistant" }> = { kind: "assistant", id: nextId(), text: body, streaming: false }
+          keepPages(state.sessionId, it)
+          s.items.push(it)
+        }),
+      )
+    },
     info(text: string, level: NoticeLevel = "info") {
       set(produce((s) => void s.items.push({ kind: "notice", id: nextId(), text, level })))
     },
