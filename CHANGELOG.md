@@ -6,6 +6,10 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [2.0.0-beta.11] — 2026-11-13
+
+Harness spec 3.8.1: the text that tells a model when to write a page and when to show a file.
+
 ### Changed
 
 - **Harness spec 3.8.1: a page for what is to be seen, a shown file for what has to run.** The
