@@ -63,6 +63,8 @@ export interface ServedModel {
   /** Spec 3.2.0: the server turns thinking off for enable_thinking false. */
   thinking_switch?: boolean
   vision?: boolean
+  /** Spec 3.8.0 (harness pages.md): the model can write HTML pages. */
+  html_pages?: boolean
   tools?: boolean
   notes?: string
   capacity?: { group?: string; single_session?: boolean; parallel?: number }
