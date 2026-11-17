@@ -38,6 +38,8 @@ import { checkMode, requestRefusal, tighten, whoDecides, type Grant } from "../s
 import { fillPrompt as fillText } from "../src/prompt/fill.ts"
 import { isSilent, judgeCase, monitorHash, notifyInstruction, reportResult, reportTool, runLeaves, scheduledMode, stripSentinel } from "../src/acp/scheduled.ts"
 
+import { clientModel, records, startModel, type SessionKind } from "../src/session/lastmodel.ts"
+
 type Case = Record<string, unknown>
 
 /** Whether a path is at `ro` or above under `grants` (fs_access's rule: the most specific grant on
@@ -53,6 +55,14 @@ function readableUnder(grants: Record<string, string> | undefined, path: string)
 }
 
 export const AREAS: Record<string, (c: Case) => unknown> = {
+  // Spec 3.9.0: the model last used in a directory (src/session/lastmodel.ts).
+  last_model: (c) => {
+    const str = (k: string) => (typeof c[k] === "string" ? (c[k] as string) : undefined)
+    if (c.kind === "start") return startModel({ asked: str("asked"), project: str("project"), directory: str("directory"), global: str("global"), served: c.served as string[], default: str("default") })
+    if (c.kind === "record") return records({ session: c.session as SessionKind, agent: c.agent as "main" | "subagent", what: c.what as "turn" | "change" | "command", machine: c.machine === true })
+    if (c.kind === "client") return clientModel({ named: str("named"), directory: str("directory"), has: c.has as string[], default: str("default") })
+    throw new Error(`last_model: unknown kind ${String(c.kind)}`)
+  },
   // Spec 3.5.0: scheduled work on a linked computer (src/acp/scheduled.ts).
   scheduled: (c) => scheduledMode({ accept: c.accept === true, mode: c.mode, max_mode: c.max_mode as Mode, approval_wait_s: c.approval_wait_s }),
   silent: (c) => ({ silent: isSilent(c.text as string), stripped: stripSentinel(c.text as string) }),

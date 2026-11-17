@@ -6,6 +6,28 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+Harness spec 3.9.0: the model last used in a directory, the two types of schedule, a permission rule set right.
+
+### Added
+
+- **Harness spec 3.9.0: the model last used in a directory** (`harness/acp.md`). A new agent
+  session in a directory starts on the model last used in exactly that directory — from the
+  terminal, the web, the desktop app or a phone — instead of the server's default. The memory is
+  this machine's (`models.json` in the state directory) and the server keeps no record of it.
+  `_lembas/directories` tells the server each directory's model (`model`, capability
+  `directory_model`) and answers for one directory alone with `list: false`.
+- **Harness spec 3.9.0: schedules are Chat or Agentic** — an Agentic schedule runs on one linked
+  computer in one directory with the agent's tools, on the model the schedule names or else the
+  one last used in that directory; a scheduled run never changes what the directory remembers.
+
+### Fixed
+
+- **`.env.example` is read without asking after a broad allow, as before it.** With `read: allow`
+  made in a menu, by an "always" answer or in a project, the defaults' `*.env.*: ask` and
+  `*.env.example: allow` both counted as narrower rules and the stricter won, so the allow
+  *started* a question about every example file. A narrower rule that a later one narrows again
+  is now set aside (`harness/permission/rules.md` §2, spec 3.9.0); `.env` and `.env.local` still ask.
+
 ## [2.0.0-beta.11] — 2026-11-13
 
 Harness spec 3.8.1: the text that tells a model when to write a page and when to show a file.

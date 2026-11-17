@@ -93,14 +93,18 @@ export function ruleAction(permission: string, pattern: string, rules: Rule[]): 
 /** The rule that decides (harness permission/rules.md §2). The last matching rule is the
  *  candidate. One made after the written ones — a project's, an "always" answer, one set in a
  *  menu — gives way to whichever of these is stricter than it, the strictest deciding:
- *  a narrower written rule (`read: allow` leaves `read *.env: ask` asking); the person's own
+ *  a narrower written rule (`read: allow` leaves `read *.env: ask` asking) — unless a later
+ *  written rule narrows that one again, which then speaks for the case; the person's own
  *  answer (their config's last matching rule, of any breadth); and, for an "always" answer, a
  *  written deny. A candidate from the defaults or the person's own config decides as it is. */
 function lookupRule(permission: string, pattern: string, rules: Rule[]): Rule | undefined {
   const matches = (r: Rule) => match(permission, r.permission) && match(pattern, r.pattern)
   const hit = rules.findLast(matches)
   if (!hit || !(hit.source === "project" || hit.learned)) return hit
-  const floors: Rule[] = rules.filter((r) => r !== hit && !r.learned && matches(r) && narrowerThan(r, hit))
+  // A narrower rule that a later one narrows again is set aside (spec 3.9.0): `read *.env.*: ask`
+  // gives way to `read *.env.example: allow` written after it, as it does without the candidate.
+  const narrower = rules.filter((r) => r !== hit && !r.learned && matches(r) && narrowerThan(r, hit))
+  const floors: Rule[] = narrower.filter((r, i) => !narrower.slice(i + 1).some((later) => narrowerThan(later, r)))
   const own = rules.findLast((r) => r.source === "global" && !r.learned && matches(r))
   if (own) floors.push(own)
   if (hit.learned) {
