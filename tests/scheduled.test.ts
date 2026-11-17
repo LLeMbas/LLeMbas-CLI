@@ -273,3 +273,28 @@ test("notify never, and a server that says no notify at all: the tool is not in 
   expect(bare(fake.requests[4].messages.at(-1).content)).toBe(TOOL_SPECS.report_write!.unavailable!)
   expect(mine._meta.lembas.scheduled).toBeUndefined()
 })
+
+test("a continuing schedule's session opened from the store again — the service restarted — is still offered report_write", async () => {
+  fake = fakeProvider([
+    { chunks: [delta({ content: "Nothing to tell." })] },
+    { chunks: [toolCall(0, "c1", "report_write", R())] },
+    { chunks: [delta({ content: "Filed." })] },
+    { chunks: [delta({ content: "It was the disk." })] },
+  ])
+  config(fake.url)
+  const root = project()
+  const scheduled = sched({ notify: "when" })
+  const first = await client(limitsFor(root))
+  const s: any = await first.c.request("session/new", { cwd: root, _meta: { lembas: { scheduled } } })
+  await first.c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "check" }], _meta: { lembas: { turnId: "run7", scheduled } } })
+  expect(toolNames(0)).toContain("report_write")
+  // Another link, with nothing in memory: the session comes from the store.
+  const again = await client(limitsFor(root))
+  const next = sched({ notify: "when", run_id: "run8" })
+  const r: any = await again.c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "check" }], _meta: { lembas: { turnId: "run8", scheduled: next } } })
+  expect(toolNames(1)).toContain("report_write")
+  expect(r._meta.lembas.scheduled.report).toMatchObject({ title: "Disk almost full" })
+  // …and the person's own turn in it still finds the tool there, and unavailable.
+  await again.c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "what was it?" }] })
+  expect(toolNames(3)).toContain("report_write")
+})

@@ -28,6 +28,10 @@ Harness spec 3.9.0: the model last used in a directory, the two types of schedul
 
 ### Fixed
 
+- **A continuing schedule's run after the service restarted is offered `report_write` again.**
+  How a schedule opened its session was kept in memory only, so a session opened from the store
+  again — the service restarted, or the link dialled anew — had lost it: the next run's prompt
+  told the model to file a report with a tool it was not given. It is kept with the session now.
 - **`.env.example` is read without asking after a broad allow, as before it.** With `read: allow`
   made in a menu, by an "always" answer or in a project, the defaults' `*.env.*: ask` and
   `*.env.example: allow` both counted as narrower rules and the stricter won, so the allow

@@ -660,7 +660,9 @@ export class AcpAgent {
     markRemote(session.app.store, id)
     if (scheduled) {
       try {
-        session.app.store?.setMeta(id, SCHEDULED_META, true)
+        // How it was opened, kept with the session: opened from the store again — after a restart
+        // of the service — it is still a schedule's, with the tools it was opened with.
+        session.app.store?.setMeta(id, SCHEDULED_META, scheduled)
       } catch {}
     }
     // The client's chat: its memory calls land in that chat's data group (acp.md *Memory*).
@@ -770,9 +772,14 @@ export class AcpAgent {
     session.app = createApp({ cwd: dir, ...(L ? { mode: L.maxMode } : {}), asker: this.asker(session), modelTitles: false, resuming: id })
     session.app.resume(id)
     markRemote(session.app.store, id)
-    // A schedule's session stays one: nothing in it becomes its directory's model.
+    // A schedule's session stays one: nothing in it becomes its directory's model, and its list
+    // of tools is the one it was opened with — report_write for a schedule that notifies
+    // (reports.md §2). `opened` used to live in memory only, so a continuing schedule's next run
+    // after a restart of the service was not offered the tool its prompt told it to call.
     try {
-      if (session.app.store?.meta<boolean>(id, SCHEDULED_META) === true) session.app.forgetful()
+      const kept = session.app.store?.meta<ScheduledTurn | true>(id, SCHEDULED_META)
+      if (kept) session.app.forgetful()
+      if (kept && typeof kept === "object") session.opened = kept
     } catch {}
     session.app.setScope(id)
     if (L) session.app.engine.mode = clampMode(session.app.engine.mode, L.maxMode)
