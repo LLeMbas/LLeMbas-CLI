@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS session_meta (
  *  acp/agent.ts, which re-exports it). Here, so the app can ask it too without importing the
  *  agent, which imports the app. */
 export const REMOTE_META = "remote"
+/** Meta: a schedule opened this session for its run (harness acp.md, *Scheduled work*). Kept so
+ *  that, opened from the store again, it still never becomes its directory's model. */
+export const SCHEDULED_META = "scheduled"
 
 /** The session_meta key holding the directory a session was started in: a session started
  *  in a subdirectory of its project is reopened there, not at the project's root. */

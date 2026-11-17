@@ -39,7 +39,8 @@ import { isLevel, readLevel, type Level } from "../provider/effort.ts"
 import { HARNESS_VERSION } from "../harness.ts"
 import { findProject, trustedRoots, trustedWithin, trustOf } from "../project/root.ts"
 import { VERSION } from "../version.ts"
-import { CWD_META, REMOTE_META, Store } from "../session/store.ts"
+import { CWD_META, REMOTE_META, SCHEDULED_META, Store } from "../session/store.ts"
+import { lastModels } from "../session/lastmodel.ts"
 import type { Message } from "../provider/types.ts"
 import type { Hub } from "./hub.ts"
 import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
@@ -295,6 +296,9 @@ export const CAPABILITIES = [
   // Harness spec 3.8.0 (reports.md §6): `scheduled.notify` read; report_write offered to a run's
   // model, and the report it writes carried in the turn's answer.
   "reports",
+  // Harness spec 3.9.0: `model` on a Dir of `_lembas/directories` — the model last used in
+  // exactly that directory — and `list: false`, the directory alone.
+  "directory_model",
 ] as const
 export const STOP: Record<string, string> = { stop: "end_turn", steps: "max_turn_requests", budget: "max_tokens", cancelled: "cancelled", error: "end_turn" }
 
@@ -570,14 +574,18 @@ export class AcpAgent {
 
   /** `_lembas/directories`: what the web UI offers when a chat is pointed at this device.
    *  Without a path: the places — the remote roots and every trusted directory inside them. With one:
-   *  its subdirectories. Each says whether a session may be opened there, by the same rule
+   *  its subdirectories (`list: false`: the directory alone). Each says whether a session may be opened there, by the same rule
    *  session/new applies; the device still decides when the session is asked for. */
   private directories(p: any) {
     const L = this.limits
     if (!L) throw new RpcError(INVALID_PARAMS, "directories are offered on the LLeMbas link only")
+    // Spec 3.9.0 (capability directory_model): the model last used in exactly that directory, where
+    // a session could be opened in it. As remembered — the client checks the person still has it.
+    const modelOf = lastModels()
     const describe = (dir: string) => {
       const why = this.refusal(dir)
-      return { path: dir, name: basename(dir) || dir, accepted: !why, ...(why ? { reason: why } : {}) }
+      const model = why ? undefined : modelOf(dir)
+      return { path: dir, name: basename(dir) || dir, accepted: !why, ...(why ? { reason: why } : {}), ...(model ? { model } : {}) }
     }
     const wanted = typeof p?.path === "string" ? p.path.trim() : ""
     if (!wanted) {
@@ -589,6 +597,10 @@ export class AcpAgent {
     const dir = resolve(expandHome(wanted))
     if (!underRoots(dir, L.roots)) throw new RpcError(INVALID_PARAMS, `${dir} is outside the directories this device accepts remote work in (remote.roots)`)
     if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new RpcError(INVALID_PARAMS, `${dir} is not a directory on this machine`)
+    const up = dirname(dir)
+    const parent = up !== dir && underRoots(up, L.roots) ? up : ""
+    // `list: false`: the directory alone, nothing listed — how a client asks for its model.
+    if (p?.list === false) return { ...describe(dir), parent }
     let entries: ReturnType<typeof describe>[] = []
     let error: string | undefined
     try {
@@ -602,8 +614,7 @@ export class AcpAgent {
     } catch (e) {
       error = (e as Error).message
     }
-    const up = dirname(dir)
-    return { ...describe(dir), parent: up !== dir && underRoots(up, L.roots) ? up : "", entries, ...(error ? { error } : {}) }
+    return { ...describe(dir), parent, entries, ...(error ? { error } : {}) }
   }
 
   private newSession(p: any) {
@@ -629,7 +640,8 @@ export class AcpAgent {
     const model = served !== undefined ? this.chatModel(served) : typeof p?._meta?.model === "string" ? p._meta.model : undefined
     const effort = effortOf(p?._meta?.effort)
     try {
-      session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}) })
+      // A schedule's session uses the directory's model and never becomes it (spec 3.9.0).
+      session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}), ...(scheduled ? { remember: false as const } : {}) })
     } catch (e) {
       throw new RpcError(INVALID_PARAMS, (e as Error).message)
     }
@@ -646,6 +658,11 @@ export class AcpAgent {
     session.id = id
     session.turns = turnLog(id)
     markRemote(session.app.store, id)
+    if (scheduled) {
+      try {
+        session.app.store?.setMeta(id, SCHEDULED_META, true)
+      } catch {}
+    }
     // The client's chat: its memory calls land in that chat's data group (acp.md *Memory*).
     session.app.setScope(id)
     this.takeContext(session, p)
@@ -708,7 +725,9 @@ export class AcpAgent {
       const id = s.app.canonicalRef(ref)
       if (!conn) throw new RpcError(INVALID_PARAMS, `this device is not logged in to ${this.instanceConnection}, so it cannot run ${p.model}`)
       if (Object.keys(conn.models).length && !conn.models[id]) throw new RpcError(INVALID_PARAMS, `${conn.webui?.name ?? this.instanceConnection} does not serve ${p.model} to this device`)
-      s.app.switchModel(ref)
+      // The person's change is the directory's model from now (spec 3.9.0) — a schedule's session
+      // apart, which the app was told never to remember.
+      s.app.chooseModel(ref)
     }
     const effort = effortOf(p?.effort)
     // A level the model does not offer is read as its start level; the answer says the one used.
@@ -751,6 +770,10 @@ export class AcpAgent {
     session.app = createApp({ cwd: dir, ...(L ? { mode: L.maxMode } : {}), asker: this.asker(session), modelTitles: false, resuming: id })
     session.app.resume(id)
     markRemote(session.app.store, id)
+    // A schedule's session stays one: nothing in it becomes its directory's model.
+    try {
+      if (session.app.store?.meta<boolean>(id, SCHEDULED_META) === true) session.app.forgetful()
+    } catch {}
     session.app.setScope(id)
     if (L) session.app.engine.mode = clampMode(session.app.engine.mode, L.maxMode)
     this.sessions.set(id, session)
@@ -1052,7 +1075,7 @@ export class AcpAgent {
     const run = async (started: () => void): Promise<PromptResult> => {
       s.prompting = true
       // The turn that runs now says whether the session is a scheduled run's (it may wait behind another).
-      if (scheduled) s.scheduled = scheduled
+      if (scheduled) (s.scheduled = scheduled), s.app.forgetful()
       else delete s.scheduled
       started()
       try {
@@ -1105,7 +1128,7 @@ export class AcpAgent {
     for (const a of prepared.atPaths) this.indexFor(app.engine.o.toolCtx.cwd).used(a.replace(/\/$/, ""))
     const prev = { model: app.engine.model.ref, mode: app.engine.mode, effort: app.engine.effort }
     try {
-      if (prepared.model) app.switchModel(prepared.model)
+      if (prepared.model) app.switchModel(prepared.model, "borrowed")
       if (prepared.mode) app.engine.mode = this.limits ? clampMode(prepared.mode, this.limits.maxMode) : prepared.mode
       const reason = await app.turns.prompt(prepared.prompt, prepared.extra, prepared.shown, { turnId, attachments: prepared.attachments })
       // Messages sent mid-task (`_lembas/steer`) that the task ended before taking in: handed back,
@@ -1159,7 +1182,7 @@ export class AcpAgent {
     })
     const prev = { model: app.engine.model.ref, effort: app.engine.effort }
     try {
-      if (prepared.model) app.switchModel(prepared.model)
+      if (prepared.model) app.switchModel(prepared.model, "borrowed")
       const reason = await app.turns.prompt(prepared.prompt, prepared.extra, prepared.shown, { turnId, attachments: prepared.attachments })
       const unsent = app.engine.takeInbox()
       return { stopReason: STOP[reason] ?? "end_turn", _meta: { lembas: meta(unsent.length ? { unsent } : {}, reason, finalReply(app.engine.messages), error) } }

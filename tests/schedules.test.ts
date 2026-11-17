@@ -88,7 +88,9 @@ test("list, pause, run now and history go to the schedule routes with the device
   const lines = listLines(all, now)
   expect(lines[0]).toBe("Waybread check (sched1) — On the second Monday of each month at 07:30")
   expect(lines[1]).toContain("· last ok")
-  expect(lines[3]).toBe("  paused")
+  expect(lines[3]).toBe("  Chat · paused")
+  // Spec 3.9.0: the two types — Agentic is a schedule that runs on a linked computer.
+  expect(listLines([{ ...SCHED, enabled: false, last_run: null, runs_on: { device: "dev1", device_name: "workstation", cwd: "/home/user/project", mode: "edit" } }], now)[1]).toBe("  Agentic · paused · on workstation in /home/user/project")
   expect((await pauseSchedule("sched1")).enabled).toBe(false)
   expect((await runSchedule("sched1")).id).toBe("run9")
   const h = await scheduleRuns("sched1")

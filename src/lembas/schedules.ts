@@ -132,6 +132,10 @@ export function runStatus(r: Run): string {
   return r.status
 }
 
+/** A schedule's type (harness acp.md, spec 3.9.0): Agentic when it runs on a linked computer —
+ *  one device, one directory, the agent's tools there — else Chat. What `runs_on` says; no field. */
+export const scheduleType = (s: Pick<Schedule, "runs_on">): "Chat" | "Agentic" => (s.runs_on ? "Agentic" : "Chat")
+
 /** `/schedule` and `/schedule list`. */
 export function listLines(all: Schedule[], now = new Date()): string[] {
   if (!all.length) return ["no schedules yet — /schedule new <what, and when> (\"every weekday at 8 summarise the open issues\")"]
@@ -143,7 +147,7 @@ export function listLines(all: Schedule[], now = new Date()): string[] {
     const watch = s.watch ? ` · watches ${s.watch.kind === "url" ? s.watch.url : s.watch.command}` : ""
     const reports = s.notify ? ` · ${notifyWords(s.notify, s.notify_when)}` : ""
     out.push(`${s.title} (${s.id}) — ${s.description || "no rule"}`)
-    out.push(`  ${state}${last}${where}${watch}${reports}`)
+    out.push(`  ${scheduleType(s)} · ${state}${last}${where}${watch}${reports}`)
   }
   out.push("", "/schedule new <words> · pause|resume|run|history <id or title>")
   return out

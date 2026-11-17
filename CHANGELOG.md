@@ -16,9 +16,15 @@ Harness spec 3.9.0: the model last used in a directory, the two types of schedul
   this machine's (`models.json` in the state directory) and the server keeps no record of it.
   `_lembas/directories` tells the server each directory's model (`model`, capability
   `directory_model`) and answers for one directory alone with `list: false`.
+  It is written when you send a prompt and when you change the model (`/model`, a setting, the
+  chat's model in the web UI) — not by a subagent, a command's own model, a `lembas run` or a
+  scheduled run. A session here starts on, in order: `--model`, the project's `model`, **the
+  model last used in this directory** (while the server still serves it), your global `model`,
+  the server's default. `lembas uninstall --purge` removes the file with the rest of the state.
 - **Harness spec 3.9.0: schedules are Chat or Agentic** — an Agentic schedule runs on one linked
   computer in one directory with the agent's tools, on the model the schedule names or else the
   one last used in that directory; a scheduled run never changes what the directory remembers.
+  `/schedule` says each schedule's type, and `/schedule new` offers the two by name.
 
 ### Fixed
 

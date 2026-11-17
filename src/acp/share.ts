@@ -604,7 +604,7 @@ export class Share {
       this.mine(p)
       // Compared as the ref the model has now: the instance's `<login>/<served>` names the
       // same model as `deepseek/x`, and switching to it again would reset the effort.
-      if (typeof p?.model === "string" && p.model && this.app.canonicalRef(p.model) !== this.app.engine.model.ref) this.app.switchModel(p.model)
+      if (typeof p?.model === "string" && p.model && this.app.canonicalRef(p.model) !== this.app.engine.model.ref) this.app.chooseModel(p.model)
       const effort = effortOf(p?.effort)
       if (effort !== undefined) this.app.engine.effort = readLevel(this.app.engine.model, effort)
       this.hooks.changed()

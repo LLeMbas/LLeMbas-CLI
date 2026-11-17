@@ -51,6 +51,8 @@ import { embedderFor } from "./library/embed.ts"
 import { isLevel, levelsFor, readLevel, type Level } from "./provider/effort.ts"
 import { memberTools as memberToolsOf, readingBashByDefault, Team, TEAM, TEAM_TOOLS, type Capacity, type TeamAgent } from "./team/team.ts"
 import { whoDecides } from "./team/delegation.ts"
+import { lastModel, rememberModel, startModel } from "./session/lastmodel.ts"
+import { readRaw } from "./config/settings.ts"
 import { TeamRuntime, type MemberHandle } from "./team/runtime.ts"
 
 export interface AppOptions {
@@ -74,6 +76,9 @@ export interface AppOptions {
    *  made first. Without it every reopening — the service opening a web chat's session from the
    *  store — left an empty, untitled session behind in the project, listed by /sessions as its id. */
   resuming?: string
+  /** false: this session's model is never made its directory's (harness acp.md, *The model last
+   *  used in a directory*): a one-shot run, a session a schedule opened. It still starts on it. */
+  remember?: false
 }
 
 const UNATTENDED: Record<Mode, string | undefined> = {
@@ -107,7 +112,13 @@ export interface App {
   /** A ref in any form it may be written in (the old `<login>/<model>` too) as the ref the
    *  model has now; the ref itself when it names nothing. */
   canonicalRef(ref: string): string
-  switchModel(ref: string): void
+  /** `borrowed`: for one prompt only (a command's own model) — not the directory's model. */
+  switchModel(ref: string, how?: "borrowed"): void
+  /** The person changed the session's model (`_lembas/configure`, a terminal's shared session):
+   *  switched, and remembered for the directory. */
+  chooseModel(ref: string): void
+  /** Stop remembering this session's model for its directory (a schedule's session). */
+  forgetful(): void
   newSession(): void
   /** Name the open session by hand (a chat renamed in the web UI); no model title follows. */
   rename(title: string): void
@@ -225,7 +236,18 @@ export function createApp(o: AppOptions): App {
   const trust = trustOf(project.root)
   const trusted = trust === "trusted"
   const loaded = loadConfig({ projectConfigDir: project.dir, trusted })
-  const model = resolveModel(loaded, o.model ?? loaded.config.model)
+  // Which model it starts on (harness acp.md, spec 3.9.0): the one asked for, the project's
+  // setting, the model last used in this directory while the login serves it, the global setting,
+  // the server's default.
+  const projectModel = trusted && typeof readRaw(join(project.dir, "config.yaml")).model === "string" ? loaded.config.model : undefined
+  const start = startModel({
+    asked: o.model,
+    project: projectModel,
+    directory: o.model || projectModel ? undefined : lastModel(o.cwd),
+    global: projectModel ? undefined : loaded.config.model,
+    served: loaded.refs.map((r) => r.ref),
+  })
+  const model = resolveModel(loaded, start.model)
   // An untrusted project is read-only: plan mode, and its own config is ignored.
   let mode: Mode = o.mode ?? loaded.config.mode ?? "manual"
   if (trust === "readonly") mode = "plan"
@@ -867,8 +889,18 @@ export function createApp(o: AppOptions): App {
   const turns = new Turns(engine, snapshots, store)
   // By provider for an instance's models (`deepseek/deepseek-flash`), src/provider/refs.ts.
   const modelRefs = () => loaded.refs.map((r) => r.ref)
-  const switchModel = (ref: string) => {
+  // The directory's model (spec 3.9.0): written when a person's turn begins and when the person
+  // changes the model — never for a model borrowed for one prompt, a turn the harness started,
+  // a one-shot run or a schedule's session.
+  let remembers = o.remember !== false
+  let borrowed = false
+  const remember = () => {
+    if (remembers && !borrowed) rememberModel(o.cwd, engine.model.ref)
+  }
+  bus.on((e) => e.type === "prompt" && !e.machine && remember())
+  const switchModel = (ref: string, how?: "borrowed") => {
     const m = resolveModel(loaded, ref)
+    borrowed = how === "borrowed"
     engine.setModel(m, clientFor(m), startEffort(m))
   }
   const setIn = (key: string, value: unknown) => {
@@ -913,7 +945,7 @@ export function createApp(o: AppOptions): App {
       }
     },
     apply(key, v) {
-      if (key === "model") switchModel(String(v))
+      if (key === "model") (switchModel(String(v)), remember())
       else if (key === "effort") engine.effort = v as Level
       else if (key === "mode") engine.mode = v as Mode
       else if (key === "limits.steps") engine.o.maxSteps = Number(v)
@@ -978,6 +1010,13 @@ export function createApp(o: AppOptions): App {
       }
     },
     switchModel,
+    chooseModel(ref) {
+      switchModel(ref)
+      remember()
+    },
+    forgetful() {
+      remembers = false
+    },
     settings,
     memory,
     projectMemory,

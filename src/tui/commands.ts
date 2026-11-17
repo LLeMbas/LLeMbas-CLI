@@ -1112,8 +1112,10 @@ export const COMMANDS: Command[] = [
           c.openDialog({
             title: preview[0]!,
             options: [
-              { label: "Create it", value: "server", description: preview.slice(1).join(" · ") || "runs on the server" },
-              ...(here ? [{ label: "Create it, to run on this computer", value: "here", description: `as an agent turn in ${cwd}, in Edit` }] : []),
+              // The two types (harness acp.md, spec 3.9.0). An Agentic one names no model: each run
+              // uses the model last used in this directory.
+              { label: "Create it — Chat", value: "server", description: preview.slice(1).join(" · ") || "runs on the server" },
+              ...(here ? [{ label: "Create it — Agentic, to run on this computer", value: "here", description: `as an agent turn in ${cwd}, in Edit, on the model last used here` }] : []),
               { label: "Cancel", value: "cancel" },
             ],
             onSelect: (v) => {

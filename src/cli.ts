@@ -87,7 +87,8 @@ Local mode:
                                   start asks, and the answer is kept in the local directory.
 
 Options for run:
-  -m, --model conn/model    model to use (default: config.yaml \`model\`)
+  -m, --model conn/model    model to use (default: the project's \`model\`, else the one last used in
+                            this directory, else config.yaml \`model\`)
       --mode MODE           manual | edit | auto | plan
   -e, --effort LEVEL        ${EFFORTS.join(" | ")} | off | default (one the model offers)
   -y, --yes                 approve every ask (still never the hardline)
@@ -338,6 +339,8 @@ async function main() {
       store: values["no-store"] ? false : undefined,
       snapshots: false,
       modelTitles: false,
+      // A one-shot run starts on the directory's model and never becomes it (spec 3.9.0).
+      remember: false,
     })
     if (values.json) renderJson(app.bus)
     else renderPlain(app.bus, { color: process.stderr.isTTY ?? false, showReasoning: values.reasoning ?? false, icons: app.loaded.config.icons, theme: app.loaded.config.theme })

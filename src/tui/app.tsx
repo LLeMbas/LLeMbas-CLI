@@ -514,7 +514,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
   const sendAs = async (prompt: string, shown: string, opts: { model?: string; mode?: string; attachFrom?: string; given?: Parameters<typeof send>[3] } = {}) => {
     const prev = { model: app.engine.model.ref, mode: app.engine.mode, effort: app.engine.effort }
     try {
-      if (opts.model) app.switchModel(opts.model)
+      if (opts.model) app.switchModel(opts.model, "borrowed")
       if (opts.mode && (MODES as readonly string[]).includes(opts.mode)) app.engine.mode = opts.mode as Mode
       refresh()
       return await send(prompt, shown, opts.attachFrom ?? prompt, opts.given)
