@@ -127,7 +127,7 @@ export const LOOP: {
   /** Interactive-only models (spec 3.9.0, harness/interactive.md): the field, the reason of a
    *  refused scheduled request, the two sentences, and what each background call does with
    *  nowhere to go. */
-  interactive: { field: string; reason: string; texts: { scheduled: string; compact: string }; background: Record<"title" | "compaction" | "auto_compaction", "skip" | "refuse"> }
+  interactive: { field: string; reason: string; texts: { scheduled: string; compact: string }; background: Record<"title" | "compaction" | "auto_compaction", string> }
   /** Background work (spec 2.0.0): the marks every note begins with, and the caps. */
   jobs: {
     marks: { command: string; subagent: string; message: string; to_subagent: string }

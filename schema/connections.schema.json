@@ -182,6 +182,10 @@
                   "description": "The model reads images: @image files, pasted paths and view_image.",
                   "type": "boolean"
                 },
+                "interactive_only": {
+                  "description": "The server's word that this model is for a person's own turns only (harness interactive.md): no scheduled work is sent to it, and a session's title and compaction are asked of another model.",
+                  "type": "boolean"
+                },
                 "html_pages": {
                   "description": "The server's word that this model can write HTML pages (harness pages.md). Read and kept, never used here: a terminal's model is not offered pages.",
                   "type": "boolean"

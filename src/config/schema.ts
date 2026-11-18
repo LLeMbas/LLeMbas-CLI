@@ -56,6 +56,7 @@ export const ModelSpec = z.strictObject({
   effort: z.union([z.enum(EFFORTS), z.literal("off"), z.literal("default")]).optional().describe("The level a conversation starts with, when the model offers it: an effort, `off` (thinking switched off, with thinking_switch) or `default` (nothing sent, for a model that takes no efforts)."),
   effort_style: z.enum(["top", "kwargs", "both"]).optional().describe("Where the effort goes in a request: top-level, in chat_template_kwargs, or both (the default: llama.cpp drops top-level)."),
   vision: z.boolean().optional().describe("The model reads images: @image files, pasted paths and view_image."),
+  interactive_only: z.boolean().optional().describe("The server's word that this model is for a person's own turns only (harness interactive.md): no scheduled work is sent to it, and a session's title and compaction are asked of another model."),
   html_pages: z.boolean().optional().describe("The server's word that this model can write HTML pages (harness pages.md). Read and kept, never used here: a terminal's model is not offered pages."),
   tools: z.boolean().optional().describe("false: a model without tool calls — it can only talk."),
   headers: z.record(z.string(), z.string()).optional().describe("Extra HTTP headers for this model's requests."),

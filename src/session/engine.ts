@@ -70,6 +70,10 @@ export interface EngineOptions {
   /** Take a rule out of the project's config again; whether it was there. */
   forgetRule?: (rule: Pick<Rule, "permission" | "pattern">) => boolean
   compaction?: { autoAt?: number }
+  /** Where a compaction's summary is asked for when it may not be asked of the session's model
+   *  (harness interactive.md §3): another model's client, skip it, or the refusal's words.
+   *  Undefined, or absent: the session's own model, as ever. */
+  background?: (call: "compaction" | "auto_compaction") => { client: Client; effort: Level } | { skip: true } | { refused: string } | undefined
   /** Starts a subagent for the task tool; absent in a subagent. */
   spawn?: ToolContext["spawn"]
   /** What a message sent mid-turn starts with: the user's words for a session, the main agent's for
@@ -547,7 +551,7 @@ export class Engine {
     this.busy = true
     this.abort = new AbortController()
     try {
-      return await this.summarise(this.abort.signal)
+      return await this.summarise(this.abort.signal, "compaction")
     } finally {
       this.busy = false
     }
@@ -556,11 +560,18 @@ export class Engine {
   /** The summary, asked for as the next turn of this same conversation (harness context.md §7):
    *  the same system prompt and tools, every message as it is, then tasks/compact.md with an empty
    *  transcript and previous summary. Nothing of it is shown or stored as a turn; a tool call in the reply is not run. */
-  private async summarise(signal: AbortSignal): Promise<string> {
+  private async summarise(signal: AbortSignal, call: "compaction" | "auto_compaction"): Promise<string> {
+    // An interactive-only model is not asked for background work: the summary is another model's,
+    // of the same conversation, and comes back into this session (interactive.md §3).
+    const elsewhere = this.o.background?.(call)
+    if (elsewhere && "refused" in elsewhere) throw new Error(elsewhere.refused)
+    if (elsewhere && "skip" in elsewhere) throw new Error("skipped")
+    const client = elsewhere?.client ?? this.client
+    const effort = elsewhere?.effort ?? this.effort
     // No previous summary in the ask: an earlier one is already the conversation's first message.
     const ask: Message = { role: "user", parts: [{ type: "text", text: compactAsk() }] }
     let summary = ""
-    for await (const ev of this.client.stream({ system: this.systemPrompt(), messages: mergeUsers([...this.messages, ask]), tools: this.toolSpecs(), effort: this.effort, signal })) {
+    for await (const ev of client.stream({ system: this.systemPrompt(), messages: mergeUsers([...this.messages, ask]), tools: this.toolSpecs(), effort, signal })) {
       if (ev.type === "finish") summary = summaryOf(ev.message.parts)
       else if (ev.type === "usage") this.recordUsage(ev.usage, "compaction")
     }
@@ -603,6 +614,7 @@ export class Engine {
   /** Before a step: past compaction.auto_at of the window, compact. Old tool results are never
    *  pruned in place (harness context.md: nothing already sent is rewritten — it would throw the
    *  prompt cache away from that point); compaction is the one deliberate break. */
+  private autoSkipSaid = false
   private async manageContext(signal: AbortSignal): Promise<"stop" | void> {
     const window = contextWindow(this.model)
     // Spec 3.4.0 §9: a subagent of the tree does not compact; at pause_at it is paused instead.
@@ -630,11 +642,19 @@ export class Engine {
       }
       return
     }
+    // Nowhere to ask for the summary (an interactive-only model with no twin and no usable
+    // default): skipped, said once, and the turn goes on (interactive.md §3).
+    const where = this.o.background?.("auto_compaction")
+    if (where && !("client" in where)) {
+      if (!this.autoSkipSaid) this.o.bus.emit({ type: "notice", message: `context at ${Math.round((used / window) * 100)}% of ${window}, and not compacted: this session's model is for interactive use only and there is no other model to ask for the summary — switch model (/model), or start a new session` })
+      this.autoSkipSaid = true
+      return
+    }
     this.autoCompactions++
     this.o.bus.emit({ type: "notice", level: "info", message: `context at ${Math.round((used / window) * 100)}% of ${window}: compacting the conversation` })
     this.progress.set({ phase: "compacting" })
     try {
-      await this.summarise(signal)
+      await this.summarise(signal, "auto_compaction")
       // The task is never left to the summary: the prompt that started this turn comes back word
       // for word (found on a real run, where a small model's summary lost the task entirely).
       // Its note is not: what it said may be out of date, and the new prompt's first user message

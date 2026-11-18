@@ -65,6 +65,8 @@ export interface ServedModel {
   vision?: boolean
   /** Spec 3.8.0 (harness pages.md): the model can write HTML pages. */
   html_pages?: boolean
+  /** Spec 3.9.0 (harness interactive.md): for a person's own turns only. Sent only when true. */
+  interactive_only?: boolean
   tools?: boolean
   notes?: string
   capacity?: { group?: string; single_session?: boolean; parallel?: number }

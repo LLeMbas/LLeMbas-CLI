@@ -15,7 +15,8 @@
 // applies in every mode, as everywhere.
 import { existsSync, readdirSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { createApp, type App, type SessionContext } from "../app.ts"
+import { createApp, InteractiveOnlyError, type App, type SessionContext } from "../app.ts"
+import { INTERACTIVE_REASON } from "../provider/interactive.ts"
 import type { AskReply, Asker, Event } from "../bus/index.ts"
 import { FileIndex } from "../project/files.ts"
 import { loadSkills } from "../skill/index.ts"
@@ -641,9 +642,10 @@ export class AcpAgent {
     const effort = effortOf(p?._meta?.effort)
     try {
       // A schedule's session uses the directory's model and never becomes it (spec 3.9.0).
-      session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}), ...(scheduled ? { remember: false as const } : {}) })
+      session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}), ...(scheduled ? { remember: false as const, automated: true as const } : {}) })
     } catch (e) {
-      throw new RpcError(INVALID_PARAMS, (e as Error).message)
+      // Scheduled work never runs on an interactive-only model (interactive.md §2): the sentence, and why.
+      throw new RpcError(INVALID_PARAMS, (e as Error).message, e instanceof InteractiveOnlyError ? { reason: INTERACTIVE_REASON } : undefined)
     }
     if (served !== undefined) {
       const why = this.notServed(session.app, model!)
@@ -1084,11 +1086,20 @@ export class AcpAgent {
       // The turn that runs now says whether the session is a scheduled run's (it may wait behind another).
       if (scheduled) (s.scheduled = scheduled), s.app.forgetful()
       else delete s.scheduled
+      // The turn that runs now is the schedule's, or the person's own in the run's chat: scheduled
+      // work never uses an interactive-only model — refused before anything is sent to it.
+      const interactiveOnly = s.app.setAutomated(scheduled !== undefined)
+      if (interactiveOnly) {
+        s.prompting = false
+        throw new RpcError(INVALID_PARAMS, interactiveOnly, { reason: INTERACTIVE_REASON })
+      }
       started()
       try {
         return await this.runPrepared(s, prepared, turnId)
       } finally {
         s.prompting = false
+        // What comes next is the person's until a prompt says otherwise.
+        s.app.setAutomated(false)
       }
     }
     return s.turns.run(turnId, (started) => {

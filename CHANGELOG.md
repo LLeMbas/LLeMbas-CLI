@@ -26,6 +26,21 @@ Harness spec 3.9.0: the model last used in a directory, the two types of schedul
   one last used in that directory; a scheduled run never changes what the directory remembers.
   `/schedule` says each schedule's type, and `/schedule new` offers the two by name.
 
+- **Harness spec 3.9.0: interactive-only models** (`harness/interactive.md`). A server may mark a
+  model `interactive_only` — one its provider sells for a person's own turns and forbids for
+  automated, batch and scheduled use. Your turns, and the subagents and teams your session
+  starts, run on it as on any model. What is not your turn does not: the session's **title**
+  and its **compaction** (asked for or automatic) are asked of the same model under another
+  provider when the server lists one, else of your global `model` or the server's default when
+  that is not interactive-only; with none, the title stays the one made from your first prompt,
+  automatic compaction is skipped and said once, and `/compact` is refused with the reason.
+  **Scheduled work never runs on one**: a scheduled session opened on such a model, or a
+  scheduled turn of a session that has come to be on one, is refused before anything is sent
+  (`data.reason: "interactive_only"`), a scheduled run's subagent on one is not started, and a
+  schedule that follows the directory skips such a model. `lembas run` with no terminal at all
+  (a cron job, a pipeline) is refused on one too. `/model` says which models are for
+  interactive use only.
+
 ### Fixed
 
 - **A continuing schedule's run after the service restarted is offered `report_write` again.**

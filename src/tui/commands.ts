@@ -234,7 +234,7 @@ export const COMMANDS: Command[] = [
         options: refs.map((r) => {
           const known = c.app.loaded.refs.find((x) => x.ref === r)!
           const spec = c.app.loaded.connections[known.connection]!.models[known.id]!
-          const bits = [spec.context ? `${Math.round(spec.context / 1024)}k ctx` : "", spec.vision ? "vision" : "", levelsFor(c.app.engine.model.ref === r ? c.app.engine.model : { ...c.app.engine.model, ref: r, spec }).control === "switch" ? "thinking switch" : spec.efforts?.length ? "effort" : ""].filter(Boolean).join(" · ")
+          const bits = [spec.context ? `${Math.round(spec.context / 1024)}k ctx` : "", spec.vision ? "vision" : "", levelsFor(c.app.engine.model.ref === r ? c.app.engine.model : { ...c.app.engine.model, ref: r, spec }).control === "switch" ? "thinking switch" : spec.efforts?.length ? "effort" : "", spec.interactive_only ? "interactive use only" : ""].filter(Boolean).join(" · ")
           return { label: r, value: r, description: bits, current: r === c.app.engine.model.ref }
         }),
         onSelect: pick,

@@ -101,6 +101,8 @@ export function specFor(m: ServedModel, connection: string): ModelSpec {
   if (m.vision !== undefined) out.vision = m.vision
   // Spec 3.8.0 (pages.md): kept as the server says it; nothing here offers pages.
   if (m.html_pages !== undefined) out.html_pages = m.html_pages === true
+  // Spec 3.9.0 (interactive.md): the server's word; what is scheduled or background work is decided here.
+  if (m.interactive_only === true) out.interactive_only = true
   if (m.tools !== undefined) out.tools = m.tools
   if (m.notes) out.notes = m.notes.slice(0, 300)
   if (m.capacity?.single_session) out.single_session = true

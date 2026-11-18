@@ -341,6 +341,9 @@ async function main() {
       modelTitles: false,
       // A one-shot run starts on the directory's model and never becomes it (spec 3.9.0).
       remember: false,
+      // With no terminal at all it is a batch job — a cron line, a pipeline — and never runs on an
+      // interactive-only model (harness interactive.md §2).
+      ...(!process.stdin.isTTY && !process.stdout.isTTY && !process.stderr.isTTY ? { automated: true as const } : {}),
     })
     if (values.json) renderJson(app.bus)
     else renderPlain(app.bus, { color: process.stderr.isTTY ?? false, showReasoning: values.reasoning ?? false, icons: app.loaded.config.icons, theme: app.loaded.config.theme })

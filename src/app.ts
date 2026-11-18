@@ -15,7 +15,7 @@ import { loadConfig, type Loaded } from "./config/load.ts"
 import type { Mode } from "./config/schema.ts"
 import { DEFAULT_RULES, toRules } from "./permission/evaluate.ts"
 import { hardlineRules } from "./permission/hardline.ts"
-import { clientFor, familyOf, resolveModel } from "./provider/index.ts"
+import { clientFor, familyOf, resolveModel, ModelError } from "./provider/index.ts"
 import { subagentModel, type ModelInfo } from "./team/subagents.ts"
 import { assembleSystem, instructionFiles, knowledgeScope, modeText } from "./prompt/assemble.ts"
 import type { Changing } from "./session/prefix.ts"
@@ -52,7 +52,12 @@ import { isLevel, levelsFor, readLevel, type Level } from "./provider/effort.ts"
 import { memberTools as memberToolsOf, readingBashByDefault, Team, TEAM, TEAM_TOOLS, type Capacity, type TeamAgent } from "./team/team.ts"
 import { whoDecides } from "./team/delegation.ts"
 import { lastModel, rememberModel, startModel } from "./session/lastmodel.ts"
-import { readRaw } from "./config/settings.ts"
+import { globalConfigFile, readRaw } from "./config/settings.ts"
+import { background, scheduledRefusal, type BackgroundCall, type Listed } from "./provider/interactive.ts"
+
+/** Scheduled or unattended work was about to use an interactive-only model (harness
+ *  interactive.md §2): the message is the spec's sentence. */
+export class InteractiveOnlyError extends ModelError {}
 import { TeamRuntime, type MemberHandle } from "./team/runtime.ts"
 
 export interface AppOptions {
@@ -79,6 +84,9 @@ export interface AppOptions {
   /** false: this session's model is never made its directory's (harness acp.md, *The model last
    *  used in a directory*): a one-shot run, a session a schedule opened. It still starts on it. */
   remember?: false
+  /** Scheduled work, or a one-shot run with nobody at it (harness interactive.md §2): never on an
+   *  interactive-only model — not at the start, by a switch, or in a subagent. */
+  automated?: true
 }
 
 const UNATTENDED: Record<Mode, string | undefined> = {
@@ -119,6 +127,9 @@ export interface App {
   chooseModel(ref: string): void
   /** Stop remembering this session's model for its directory (a schedule's session). */
   forgetful(): void
+  /** Whether what runs now is scheduled work (a schedule's turn) or the person's own. On: the
+   *  spec's sentence when the session's model is interactive-only and so may not run it. */
+  setAutomated(on: boolean): string | undefined
   newSession(): void
   /** Name the open session by hand (a chat renamed in the web UI); no model title follows. */
   rename(title: string): void
@@ -236,6 +247,8 @@ export function createApp(o: AppOptions): App {
   const trust = trustOf(project.root)
   const trusted = trust === "trusted"
   const loaded = loadConfig({ projectConfigDir: project.dir, trusted })
+  // The login's models as the interactive-only rules read them (harness interactive.md).
+  const listed = (): Listed[] => loaded.refs.map((r) => ({ id: r.ref, ...(loaded.connections[r.connection]?.models[r.id]?.interactive_only === true ? { interactive_only: true } : {}) }))
   // Which model it starts on (harness acp.md, spec 3.9.0): the one asked for, the project's
   // setting, the model last used in this directory while the login serves it, the global setting,
   // the server's default.
@@ -245,9 +258,14 @@ export function createApp(o: AppOptions): App {
     project: projectModel,
     directory: o.model || projectModel ? undefined : lastModel(o.cwd),
     global: projectModel ? undefined : loaded.config.model,
-    served: loaded.refs.map((r) => r.ref),
+    // Scheduled work skips an interactive-only directory's model as it skips one no longer served.
+    served: listed().filter((m) => !(o.automated && m.interactive_only)).map((m) => m.id),
   })
   const model = resolveModel(loaded, start.model)
+  let automated = o.automated === true
+  /** Why scheduled work may not use `m`, or undefined: it is interactive-only (interactive.md §2). */
+  const notAutomated = (m: ResolvedModel): string | undefined => (m.spec.interactive_only === true ? scheduledRefusal(m.ref, [{ id: m.ref, interactive_only: true }]) : undefined)
+  if (automated && notAutomated(model)) throw new InteractiveOnlyError(notAutomated(model))
   // An untrusted project is read-only: plan mode, and its own config is ignored.
   let mode: Mode = o.mode ?? loaded.config.mode ?? "manual"
   if (trust === "readonly") mode = "plan"
@@ -512,6 +530,9 @@ export function createApp(o: AppOptions): App {
       if ("refused" in r) throw new ToolError(r.refused)
       m = wanted && wanted.ref === r.model ? wanted : engine.model
     }
+    // A scheduled run's subagents are the same run: none on an interactive-only model.
+    const scheduledNo = automated ? notAutomated(m) : undefined
+    if (scheduledNo) throw new ToolError(scheduledNo)
     // A team's member is not refused for capacity: the team gave it its slot (team.md §8).
     if (!member) {
       const running = registry.running(jobsSessionId()).filter((j) => j.kind === "subagent" && j.subagent && !j.team)
@@ -713,6 +734,7 @@ export function createApp(o: AppOptions): App {
     maxSteps: loaded.config.limits?.steps,
     budget: { wall_seconds: loaded.config.limits?.wall_seconds, output_bytes: loaded.config.limits?.output_bytes, completion_tokens: loaded.config.limits?.completion_tokens },
     compaction,
+    background: (call) => backgroundFor(engine.model, call),
     perm,
     toolCtx: { ...baseToolCtx(), jobs: { registry, owner: baseOwner }, team: { get runtime() { return teamRt }, as: TEAM.names.lead } },
     system: (m, current, plan, ch) => system(m, current, ch, undefined, undefined, plan),
@@ -875,7 +897,12 @@ export function createApp(o: AppOptions): App {
       named = "model"
       const first = firstShown || store.firstPrompt(id)
       const reply = firstReply(engine.messages)
-      const { client } = small()
+      // A title is background work: for an interactive-only model it is asked of the twin or a
+      // default, or not at all — the prompt's line stays (interactive.md §3).
+      const s = small()
+      const where = backgroundFor(s.model, "title")
+      if (where && !("client" in where)) return
+      const client = where?.client ?? s.client
       const signal = AbortSignal.timeout(120_000)
       // Quietly: a title is not worth a warning, and the prompt's line is already there.
       void modelTitle(client, first, reply, signal)
@@ -889,6 +916,23 @@ export function createApp(o: AppOptions): App {
   const turns = new Turns(engine, snapshots, store)
   // By provider for an instance's models (`deepseek/deepseek-flash`), src/provider/refs.ts.
   const modelRefs = () => loaded.refs.map((r) => r.ref)
+  /** Where a background call that would use `m` goes when `m` is interactive-only (harness
+   *  interactive.md §3): its twin, else the global `model` setting, else the server's default —
+   *  or skipped, or refused in words. Undefined: `m` itself, as ever. */
+  function backgroundFor(m: ResolvedModel, call: BackgroundCall): { client: Client; effort: Level; model: ResolvedModel } | { skip: true } | { refused: string } | undefined {
+    if (m.spec.interactive_only !== true) return undefined
+    const canonical = (ref: unknown): string | undefined => {
+      try {
+        return typeof ref === "string" && ref ? resolveModel(loaded, ref).ref : undefined
+      } catch {
+        return undefined
+      }
+    }
+    const r = background({ model: m.ref, models: listed(), defaults: [canonical(readRaw(globalConfigFile()).model), canonical(loaded.connections[m.connectionName]?.webui?.default)], call })
+    if (!("model" in r)) return r
+    const other = resolveModel(loaded, r.model)
+    return { client: clientFor(other), effort: startEffort(other), model: other }
+  }
   // The directory's model (spec 3.9.0): written when a person's turn begins and when the person
   // changes the model — never for a model borrowed for one prompt, a turn the harness started,
   // a one-shot run or a schedule's session.
@@ -900,6 +944,8 @@ export function createApp(o: AppOptions): App {
   bus.on((e) => e.type === "prompt" && !e.machine && remember())
   const switchModel = (ref: string, how?: "borrowed") => {
     const m = resolveModel(loaded, ref)
+    const no = automated ? notAutomated(m) : undefined
+    if (no) throw new InteractiveOnlyError(no)
     borrowed = how === "borrowed"
     engine.setModel(m, clientFor(m), startEffort(m))
   }
@@ -1016,6 +1062,10 @@ export function createApp(o: AppOptions): App {
     },
     forgetful() {
       remembers = false
+    },
+    setAutomated(on) {
+      automated = on
+      return on ? notAutomated(engine.model) : undefined
     },
     settings,
     memory,
