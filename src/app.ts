@@ -595,6 +595,7 @@ export function createApp(o: AppOptions): App {
         return o.asker.plan
       },
     })
+    let compactionSkipSaid = false
     const child = new Engine({
       bus: childBus,
       asker: askerFor(),
@@ -609,6 +610,16 @@ export function createApp(o: AppOptions): App {
       effort: m.ref === engine.model.ref ? engine.effort : startEffort(m),
       maxSteps: loaded.config.limits?.subagent_steps ?? LOOP.jobs.subagent_steps.default,
       compaction,
+      // A subagent's own automatic compaction is background work like the session's
+      // (interactive.md §3): its twin, a default, or skipped — said once, to the session.
+      background: (call) => {
+        const where = backgroundFor(child.model, call)
+        if (where && !("client" in where) && !compactionSkipSaid) {
+          compactionSkipSaid = true
+          bus.emit({ type: "notice", message: `the subagent ${spec.name} is not compacting its conversation: its model is for interactive use only and there is no other model to ask for the summary` })
+        }
+        return where
+      },
       perm: childPerm,
       toolCtx: {
         ...baseToolCtx(),

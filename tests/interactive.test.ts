@@ -132,6 +132,28 @@ test("automatic compaction with a twin is the twin's work", async () => {
   expect(a.engine.model.ref).toBe("plan/coder")
 })
 
+test("a subagent's own automatic compaction goes the same way: the twin's work; with nowhere to go, skipped and said once to the session", async () => {
+  const task = { chunks: [toolCall(0, "t1", "task", JSON.stringify({ agent: "general", description: "look", prompt: "look around" }))] }
+  const step = { chunks: [toolCall(0, "g1", "glob", JSON.stringify({ pattern: "*" }))] }
+  fake = fakeProvider([task, step, reply("The subagent's summary."), reply("Found nothing."), reply("The session's summary."), reply("Done.")])
+  config(fake.url, { window: 2000 })
+  const a = app(project(), { modelTitles: false, mode: "auto" })
+  await a.turns.prompt("have a subagent look")
+  // The session's step, the subagent's first, its summary on the twin, its second, then the
+  // session's own summary on the twin and its reply.
+  expect(asked()).toEqual(["plan/coder", "plan/coder", "payg/coder", "plan/coder", "payg/coder", "plan/coder"])
+  fake.stop()
+
+  fake = fakeProvider([task, step, reply("Found nothing."), reply("Done.")])
+  config(fake.url, { twin: false, other: false, window: 2000 })
+  const b = app(project(), { modelTitles: false, mode: "auto" })
+  const notices: string[] = []
+  b.bus.on((e) => e.type === "notice" && notices.push(e.message))
+  await b.turns.prompt("have a subagent look")
+  expect(asked()).toEqual(["plan/coder", "plan/coder", "plan/coder", "plan/coder"])
+  expect(notices.filter((n) => n.includes("the subagent general is not compacting"))).toHaveLength(1)
+})
+
 // ── scheduled work ──────────────────────────────────────────────────────────────────────────
 
 test("scheduled work never starts on one: asked for, it is refused; remembered for the directory, it is skipped", () => {

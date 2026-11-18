@@ -28,7 +28,9 @@ once (the CLI's commit-message draft).
   is a terminal (a cron job, a pipeline), which is the batch script the terms name.
 - **Background calls**: what a client asks a model on a session's behalf that is not the answer
   to the person's turn — **naming the session** (its title) and **compacting it** (the summary,
-  asked for by the person or by the harness when the window fills).
+  asked for by the person or by the harness when the window fills). A **subagent's own
+  automatic compaction** is one too: the subagent is the person's, the summary of its
+  conversation is not their turn.
 
 ## 2. Scheduled work never runs on one
 
@@ -74,7 +76,9 @@ A call that goes elsewhere is otherwise the same call: the summary is asked for 
 conversation and comes back into the same session, whose model does not change. A model that is
 not interactive-only is asked itself, as before 3.9.0. The model a title is asked of is the
 client's small model where it has one (the CLI's `small_model`), else the session's; the rule is
-applied to whichever it is.
+applied to whichever it is. For a subagent's automatic compaction it is the subagent's model
+that is looked at — its twin, the same defaults, or skipped and said once to the session it
+works for.
 
 ## 4. What is outside this
 

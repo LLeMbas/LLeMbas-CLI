@@ -33,7 +33,8 @@ Harness spec 3.9.0: the model last used in a directory, the two types of schedul
   and its **compaction** (asked for or automatic) are asked of the same model under another
   provider when the server lists one, else of your global `model` or the server's default when
   that is not interactive-only; with none, the title stays the one made from your first prompt,
-  automatic compaction is skipped and said once, and `/compact` is refused with the reason.
+  automatic compaction is skipped and said once, and `/compact` is refused with the reason. A
+  subagent's own automatic compaction goes the same way.
   **Scheduled work never runs on one**: a scheduled session opened on such a model, or a
   scheduled turn of a session that has come to be on one, is refused before anything is sent
   (`data.reason: "interactive_only"`), a scheduled run's subagent on one is not started, and a
