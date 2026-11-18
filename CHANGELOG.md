@@ -6,6 +6,10 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+## [2.0.0-beta.12] — 2026-11-18
+
+Harness spec 3.9.0: the model last used in a directory, Chat and Agentic schedules, models that are for a person's own turns only.
+
 Harness spec 3.9.0: the model last used in a directory, the two types of schedule, a permission rule set right.
 
 ### Added
