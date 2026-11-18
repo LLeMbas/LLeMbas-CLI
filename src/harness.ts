@@ -191,7 +191,7 @@ export const LOOP: {
     sentinel: string
     statuses: string[]
     monitor: { timeout_seconds: { default: number; min: number; max: number }; excerpt_chars: number; output_max_bytes: number }
-    texts: Record<"off" | "plan" | "denied" | "monitor_asks" | "monitor_denied" | "no_reply", string>
+    texts: Record<"off" | "plan" | "denied" | "monitor_asks" | "monitor_denied" | "no_reply" | "terminal", string>
     /** Spec 3.8.0 (reports.md): a schedule's notify-when — its values, the instruction texts,
      *  what report_write answers, the limits of the history line and of a made-up summary. */
     notify: {

@@ -88,7 +88,9 @@ Local mode:
 
 Options for run:
   -m, --model conn/model    model to use (default: the project's \`model\`, else the one last used in
-                            this directory, else config.yaml \`model\`)
+                            this directory, else config.yaml \`model\`). With no terminal at
+                            all (cron, a pipeline) a model for interactive use only is refused:
+                            run it at a terminal (ssh -t), or name another model
       --mode MODE           manual | edit | auto | plan
   -e, --effort LEVEL        ${EFFORTS.join(" | ")} | off | default (one the model offers)
   -y, --yes                 approve every ask (still never the hardline)
@@ -329,22 +331,32 @@ async function main() {
     if (values.mode && !asMode(values.mode)) fail(`--mode must be one of ${MODES.join(", ")}`, 2)
     if (values.effort && !isLevel(values.effort)) fail(`--effort must be one of ${EFFORTS.join(", ")}, off, default`, 2)
 
-    const app = createApp({
+    const { nobodyAtIt, RUN_HINT } = await import("./provider/interactive.ts")
+    const { InteractiveOnlyError } = await import("./app.ts")
+    const options = {
       cwd: process.cwd(),
       model: values.model,
       mode: asMode(values.mode),
       effort: values.effort,
       asker: terminalAsker({ yes: values.yes ?? false, unattended: loadConfig().config.question?.unattended, theme: loadConfig().config.theme }),
       unattended: !values.yes && !process.stdin.isTTY,
-      store: values["no-store"] ? false : undefined,
-      snapshots: false,
-      modelTitles: false,
+      store: values["no-store"] ? (false as const) : undefined,
+      snapshots: false as const,
+      modelTitles: false as const,
       // A one-shot run starts on the directory's model and never becomes it (spec 3.9.0).
-      remember: false,
+      kind: "run" as const,
       // With no terminal at all it is a batch job — a cron line, a pipeline — and never runs on an
       // interactive-only model (harness interactive.md §2).
-      ...(!process.stdin.isTTY && !process.stdout.isTTY && !process.stderr.isTTY ? { automated: true as const } : {}),
-    })
+      ...(nobodyAtIt({ stdin: process.stdin.isTTY, stdout: process.stdout.isTTY, stderr: process.stderr.isTTY }) ? { automated: true as const } : {}),
+    }
+    let app: ReturnType<typeof createApp>
+    try {
+      app = createApp(options)
+    } catch (e) {
+      // The sentence, and the way forward.
+      if (e instanceof InteractiveOnlyError) fail(`${e.message}\n${RUN_HINT}`)
+      throw e
+    }
     if (values.json) renderJson(app.bus)
     else renderPlain(app.bus, { color: process.stderr.isTTY ?? false, showReasoning: values.reasoning ?? false, icons: app.loaded.config.icons, theme: app.loaded.config.theme })
     process.on("SIGINT", () => app.engine.cancel())

@@ -42,8 +42,19 @@ Harness spec 3.9.0: the model last used in a directory, the two types of schedul
   (a cron job, a pipeline) is refused on one too. `/model` says which models are for
   interactive use only.
 
+  A model that cannot take the summary — too small a window, no tools — is not asked; the model
+  that is asked is named in a notice and its tokens are counted under it.
+
 ### Fixed
 
+- **A schedule's run is never run in a terminal as your turn.** A continuing schedule whose
+  session was open and shared in a terminal had its prompt passed to that terminal like one
+  typed in the web UI: on the terminal's model, remembered as the directory's, and without the
+  *Accept scheduled work* check. It is refused now, saying the session is open in a terminal
+  (`data.reason: "terminal"`), and the next run goes ahead once it is closed there.
+- **A continuing schedule's session keeps its model across a restart of the service.** Opened
+  from the store again it started like a new session — on the directory's model — instead of on
+  the model it had. The model is kept with the session.
 - **A continuing schedule's run after the service restarted is offered `report_write` again.**
   How a schedule opened its session was kept in memory only, so a session opened from the store
   again — the service restarted, or the link dialled anew — had lost it: the next run's prompt

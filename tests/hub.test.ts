@@ -2,6 +2,7 @@
 // ACP client on one side of the agent; a terminal's App and its Share are on the other, through a
 // real Unix socket.
 import { afterEach, expect, test } from "bun:test"
+import { LOOP } from "../src/harness.ts"
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -506,4 +507,32 @@ test("a delete waits out another process's write instead of failing as locked", 
   await reader.read()
   expect(store.deleteSession(s.id)).toBe(true)
   await child.exited
+})
+
+test("a schedule's run for a session open in a terminal is refused, never run there as a person's turn", async () => {
+  fake = fakeProvider([{ chunks: [delta({ content: "typed here" })] }])
+  const root = project()
+  config(fake.url, "mode: edit\n")
+  const scheduled = { schedule_id: "sched1", run_id: "run7", title: "Check" }
+  const say = (id: string) => ({ sessionId: id, prompt: [{ type: "text", text: "check" }], _meta: { lembas: { turnId: "run7", scheduled } } })
+  const refusal = (p: Promise<unknown>) => p.then(() => undefined, (e) => ({ message: (e as Error).message, data: (e as { data?: unknown }).data }))
+  const { web, heard } = await linked(limitsFor(root, { enabled: true, scheduled: true }))
+  const { app } = await terminal(root)
+  const id = app.engine.sessionId!
+  await until(() => heard.some((h) => h.method === "_lembas/session/announce"), "the announcement")
+  expect(await refusal(web.request("session/prompt", say(id)))).toEqual({ message: LOOP.scheduled.texts.terminal, data: { reason: "terminal" } })
+  // Nothing was run in the terminal, and nothing was asked of a model.
+  expect(app.engine.messages).toHaveLength(0)
+  expect(fake.requests).toHaveLength(0)
+})
+
+test("…and with scheduled work off on the device, that refusal comes first", async () => {
+  fake = fakeProvider([])
+  const root = project()
+  config(fake.url, "mode: edit\n")
+  const { web, heard } = await linked(limitsFor(root, { enabled: true, scheduled: false }))
+  const { app } = await terminal(root)
+  await until(() => heard.some((h) => h.method === "_lembas/session/announce"), "the announcement")
+  const p = web.request("session/prompt", { sessionId: app.engine.sessionId!, prompt: [{ type: "text", text: "check" }], _meta: { lembas: { turnId: "run7", scheduled: { schedule_id: "sched1", run_id: "run7", title: "Check" } } } })
+  expect(await p.then(() => undefined, (e) => (e as { data?: unknown }).data)).toEqual({ reason: "scheduled_off" })
 })

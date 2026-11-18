@@ -47,7 +47,7 @@ import type { Hub } from "./hub.ts"
 import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
 import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs, teamFindings, teamStop, teamTranscript, teamView, treeOf } from "./jobs.ts"
 import { isNote } from "../session/prefix.ts"
-import { deniedText, finalReply, judgeMonitor, monitorTimeout, notifyOf, permissionFor, refusalText, runMonitor, runOutcome, scheduledMode, type Report, type ScheduledTurn } from "./scheduled.ts"
+import { deniedText, finalReply, judgeMonitor, monitorTimeout, notifyOf, permissionFor, refusalText, runMonitor, runOutcome, SCHEDULED, scheduledMode, type Report, type ScheduledTurn } from "./scheduled.ts"
 
 export const ACP_VERSION = 1
 /** The link's version (LLeMbas `services/device_link.py:PROTOCOL`, harness/acp.md *Versions*). 3:
@@ -642,7 +642,7 @@ export class AcpAgent {
     const effort = effortOf(p?._meta?.effort)
     try {
       // A schedule's session uses the directory's model and never becomes it (spec 3.9.0).
-      session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}), ...(scheduled ? { remember: false as const, automated: true as const } : {}) })
+      session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}), kind: scheduled ? "scheduled" : this.lembas ? "link" : "stdio", ...(scheduled ? { automated: true as const } : {}) })
     } catch (e) {
       // Scheduled work never runs on an interactive-only model (interactive.md §2): the sentence, and why.
       throw new RpcError(INVALID_PARAMS, (e as Error).message, e instanceof InteractiveOnlyError ? { reason: INTERACTIVE_REASON } : undefined)
@@ -666,6 +666,8 @@ export class AcpAgent {
         // of the service — it is still a schedule's, with the tools it was opened with.
         session.app.store?.setMeta(id, SCHEDULED_META, scheduled)
       } catch {}
+      // …and the model it is on, kept from here on.
+      session.app.forgetful()
     }
     // The client's chat: its memory calls land in that chat's data group (acp.md *Memory*).
     session.app.setScope(id)
@@ -771,7 +773,8 @@ export class AcpAgent {
     if (refused) throw new RpcError(INVALID_PARAMS, refused)
     const L = this.limits
     const session: Session = { id, cwd: dir, prompting: false, app: undefined as unknown as App, turns: turnLog(id) }
-    session.app = createApp({ cwd: dir, ...(L ? { mode: L.maxMode } : {}), asker: this.asker(session), modelTitles: false, resuming: id })
+    // `resume` reads what kind of session it is: a schedule's comes back as one, on its own model.
+    session.app = createApp({ cwd: dir, ...(L ? { mode: L.maxMode } : {}), asker: this.asker(session), modelTitles: false, resuming: id, kind: "link" })
     session.app.resume(id)
     markRemote(session.app.store, id)
     // A schedule's session stays one: nothing in it becomes its directory's model, and its list
@@ -780,7 +783,6 @@ export class AcpAgent {
     // after a restart of the service was not offered the tool its prompt told it to call.
     try {
       const kept = session.app.store?.meta<ScheduledTurn | true>(id, SCHEDULED_META)
-      if (kept) session.app.forgetful()
       if (kept && typeof kept === "object") session.opened = kept
     } catch {}
     session.app.setScope(id)
@@ -1061,6 +1063,13 @@ export class AcpAgent {
   private async prompt(p: any): Promise<PromptResult> {
     const turnId = turnIdOf(p)
     const t = this.terminalFor(p)
+    // A scheduled prompt is judged before anything else, and never becomes a person's turn: a
+    // session open in a terminal runs what is typed there, on the terminal's model and under its
+    // rules — so a schedule's run is refused while its session is open in one (acp.md, *Refused*).
+    if (t && p?._meta?.lembas?.scheduled !== undefined && p._meta.lembas.scheduled !== null) {
+      this.judgeScheduled(p._meta.lembas.scheduled)
+      throw new RpcError(INVALID_PARAMS, SCHEDULED.texts.terminal, { reason: "terminal" })
+    }
     if (t) {
       const L = this.limits
       if (L && !t.explicit && MODE_RANK[t.mode] < MODE_RANK[L.maxMode])
@@ -1084,18 +1093,25 @@ export class AcpAgent {
     const run = async (started: () => void): Promise<PromptResult> => {
       s.prompting = true
       // The turn that runs now says whether the session is a scheduled run's (it may wait behind another).
-      if (scheduled) (s.scheduled = scheduled), s.app.forgetful()
-      else delete s.scheduled
       // The turn that runs now is the schedule's, or the person's own in the run's chat: scheduled
-      // work never uses an interactive-only model — refused before anything is sent to it.
+      // work never uses an interactive-only model — refused before anything is sent to it, and
+      // before anything about the session is changed.
       const interactiveOnly = s.app.setAutomated(scheduled !== undefined)
       if (interactiveOnly) {
+        s.app.setAutomated(false)
         s.prompting = false
+        delete s.scheduled
         throw new RpcError(INVALID_PARAMS, interactiveOnly, { reason: INTERACTIVE_REASON })
       }
+      if (scheduled) (s.scheduled = scheduled), s.app.forgetful()
+      else delete s.scheduled
       started()
       try {
         return await this.runPrepared(s, prepared, turnId)
+      } catch (e) {
+        // A command's own model that scheduled work may not use: the same refusal, with its reason.
+        if (e instanceof InteractiveOnlyError) throw new RpcError(INVALID_PARAMS, e.message, { reason: INTERACTIVE_REASON })
+        throw e
       } finally {
         s.prompting = false
         // What comes next is the person's until a prompt says otherwise.
@@ -1157,10 +1173,7 @@ export class AcpAgent {
       // A command's model and mode hold for its prompt only — unless the turn itself changed the
       // mode (a plan approved), which then stays.
       // The model back, and the effort the person had on it — not the model's default.
-      if (prepared.model && app.engine.model.ref !== prev.model) {
-        app.switchModel(prev.model)
-        app.engine.effort = prev.effort
-      }
+      if (prepared.model) app.returnModel(prev)
       if (prepared.mode && app.engine.mode === (this.limits ? clampMode(prepared.mode, this.limits.maxMode) : prepared.mode)) app.engine.mode = prev.mode
     }
   }
@@ -1206,10 +1219,7 @@ export class AcpAgent {
       return { stopReason: STOP[reason] ?? "end_turn", _meta: { lembas: meta(unsent.length ? { unsent } : {}, reason, finalReply(app.engine.messages), error) } }
     } finally {
       off()
-      if (prepared.model && app.engine.model.ref !== prev.model) {
-        app.switchModel(prev.model)
-        app.engine.effort = prev.effort
-      }
+      if (prepared.model) app.returnModel(prev)
       app.engine.mode = turn.mode
     }
   }

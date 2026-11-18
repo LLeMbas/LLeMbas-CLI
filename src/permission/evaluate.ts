@@ -104,7 +104,8 @@ function lookupRule(permission: string, pattern: string, rules: Rule[]): Rule | 
   // A narrower rule that a later one narrows again is set aside (spec 3.9.0): `read *.env.*: ask`
   // gives way to `read *.env.example: allow` written after it, as it does without the candidate.
   const narrower = rules.filter((r) => r !== hit && !r.learned && matches(r) && narrowerThan(r, hit))
-  const floors: Rule[] = narrower.filter((r, i) => !narrower.slice(i + 1).some((later) => narrowerThan(later, r)))
+  // …or writes again: the same permission and pattern, later, is the rule as it stands now.
+  const floors: Rule[] = narrower.filter((r, i) => !narrower.slice(i + 1).some((later) => narrowerThan(later, r) || (later.permission === r.permission && later.pattern === r.pattern)))
   const own = rules.findLast((r) => r.source === "global" && !r.learned && matches(r))
   if (own) floors.push(own)
   if (hit.learned) {

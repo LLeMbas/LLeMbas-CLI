@@ -10,7 +10,8 @@ import { Peer, type Transport } from "../src/acp/rpc.ts"
 import { createApp } from "../src/app.ts"
 import { paths, setLocalRoot } from "../src/config/paths.ts"
 import { setTrust } from "../src/project/root.ts"
-import { directoryKey, lastModel, lastModelFile, MAX_DIRECTORIES, rememberModel } from "../src/session/lastmodel.ts"
+import { directoryKey, lastModel, lastModelFile, MAX_DIRECTORIES, pruneGone, REFRESH_MS, rememberModel } from "../src/session/lastmodel.ts"
+import { SCHEDULED_META } from "../src/session/store.ts"
 import { plan } from "../src/uninstall.ts"
 import { delta, fakeProvider, type Fake } from "./fake-provider.ts"
 
@@ -74,7 +75,7 @@ test("the file is this machine's: in the state directory, private, and nowhere i
   expect(existsSync(join(root, ".agent"))).toBe(false)
 })
 
-test("a directory that is gone is dropped at the next write, and the oldest beyond the cap", () => {
+test("a write looks at no directory; the gone ones are dropped apart from it, and what cannot be looked at is kept", async () => {
   const root = project()
   const gone = join(root, "gone")
   mkdirSync(gone)
@@ -83,14 +84,31 @@ test("a directory that is gone is dropped at the next write, and the oldest beyo
   const dirs = Array.from({ length: 3 }, (_, i) => join(root, `d${i}`))
   for (const d of dirs) mkdirSync(d)
   dirs.forEach((d, i) => rememberModel(d, "f/m", 10 + i))
-  const kept = Object.keys(JSON.parse(readFileSync(lastModelFile(), "utf8")).directories)
-  expect(kept.sort()).toEqual(dirs)
+  const kept = () => Object.keys(JSON.parse(readFileSync(lastModelFile(), "utf8")).directories).sort()
+  // The gone one is still there after three writes: writing stats nothing.
+  expect(kept()).toEqual([...dirs, gone].sort())
+  expect(await pruneGone(100)).toEqual([gone])
+  expect(kept()).toEqual(dirs)
+  expect(JSON.parse(readFileSync(lastModelFile(), "utf8")).pruned).toBe(100)
   expect(MAX_DIRECTORIES).toBe(500)
   // A broken file is no memory, and is written over.
   writeFileSync(lastModelFile(), "{ not json")
   expect(lastModel(dirs[0]!)).toBeUndefined()
   rememberModel(dirs[0]!, "f/big")
   expect(lastModel(dirs[0]!)).toBe("f/big")
+})
+
+test("a directory's time is refreshed as it is used, within the hour not rewritten: the ones used longest ago are the ones that go", () => {
+  const root = project()
+  const at = () => JSON.parse(readFileSync(lastModelFile(), "utf8")).directories[root].at
+  rememberModel(root, "f/big", 1000)
+  rememberModel(root, "f/big", 1000 + REFRESH_MS - 1)
+  expect(at()).toBe(1000)
+  rememberModel(root, "f/big", 1000 + REFRESH_MS)
+  expect(at()).toBe(1000 + REFRESH_MS)
+  // Another model is written at once.
+  rememberModel(root, "f/small", 1000 + REFRESH_MS + 5)
+  expect(at()).toBe(1000 + REFRESH_MS + 5)
 })
 
 test("local mode keeps it in the local root; uninstall --purge takes it with the state, a plain one keeps it", () => {
@@ -177,11 +195,57 @@ test("a session that does not remember — a one-shot run — starts on the dire
   config(fake.url)
   const root = project()
   rememberModel(root, "f/big")
-  const a = app(root, { model: "f/small", remember: false })
+  const a = app(root, { model: "f/small", kind: "run" })
   await a.turns.prompt("hello")
   a.settings.set("model", "f/m")
   expect(lastModel(root)).toBe("f/big")
-  expect(app(root, { remember: false }).engine.model.ref).toBe("f/big")
+  expect(app(root, { kind: "run" }).engine.model.ref).toBe("f/big")
+})
+
+test("a command whose model is the session's own leaves nothing borrowed: the next prompt is remembered", async () => {
+  fake = fakeProvider([reply(), reply()])
+  config(fake.url)
+  const root = project()
+  const a = app(root, { model: "f/big" })
+  const prev = { model: a.engine.model.ref, effort: a.engine.effort }
+  a.switchModel("f/big", "borrowed")
+  await a.turns.prompt("a command's prompt")
+  expect(lastModel(root)).toBeUndefined()
+  a.returnModel(prev)
+  await a.turns.prompt("hello")
+  expect(lastModel(root)).toBe("f/big")
+})
+
+test("a change of model inside a turn the harness started is not remembered", async () => {
+  fake = fakeProvider([reply()])
+  config(fake.url)
+  const root = project()
+  const a = app(root)
+  const off = a.bus.on((e) => {
+    // What a model's settings call would do, mid-turn.
+    if (e.type === "prompt") a.settings.set("model", "f/big")
+  })
+  await a.turns.prompt("[job j1 finished]", [], "[job j1 finished]", { machine: true })
+  off()
+  expect(a.engine.model.ref).toBe("f/big")
+  expect(lastModel(root)).toBeUndefined()
+})
+
+test("a schedule's session opened in a terminal is still the schedule's: nothing in it is remembered, and a new session after it is the terminal's again", async () => {
+  fake = fakeProvider([reply(), reply()])
+  config(fake.url)
+  const root = project()
+  const a = app(root, { model: "f/big" })
+  const first = a.engine.sessionId!
+  a.newSession()
+  a.store!.setMeta(first, SCHEDULED_META, { scheduleId: "sched1", runId: "run7", title: "Check", mode: "edit", waitMs: 1000 })
+  a.resume(first)
+  await a.turns.prompt("what did the run find?")
+  a.settings.set("model", "f/small")
+  expect(lastModel(root)).toBeUndefined()
+  a.newSession()
+  await a.turns.prompt("hello")
+  expect(lastModel(root)).toBe("f/small")
 })
 
 // ── the link ────────────────────────────────────────────────────────────────────────────────
@@ -293,6 +357,8 @@ test("a scheduled run uses the directory's model and never becomes it — not it
   const again = await client(limitsFor(root))
   await again.c.request("session/prompt", say(s.sessionId, "and now?"))
   expect(lastModel(root)).toBe("f/big")
+  // …on the model it had (changed to f/m above), not on the directory's: kept with the session.
+  expect(fake.requests.map((r) => r.model)).toEqual(["f/small", "f/m", "f/m"])
   // A schedule that names no model: the session starts on the directory's.
   const follows: any = await c.request("session/new", { cwd: root, _meta: { lembas: { scheduled: { ...scheduled, run_id: "run8" } } } })
   expect(follows._meta.lembas.model).toBe("f/big")

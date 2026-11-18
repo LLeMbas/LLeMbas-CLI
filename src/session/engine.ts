@@ -73,7 +73,7 @@ export interface EngineOptions {
   /** Where a compaction's summary is asked for when it may not be asked of the session's model
    *  (harness interactive.md §3): another model's client, skip it, or the refusal's words.
    *  Undefined, or absent: the session's own model, as ever. */
-  background?: (call: "compaction" | "auto_compaction") => { client: Client; effort: Level } | { skip: true } | { refused: string } | undefined
+  background?: (call: "compaction" | "auto_compaction", needed?: number) => { client: Client; effort: Level; model: ResolvedModel } | { skip: true } | { refused: string } | undefined
   /** Starts a subagent for the task tool; absent in a subagent. */
   spawn?: ToolContext["spawn"]
   /** What a message sent mid-turn starts with: the user's words for a session, the main agent's for
@@ -378,11 +378,12 @@ export class Engine {
   }
 
   /** A request's usage, kept with the session (cached input tokens included, §10 rule 6). */
-  private recordUsage(usage: Usage, kind: "step" | "compaction") {
+  private recordUsage(usage: Usage, kind: "step" | "compaction", model = this.model.ref) {
     this.lastRequest = { usage, kind }
     if (this.o.store && this.sessionId)
       try {
-        this.o.store.request(this.sessionId, { model: this.model.ref, kind, ...usage })
+        // Under the model that was asked: a summary asked of another model is that model's use.
+        this.o.store.request(this.sessionId, { model, kind, ...usage })
       } catch {}
   }
 
@@ -563,17 +564,19 @@ export class Engine {
   private async summarise(signal: AbortSignal, call: "compaction" | "auto_compaction"): Promise<string> {
     // An interactive-only model is not asked for background work: the summary is another model's,
     // of the same conversation, and comes back into this session (interactive.md §3).
-    const elsewhere = this.o.background?.(call)
+    const elsewhere = this.o.background?.(call, this.contextUsed())
     if (elsewhere && "refused" in elsewhere) throw new Error(elsewhere.refused)
     if (elsewhere && "skip" in elsewhere) throw new Error("skipped")
     const client = elsewhere?.client ?? this.client
     const effort = elsewhere?.effort ?? this.effort
+    // Said, with the model that is asked: its use is counted under that model, not the session's.
+    if (elsewhere) this.o.bus.emit({ type: "notice", level: "info", message: `the summary is asked of ${elsewhere.model.ref}: ${this.model.ref} is for interactive use only, and compacting is background work` })
     // No previous summary in the ask: an earlier one is already the conversation's first message.
     const ask: Message = { role: "user", parts: [{ type: "text", text: compactAsk() }] }
     let summary = ""
     for await (const ev of client.stream({ system: this.systemPrompt(), messages: mergeUsers([...this.messages, ask]), tools: this.toolSpecs(), effort, signal })) {
       if (ev.type === "finish") summary = summaryOf(ev.message.parts)
-      else if (ev.type === "usage") this.recordUsage(ev.usage, "compaction")
+      else if (ev.type === "usage") this.recordUsage(ev.usage, "compaction", elsewhere?.model.ref)
     }
     if (!summary) throw new Error("the model returned an empty summary")
     // The harness's own table of the reads still in the conversation (context.md §7), after the
@@ -644,7 +647,8 @@ export class Engine {
     }
     // Nowhere to ask for the summary (an interactive-only model with no twin and no usable
     // default): skipped, said once, and the turn goes on (interactive.md §3).
-    const where = this.o.background?.("auto_compaction")
+    // A skipped attempt is not an attempt: it does not count toward "compacted twice".
+    const where = this.o.background?.("auto_compaction", used)
     if (where && !("client" in where)) {
       if (!this.autoSkipSaid) this.o.bus.emit({ type: "notice", message: `context at ${Math.round((used / window) * 100)}% of ${window}, and not compacted: this session's model is for interactive use only and there is no other model to ask for the summary — switch model (/model), or start a new session` })
       this.autoSkipSaid = true

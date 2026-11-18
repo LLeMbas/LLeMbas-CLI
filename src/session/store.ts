@@ -73,6 +73,9 @@ export const REMOTE_META = "remote"
  *  was opened (its notify-when among it). Kept so that, opened from the store again, it still
  *  never becomes its directory's model and is still offered report_write. */
 export const SCHEDULED_META = "scheduled"
+/** Meta: the model a schedule's session is on, kept so that a continuing schedule's session
+ *  opened from the store again is on its own model — not on whatever a new session would start on. */
+export const SCHEDULED_MODEL_META = "scheduled_model"
 
 /** The session_meta key holding the directory a session was started in: a session started
  *  in a subdirectory of its project is reopened there, not at the project's root. */

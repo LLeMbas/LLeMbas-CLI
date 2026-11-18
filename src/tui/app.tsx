@@ -523,10 +523,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
       return "error"
     } finally {
       // The effort as it was too: switching back would set the model's default.
-      if (opts.model) {
-        app.switchModel(prev.model)
-        app.engine.effort = prev.effort
-      }
+      if (opts.model) app.returnModel(prev)
       app.engine.mode = prev.mode
       refresh()
     }

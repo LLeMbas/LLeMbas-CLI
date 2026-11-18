@@ -11,6 +11,7 @@ import { Peer, type Transport } from "../src/acp/rpc.ts"
 import { createApp, InteractiveOnlyError } from "../src/app.ts"
 import { paths } from "../src/config/paths.ts"
 import { LOOP } from "../src/harness.ts"
+import { nobodyAtIt, RUN_HINT } from "../src/provider/interactive.ts"
 import { specFor } from "../src/lembas/webui.ts"
 import { setTrust } from "../src/project/root.ts"
 import { rememberModel, lastModelFile } from "../src/session/lastmodel.ts"
@@ -25,9 +26,9 @@ afterEach(async () => {
 })
 
 /** A plan's model, its pay-as-you-go twin, and one more — or without the twin. */
-function config(url: string, o: { model?: string; twin?: boolean; other?: boolean; extra?: string; window?: number } = {}) {
+function config(url: string, o: { model?: string; twin?: boolean; other?: boolean; extra?: string; window?: number; twinWindow?: number; otherTools?: boolean } = {}) {
   mkdirSync(paths.config, { recursive: true })
-  const models = [`plan/coder: { interactive_only: true${o.window ? `, context: ${o.window}` : ""} }`, "plan/max: { interactive_only: true }", ...(o.twin === false ? [] : ["payg/coder: {}"]), ...(o.other === false ? [] : ["open/flash: {}"])]
+  const models = [`plan/coder: { interactive_only: true${o.window ? `, context: ${o.window}` : ""} }`, "plan/max: { interactive_only: true }", ...(o.twin === false ? [] : [`payg/coder: {${o.twinWindow ? ` context: ${o.twinWindow} ` : ""}}`]), ...(o.other === false ? [] : [`open/flash: {${o.otherTools === false ? " tools: false " : ""}}`])]
   writeFileSync(join(paths.config, "connections.yaml"), `connections:\n  f:\n    type: webui\n    url: ${url}\n    models:\n${models.map((m) => `      ${m}`).join("\n")}\n`, { mode: 0o600 })
   writeFileSync(join(paths.config, "config.yaml"), `model: ${o.model ?? "plan/coder"}\n${o.extra ?? ""}`)
 }
@@ -59,9 +60,12 @@ test("a person's turn runs on the interactive-only model; its title is asked of 
   fake = fakeProvider([reply("Hello."), reply("A greeting")])
   config(fake.url)
   const a = app(project())
+  const notices: string[] = []
+  a.bus.on((e) => e.type === "notice" && notices.push(e.message))
   await a.turns.prompt("hello there")
   for (let i = 0; i < 100 && fake.requests.length < 2; i++) await Bun.sleep(10)
   expect(asked()).toEqual(["plan/coder", "payg/coder"])
+  expect(notices.filter((n) => n.includes("title is asked of payg/coder"))).toHaveLength(1)
 })
 
 test("no twin: the title goes to the default that is not interactive-only; with none, it is not asked for at all", async () => {
@@ -90,8 +94,13 @@ test("compaction the person asks for is the twin's work, and the session stays o
   config(fake.url)
   const a = app(project(), { modelTitles: false })
   await a.turns.prompt("hello there")
+  const notices: string[] = []
+  a.bus.on((e) => e.type === "notice" && notices.push(e.message))
   expect(await a.engine.compact()).toContain("We said hello.")
   expect(a.engine.model.ref).toBe("plan/coder")
+  // The model that was asked is named, and its tokens are counted under it.
+  expect(notices.filter((n) => n.includes("the summary is asked of payg/coder"))).toHaveLength(1)
+  expect(a.store!.requests(a.engine.sessionId!).map((r) => `${r.kind} ${r.model}`)).toEqual(["step plan/coder", "compaction payg/coder"])
   await a.turns.prompt("and now?")
   expect(asked()).toEqual(["plan/coder", "payg/coder", "plan/coder"])
 })
@@ -153,6 +162,61 @@ test("a subagent's own automatic compaction goes the same way: the twin's work; 
   expect(asked()).toEqual(["plan/coder", "plan/coder", "plan/coder", "plan/coder"])
   expect(notices.filter((n) => n.includes("the subagent general is not compacting"))).toHaveLength(1)
 })
+
+test("a model that cannot take the summary is nowhere to go: a twin with too small a window and a default without tools", async () => {
+  fake = fakeProvider([reply("Hello.")])
+  // The twin's window is far below the conversation; the default takes no tools.
+  config(fake.url, { twinWindow: 50, otherTools: false })
+  const a = app(project(), { modelTitles: false })
+  await a.turns.prompt("hello there")
+  await expect(a.engine.compact()).rejects.toThrow(LOOP.interactive.texts.compact)
+  expect(asked()).toEqual(["plan/coder"])
+})
+
+test("what a schedule's session does when no person's turn runs is the schedule's: a subagent, a turn a job wakes", async () => {
+  fake = fakeProvider([])
+  config(fake.url, { model: "open/flash" })
+  const a = app(project(), { kind: "scheduled", modelTitles: false })
+  // Between turns the session's model is changed to the plan's (as a person may in the run's chat).
+  a.chooseModel("plan/coder")
+  const notices: string[] = []
+  a.bus.on((e) => e.type === "notice" && notices.push(e.message))
+  // A subagent started with no turn running — one of the run's jobs carrying on — is the run's.
+  await expect(a.engine.o.spawn!("general", "look around", { description: "look", background: true } as never)).rejects.toThrow(SENTENCE("plan/coder"))
+  // A turn a job's note would wake is not started on it.
+  a.wake("[job j1 finished]", "[job j1 finished]")
+  await Bun.sleep(50)
+  expect(fake.requests).toHaveLength(0)
+  expect(notices.filter((n) => n.includes(SENTENCE("plan/coder")))).toHaveLength(1)
+})
+
+test("a one-shot run with no terminal at all is scheduled work; any terminal makes it a person's", () => {
+  expect(nobodyAtIt({ stdin: false, stdout: false, stderr: false })).toBe(true)
+  expect(nobodyAtIt({})).toBe(true)
+  // A prompt piped in at a terminal, output redirected: stderr is still the terminal.
+  expect(nobodyAtIt({ stdin: false, stdout: false, stderr: true })).toBe(false)
+  expect(nobodyAtIt({ stdin: true, stdout: false, stderr: false })).toBe(false)
+})
+
+test("lembas run with no terminal refuses an interactive-only model, and says the way forward", async () => {
+  fake = fakeProvider([reply("Hi.")])
+  config(fake.url)
+  const dir = project()
+  const run = async (...args: string[]) => {
+    const p = Bun.spawn(["bun", join(import.meta.dir, "../src/cli.ts"), "run", "--no-store", ...args, "hello"], { cwd: dir, env: { ...process.env }, stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+    return { out, err, code }
+  }
+  const no = await run()
+  expect(no.code).toBe(1)
+  expect(no.err).toContain(SENTENCE("plan/coder"))
+  expect(no.err).toContain(RUN_HINT)
+  expect(fake.requests).toHaveLength(0)
+  // The way forward it names works.
+  const yes = await run("-m", "open/flash")
+  expect(yes.code).toBe(0)
+  expect(yes.out).toBe("Hi.\n")
+}, 60_000)
 
 // ── scheduled work ──────────────────────────────────────────────────────────────────────────
 
@@ -247,4 +311,21 @@ test("a scheduled run's subagent is not started on one: the call answers the sen
   expect(asked()).toEqual(["open/flash", "open/flash"])
   const result = JSON.stringify(fake.requests[1].messages.at(-1))
   expect(result).toContain("for interactive use only")
+})
+
+test("a command's own model in a scheduled prompt, when it is interactive-only: the same refusal with its reason, and the session is as it was", async () => {
+  fake = fakeProvider([reply("It was fine.")])
+  config(fake.url, { model: "open/flash" })
+  const root = project()
+  mkdirSync(join(root, ".agent", "commands"), { recursive: true })
+  writeFileSync(join(root, ".agent", "config.yaml"), "")
+  writeFileSync(join(root, ".agent", "commands", "quick.md"), "---\nmodel: plan/coder\n---\nQuick.")
+  const c = await client(limitsFor(root))
+  const s: any = await c.request("session/new", { cwd: root, _meta: { lembas_model: "open/flash", lembas: { scheduled } } })
+  const no = await refusal(c.request("session/prompt", say(s.sessionId, "/quick", { scheduled, turnId: "run7" })))
+  expect(no).toEqual({ message: SENTENCE("plan/coder"), data: { reason: "interactive_only" } })
+  expect(fake.requests).toHaveLength(0)
+  // The person's own turn afterwards runs, on the session's model.
+  await c.request("session/prompt", say(s.sessionId, "what happened?"))
+  expect(asked()).toEqual(["open/flash"])
 })

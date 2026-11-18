@@ -68,7 +68,7 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
   interactive: (c) => {
     const models = c.models as Listed[]
     if (c.kind === "twin") return twin(c.model as string, models) ?? null
-    if (c.kind === "background") return background({ model: c.model as string, models, defaults: c.defaults as string[], call: c.call as BackgroundCall })
+    if (c.kind === "background") return background({ model: c.model as string, models, defaults: c.defaults as string[], call: c.call as BackgroundCall, unfit: c.unfit as string[] | undefined })
     if (c.kind === "scheduled") {
       const refused = scheduledRefusal(c.model as string, models)
       return refused ? { refused } : { run: true }

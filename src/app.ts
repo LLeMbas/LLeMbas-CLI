@@ -30,7 +30,7 @@ import type { Client, ResolvedModel } from "./provider/types.ts"
 import { modelTitle, firstReply, promptTitle } from "./session/title.ts"
 import { Turns } from "./session/turns.ts"
 import { Snapshots } from "./git/snapshot.ts"
-import { CWD_META, REMOTE_META, Store } from "./session/store.ts"
+import { CWD_META, REMOTE_META, SCHEDULED_META, SCHEDULED_MODEL_META, Store } from "./session/store.ts"
 import { BUILTIN_TOOLS } from "./tool/registry.ts"
 import { DEFAULT_LIMITS, MemoryStore } from "./memory/store.ts"
 import { loadSkills, skillLines, type Skill } from "./skill/index.ts"
@@ -51,14 +51,14 @@ import { embedderFor } from "./library/embed.ts"
 import { isLevel, levelsFor, readLevel, type Level } from "./provider/effort.ts"
 import { memberTools as memberToolsOf, readingBashByDefault, Team, TEAM, TEAM_TOOLS, type Capacity, type TeamAgent } from "./team/team.ts"
 import { whoDecides } from "./team/delegation.ts"
-import { lastModel, rememberModel, startModel } from "./session/lastmodel.ts"
+import { lastModel, records, rememberModel, startModel, type SessionKind } from "./session/lastmodel.ts"
 import { globalConfigFile, readRaw } from "./config/settings.ts"
 import { background, scheduledRefusal, type BackgroundCall, type Listed } from "./provider/interactive.ts"
+import { TeamRuntime, type MemberHandle } from "./team/runtime.ts"
 
 /** Scheduled or unattended work was about to use an interactive-only model (harness
  *  interactive.md §2): the message is the spec's sentence. */
 export class InteractiveOnlyError extends ModelError {}
-import { TeamRuntime, type MemberHandle } from "./team/runtime.ts"
 
 export interface AppOptions {
   cwd: string
@@ -81,9 +81,11 @@ export interface AppOptions {
    *  made first. Without it every reopening — the service opening a web chat's session from the
    *  store — left an empty, untitled session behind in the project, listed by /sessions as its id. */
   resuming?: string
-  /** false: this session's model is never made its directory's (harness acp.md, *The model last
-   *  used in a directory*): a one-shot run, a session a schedule opened. It still starts on it. */
-  remember?: false
+  /** What kind of session it is, for the directory's model (harness acp.md, *The model last used
+   *  in a directory*; `records` in session/lastmodel.ts): a terminal's (the default), one on the
+   *  link, an editor's, a one-shot run, or one a schedule opened — the last two never make their
+   *  model the directory's, though they start on it. */
+  kind?: SessionKind
   /** Scheduled work, or a one-shot run with nobody at it (harness interactive.md §2): never on an
    *  interactive-only model — not at the start, by a switch, or in a subagent. */
   automated?: true
@@ -120,12 +122,16 @@ export interface App {
   /** A ref in any form it may be written in (the old `<login>/<model>` too) as the ref the
    *  model has now; the ref itself when it names nothing. */
   canonicalRef(ref: string): string
-  /** `borrowed`: for one prompt only (a command's own model) — not the directory's model. */
+  /** `borrowed`: for one prompt only (a command's own model) — not the directory's model; given
+   *  back with `returnModel`. */
   switchModel(ref: string, how?: "borrowed"): void
+  /** After a prompt on a borrowed model: the model and the effort the session had, and nothing
+   *  borrowed any more — also when the command's model was the session's own. */
+  returnModel(prev: { model: string; effort: Level }): void
   /** The person changed the session's model (`_lembas/configure`, a terminal's shared session):
    *  switched, and remembered for the directory. */
   chooseModel(ref: string): void
-  /** Stop remembering this session's model for its directory (a schedule's session). */
+  /** This session is a schedule's from now on: nothing in it becomes its directory's model. */
   forgetful(): void
   /** Whether what runs now is scheduled work (a schedule's turn) or the person's own. On: the
    *  spec's sentence when the session's model is interactive-only and so may not run it. */
@@ -493,6 +499,9 @@ export function createApp(o: AppOptions): App {
   const jobsSessionId = () => engine.sessionId ?? standIn
   const wake = (text: string, shown: string) => {
     if (turns.current || engine.busy) return engine.note(text)
+    // A turn a schedule's job wakes is the schedule's: not run on an interactive-only model.
+    const no = kind === "scheduled" ? notAutomated(engine.model) : undefined
+    if (no) return void bus.emit({ type: "notice", level: "warn", message: `a job's note did not start a turn: ${no}` })
     void turns.prompt(text, [], shown, { machine: true }).catch((e) => bus.emit({ type: "notice", level: "warn", message: `a job's note could not start a turn: ${(e as Error).message}` }))
   }
   const detach = registry.attach({ sessionId: jobsSessionId, bus, wake, store, runningMax: () => loaded.config.limits?.jobs ?? registry.limits.runningMax })
@@ -531,7 +540,7 @@ export function createApp(o: AppOptions): App {
       m = wanted && wanted.ref === r.model ? wanted : engine.model
     }
     // A scheduled run's subagents are the same run: none on an interactive-only model.
-    const scheduledNo = automated ? notAutomated(m) : undefined
+    const scheduledNo = scheduledNow() ? notAutomated(m) : undefined
     if (scheduledNo) throw new ToolError(scheduledNo)
     // A team's member is not refused for capacity: the team gave it its slot (team.md §8).
     if (!member) {
@@ -612,8 +621,8 @@ export function createApp(o: AppOptions): App {
       compaction,
       // A subagent's own automatic compaction is background work like the session's
       // (interactive.md §3): its twin, a default, or skipped — said once, to the session.
-      background: (call) => {
-        const where = backgroundFor(child.model, call)
+      background: (call, needed) => {
+        const where = backgroundFor(child.model, call, needed)
         if (where && !("client" in where) && !compactionSkipSaid) {
           compactionSkipSaid = true
           bus.emit({ type: "notice", message: `the subagent ${spec.name} is not compacting its conversation: its model is for interactive use only and there is no other model to ask for the summary` })
@@ -745,7 +754,7 @@ export function createApp(o: AppOptions): App {
     maxSteps: loaded.config.limits?.steps,
     budget: { wall_seconds: loaded.config.limits?.wall_seconds, output_bytes: loaded.config.limits?.output_bytes, completion_tokens: loaded.config.limits?.completion_tokens },
     compaction,
-    background: (call) => backgroundFor(engine.model, call),
+    background: (call, needed) => backgroundFor(engine.model, call, needed),
     perm,
     toolCtx: { ...baseToolCtx(), jobs: { registry, owner: baseOwner }, team: { get runtime() { return teamRt }, as: TEAM.names.lead } },
     system: (m, current, plan, ch) => system(m, current, ch, undefined, undefined, plan),
@@ -914,6 +923,8 @@ export function createApp(o: AppOptions): App {
       const where = backgroundFor(s.model, "title")
       if (where && !("client" in where)) return
       const client = where?.client ?? s.client
+      // Said once (a session is named once), with the model that is asked.
+      if (where) bus.emit({ type: "notice", level: "info", message: `the session's title is asked of ${where.model.ref}: ${s.model.ref} is for interactive use only, and naming a session is background work` })
       const signal = AbortSignal.timeout(120_000)
       // Quietly: a title is not worth a warning, and the prompt's line is already there.
       void modelTitle(client, first, reply, signal)
@@ -930,7 +941,7 @@ export function createApp(o: AppOptions): App {
   /** Where a background call that would use `m` goes when `m` is interactive-only (harness
    *  interactive.md §3): its twin, else the global `model` setting, else the server's default —
    *  or skipped, or refused in words. Undefined: `m` itself, as ever. */
-  function backgroundFor(m: ResolvedModel, call: BackgroundCall): { client: Client; effort: Level; model: ResolvedModel } | { skip: true } | { refused: string } | undefined {
+  function backgroundFor(m: ResolvedModel, call: BackgroundCall, needed?: number): { client: Client; effort: Level; model: ResolvedModel } | { skip: true } | { refused: string } | undefined {
     if (m.spec.interactive_only !== true) return undefined
     const canonical = (ref: unknown): string | undefined => {
       try {
@@ -939,7 +950,19 @@ export function createApp(o: AppOptions): App {
         return undefined
       }
     }
-    const r = background({ model: m.ref, models: listed(), defaults: [canonical(readRaw(globalConfigFile()).model), canonical(loaded.connections[m.connectionName]?.webui?.default)], call })
+    // A model that cannot take a summary's request is nowhere to go: its window is below what
+    // must be sent, or it takes no tools and the conversation is full of tool calls. A title is
+    // a few lines and fits anywhere.
+    const unfit =
+      call === "title"
+        ? []
+        : loaded.refs
+            .filter((r) => {
+              const spec = loaded.connections[r.connection]?.models[r.id]
+              return spec?.tools === false || (needed !== undefined && typeof spec?.context === "number" && spec.context > 0 && spec.context < needed)
+            })
+            .map((r) => r.ref)
+    const r = background({ model: m.ref, models: listed(), defaults: [canonical(readRaw(globalConfigFile()).model), canonical(loaded.connections[m.connectionName]?.webui?.default)], call, unfit })
     if (!("model" in r)) return r
     const other = resolveModel(loaded, r.model)
     return { client: clientFor(other), effort: startEffort(other), model: other }
@@ -947,15 +970,36 @@ export function createApp(o: AppOptions): App {
   // The directory's model (spec 3.9.0): written when a person's turn begins and when the person
   // changes the model — never for a model borrowed for one prompt, a turn the harness started,
   // a one-shot run or a schedule's session.
-  let remembers = o.remember !== false
+  let kind: SessionKind = o.kind ?? "terminal"
   let borrowed = false
-  const remember = () => {
-    if (remembers && !borrowed) rememberModel(o.cwd, engine.model.ref)
+  /** The turn running now was started by the harness (a job's note), not by a person. */
+  let machineTurn = false
+  /** The one rule (`records`, conformance last_model `record`), asked with what is happening now. */
+  const remember = (what: "turn" | "change") => {
+    if (records({ session: kind, agent: "main", what: borrowed ? "command" : what, machine: machineTurn })) rememberModel(o.cwd, engine.model.ref)
   }
-  bus.on((e) => e.type === "prompt" && !e.machine && remember())
+  bus.on((e) => {
+    if (e.type === "prompt") {
+      machineTurn = e.machine === true
+      remember("turn")
+    } else if (e.type === "task" && e.state === "end") machineTurn = false
+  })
+  /** Whether what runs now is scheduled work: a schedule's turn — or, in a session a schedule
+   *  opened, anything that is not a person's own turn: a turn one of the run's jobs woke, a
+   *  subagent started after the run's turn ended (interactive.md §2). */
+  const scheduledNow = () => automated || (kind === "scheduled" && (machineTurn || !turns.current))
+  /** A schedule's session keeps its own model with it (acp.md, *The run's model*). */
+  const keepModel = () => {
+    if (kind !== "scheduled" || borrowed || !store || !engine.sessionId) return
+    try {
+      store.setMeta(engine.sessionId, SCHEDULED_MODEL_META, engine.model.ref)
+    } catch {}
+  }
   const switchModel = (ref: string, how?: "borrowed") => {
     const m = resolveModel(loaded, ref)
-    const no = automated ? notAutomated(m) : undefined
+    // Within scheduled work; between turns the session's model is whoever configures it's to
+    // choose, and a scheduled turn on an interactive-only model is refused when it comes.
+    const no = automated || (kind === "scheduled" && machineTurn) ? notAutomated(m) : undefined
     if (no) throw new InteractiveOnlyError(no)
     borrowed = how === "borrowed"
     engine.setModel(m, clientFor(m), startEffort(m))
@@ -1002,7 +1046,7 @@ export function createApp(o: AppOptions): App {
       }
     },
     apply(key, v) {
-      if (key === "model") (switchModel(String(v)), remember())
+      if (key === "model") (switchModel(String(v)), remember("change"), keepModel())
       else if (key === "effort") engine.effort = v as Level
       else if (key === "mode") engine.mode = v as Mode
       else if (key === "limits.steps") engine.o.maxSteps = Number(v)
@@ -1067,12 +1111,19 @@ export function createApp(o: AppOptions): App {
       }
     },
     switchModel,
+    returnModel(prev) {
+      borrowed = false
+      if (engine.model.ref !== prev.model) switchModel(prev.model)
+      engine.effort = prev.effort
+    },
     chooseModel(ref) {
       switchModel(ref)
-      remember()
+      remember("change")
+      keepModel()
     },
     forgetful() {
-      remembers = false
+      kind = "scheduled"
+      keepModel()
     },
     setAutomated(on) {
       automated = on
@@ -1127,6 +1178,8 @@ export function createApp(o: AppOptions): App {
       keepCwd(s?.id)
       standIn = `local_${crypto.randomUUID().slice(0, 8)}`
       teamRt.reset(newTeam())
+      // A new session is this app's own kind again, whatever the one before it was.
+      kind = o.kind ?? "terminal"
       engine.newSession(s?.id)
       turns.reset()
       if (s) bus.emit({ type: "session", id: s.id, model: engine.model.ref, mode: engine.mode })
@@ -1141,7 +1194,29 @@ export function createApp(o: AppOptions): App {
       frozen = freeze()
       void readServerMemory()
       teamRt.reset(newTeam())
+      // A session a schedule opened stays one wherever it is opened — in a terminal too
+      // (/sessions, -c): nothing in it becomes its directory's model.
+      try {
+        kind = store.meta(id, SCHEDULED_META) ? "scheduled" : (o.kind ?? "terminal")
+      } catch {
+        kind = o.kind ?? "terminal"
+      }
       engine.resume(id, store.context(id))
+      // …and it is on its own model again, as it was — not on what a new session here would
+      // start on. One with no model kept leaves an interactive-only model for the start order's
+      // next that scheduled work may use.
+      if (kind === "scheduled") {
+        try {
+          const own = store.meta<string>(id, SCHEDULED_MODEL_META)
+          if (own) {
+            if (resolveModel(loaded, own).ref !== engine.model.ref) switchModel(own)
+          } else if (notAutomated(engine.model)) {
+            const again = startModel({ project: projectModel, directory: projectModel ? undefined : lastModel(o.cwd), global: projectModel ? undefined : loaded.config.model, served: listed().filter((m) => !m.interactive_only).map((m) => m.id) })
+            const m = resolveModel(loaded, again.model)
+            if (!notAutomated(m)) switchModel(m.ref)
+          }
+        } catch {}
+      }
       // A session from before titles gets its first prompt's line now, and the model's after the next reply.
       firstShown = ""
       const row = store.session(id)
