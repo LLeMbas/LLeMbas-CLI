@@ -34,9 +34,11 @@ export function records(o: { session: SessionKind; agent: "main" | "subagent"; w
 
 /** The client's rule (LLeMbas applies it; kept here so both suites answer the same cases): the
  *  model a new agent chat on a device and directory, or a schedule's run there, starts on. */
-export function clientModel(o: { named?: string; directory?: string; has: readonly string[]; default?: string }): { model: string | undefined; from: "named" | "directory" | "default" } {
+export function clientModel(o: { named?: string; directory?: string; has: readonly string[]; default?: string; scheduled?: boolean; interactive_only?: readonly string[] }): { model: string | undefined; from: "named" | "directory" | "default" } {
   if (o.named) return { model: o.named, from: "named" }
-  if (o.directory && o.has.includes(o.directory)) return { model: o.directory, from: "directory" }
+  // A schedule's run never starts on an interactive-only model the directory remembers (interactive.md §2).
+  const usable = o.scheduled ? o.has.filter((m) => !(o.interactive_only ?? []).includes(m)) : o.has
+  if (o.directory && usable.includes(o.directory)) return { model: o.directory, from: "directory" }
   return { model: o.default, from: "default" }
 }
 

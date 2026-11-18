@@ -39,6 +39,7 @@ import { fillPrompt as fillText } from "../src/prompt/fill.ts"
 import { isSilent, judgeCase, monitorHash, notifyInstruction, reportResult, reportTool, runLeaves, scheduledMode, stripSentinel } from "../src/acp/scheduled.ts"
 
 import { clientModel, records, startModel, type SessionKind } from "../src/session/lastmodel.ts"
+import { background, scheduledRefusal, twin, type BackgroundCall, type Listed } from "../src/provider/interactive.ts"
 
 type Case = Record<string, unknown>
 
@@ -60,8 +61,19 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
     const str = (k: string) => (typeof c[k] === "string" ? (c[k] as string) : undefined)
     if (c.kind === "start") return startModel({ asked: str("asked"), project: str("project"), directory: str("directory"), global: str("global"), served: c.served as string[], default: str("default") })
     if (c.kind === "record") return records({ session: c.session as SessionKind, agent: c.agent as "main" | "subagent", what: c.what as "turn" | "change" | "command", machine: c.machine === true })
-    if (c.kind === "client") return clientModel({ named: str("named"), directory: str("directory"), has: c.has as string[], default: str("default") })
+    if (c.kind === "client") return clientModel({ named: str("named"), directory: str("directory"), has: c.has as string[], default: str("default"), scheduled: c.scheduled === true, interactive_only: c.interactive_only as string[] | undefined })
     throw new Error(`last_model: unknown kind ${String(c.kind)}`)
+  },
+  // Spec 3.9.0: interactive-only models (src/provider/interactive.ts).
+  interactive: (c) => {
+    const models = c.models as Listed[]
+    if (c.kind === "twin") return twin(c.model as string, models) ?? null
+    if (c.kind === "background") return background({ model: c.model as string, models, defaults: c.defaults as string[], call: c.call as BackgroundCall })
+    if (c.kind === "scheduled") {
+      const refused = scheduledRefusal(c.model as string, models)
+      return refused ? { refused } : { run: true }
+    }
+    throw new Error(`interactive: unknown kind ${String(c.kind)}`)
   },
   // Spec 3.5.0: scheduled work on a linked computer (src/acp/scheduled.ts).
   scheduled: (c) => scheduledMode({ accept: c.accept === true, mode: c.mode, max_mode: c.max_mode as Mode, approval_wait_s: c.approval_wait_s }),
