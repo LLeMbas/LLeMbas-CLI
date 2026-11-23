@@ -116,6 +116,17 @@ export function sessionTurns<R>(sessionId: string): TurnLog<R> {
   return new TurnLog<R>(sessionTurnFile<R>(sessionId))
 }
 
+/** The client's rule (LLeMbas applies it; kept here so both suites answer the same cases,
+ *  conformance/reattach.json): what to do with an incomplete row of turn `turn` after a restart or
+ *  a dropped link, from what `_lembas/session/status` says. A turn the harness started (`machine`)
+ *  is never sent to the device: what its history has for it is all there is. */
+export function reattach(o: { turn: string; machine?: boolean; status: { turnId?: string; queued?: readonly string[]; lastTurnId?: string } }): { do: "follow" | "wait" | "import" | "resend" } {
+  if (o.status.turnId === o.turn) return { do: "follow" }
+  if (o.status.queued?.includes(o.turn)) return { do: "wait" }
+  if (o.status.lastTurnId === o.turn || o.machine) return { do: "import" }
+  return { do: "resend" }
+}
+
 export class TurnLog<R = unknown> {
   private entries = new Map<string, Entry<R>>()
   private values = new Map<string, R | null>()

@@ -39,6 +39,7 @@ import { fillPrompt as fillText } from "../src/prompt/fill.ts"
 import { isSilent, judgeCase, monitorHash, notifyInstruction, reportResult, reportTool, runLeaves, scheduledMode, stripSentinel } from "../src/acp/scheduled.ts"
 
 import { clientModel, records, startModel, type SessionKind } from "../src/session/lastmodel.ts"
+import { reattach } from "../src/acp/turns.ts"
 import { background, scheduledRefusal, twin, type BackgroundCall, type Listed } from "../src/provider/interactive.ts"
 
 type Case = Record<string, unknown>
@@ -56,6 +57,8 @@ function readableUnder(grants: Record<string, string> | undefined, path: string)
 }
 
 export const AREAS: Record<string, (c: Case) => unknown> = {
+  // Spec 3.10.0: a row reattached after a restart or a dropped link — the client's rule (src/acp/turns.ts).
+  reattach: (c) => reattach({ turn: c.turn as string, machine: c.machine === true, status: c.status as { turnId?: string; queued?: string[]; lastTurnId?: string } }),
   // Spec 3.9.0: the model last used in a directory (src/session/lastmodel.ts).
   last_model: (c) => {
     const str = (k: string) => (typeof c[k] === "string" ? (c[k] as string) : undefined)

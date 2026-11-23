@@ -36,7 +36,7 @@ page *Harness-parity* in LLeMbas CLI's wiki.
 | `display.md` | Display (3.7.0): one display in every client — a tool call's title, its four states, the duration and the facts beside it, the kinds of block; how `stopped` and `failed` stay on a finished reply; what the approval, question and plan cards offer; numbers in the client's locale |
 | `quirks.json` | What real servers do, and how both harnesses cope |
 | `conformance/<area>.json` | Cases with their expected results, run by both test suites |
-| `acp.md` | The link between them: ACP plus every `_lembas/*` method, field and capability; scheduled work on a linked computer (3.5.0) and the two types of schedule, Chat and Agentic (3.9.0); the model last used in a directory (3.9.0) |
+| `acp.md` | The link between them: ACP plus every `_lembas/*` method, field and capability; scheduled work on a linked computer (3.5.0) and the two types of schedule, Chat and Agentic (3.9.0); the model last used in a directory (3.9.0); a turn the harness starts by itself, over the link (3.10.0) |
 
 ## Vocabulary
 
@@ -78,6 +78,34 @@ page *Harness-parity* in LLeMbas CLI's wiki.
   (`context.md` §10). All three are offered in every mode; `plan_submit` (`requires: plan`) is the
   approval in plan mode and answers its `unavailable` text outside it. Their permission key is
   `plan` (`permission/defaults.json`), which a rule written for the former `todo` key still reaches.
+
+## 3.10.0
+
+Written with the CLI's implementation, after a turn the harness started was found to be half a turn
+over the link. A new capability and two fields; one prompt text made plainer; no tool.
+
+- **A turn the harness starts is a turn like any other over the link** (`acp.md`, section of that
+  name; capability `harness_turns`; `conformance/reattach.json`, 9 cases). A note that wakes an idle
+  session — a finished job's, a subagent's or a team's report — already had an id of its own on
+  its `task` and `prompt` events. What is new is everything a client asks *about* it:
+  `_lembas/session/status` says `busy` and names it (`turnId`, then `lastTurnId`, kept across a
+  restart); `_lembas/steer` is accepted while it runs, and a message it ended before taking in
+  comes back as **`unsent` on its `task` end event** (it has no prompt's answer to carry it);
+  `session/cancel` stops it; a `session/prompt` that arrives meanwhile **waits its turn** and is
+  listed in `queued`; compacting and rewinding are refused while it runs; the link is not closed
+  under it. **`_lembas/session/history` marks its user turn `machine`**, with its `turnId` and the
+  whole note as `text`. Written down as well: the order of such a turn's events, that turns never
+  overlap, and what two notes in a row are (one turn with both, or two turns one after the other).
+- **The client's side**: the row of such a turn is never sent to the device as a prompt — not on
+  seeing it, and not on reattaching when the device no longer knows its id; then what the history
+  has for that id is imported. `conformance/reattach.json` is that decision, for a person's turn
+  and for the harness's.
+- **Clarified, not changed**: on a `machine` turn's `prompt` event, `text` is the line a transcript
+  shows (`⏎ ` and the note's first line), not the whole note.
+- **`blocks/team_lead.md`**, one bullet more: the main agent does not wait for a report or ask for
+  one; a report starts its next turn by itself, and when the reports it needs are in it answers the
+  person in that turn, unasked, and never tells the person to ask again. A session keeps the system
+  prompt it was started with (`context.md` §10), so only sessions started after the change read it.
 
 ## 3.9.0
 
