@@ -205,7 +205,8 @@ where `_meta.lembas` may also carry:
 
 | Field | When |
 |---|---|
-| `unsent: string[]` | messages sent with `_lembas/steer` that the turn ended before taking in — send them next |
+| `unsent: string[]` | messages sent with `_lembas/steer` that the turn ended before taking in — send them next. Only in an answer a client is there to read: when no link is up as the turn ends, they are carried to the next turn instead (`_lembas/steer`, *A steered message is given to the model once*) and this answer, kept for a resend, has none |
+| `steered: "taken" \| "carried" \| "waiting"` | spec 3.10.0 (capability `harness_turns`): the `turnId` is the `messageId` of a message this session was steered — **nothing ran**; what became of that message (`_lembas/steer`, below) |
 | `command: string` | the prompt was that command |
 | `summary: string` | `/compact` |
 | `undone: { prompt, files } \| null` | `/undo` (null: nothing to undo) |
@@ -871,6 +872,28 @@ Params `{ sessionId, text, messageId? }`: a message for the running task, given 
 next step. Result `{ queued: number }`. `-32602` when nothing runs: send it as a prompt instead.
 "Runs" is any turn — the client's prompt, a terminal's, or one the harness started (capability
 `harness_turns`; a device without it refuses a steer during a harness turn).
+
+**A steered message is given to the model once** (spec 3.10.0, capability `harness_turns`). What
+becomes of a message the device accepted, whichever kind of turn it was steered into:
+
+- **taken in** at a step of that turn — said with `steered` and its `messageId`;
+- **handed back** when the turn ended first and a client is there to hear it: `unsent` in the
+  prompt's answer, or on the `task` end of a turn the harness started. The device has let go of
+  it; the client sends it next, as a prompt;
+- **carried** when the turn ended first and **no link is up** — after a prompt's turn exactly as
+  after a harness turn: kept with the session, across a restart, taken in at the next turn's
+  first step (said with `steered` and its id there), and never handed back as well. In a session
+  a terminal runs it stays in the terminal's own queue instead.
+
+A client that lost the link cannot always tell which of these happened. So **a `session/prompt`
+whose `turnId` is the `messageId` of a steered message the device still knows does not run**: it
+is answered at once, `stopReason: "end_turn"`, with `_meta.lembas.steered` — `"taken"` (the model
+has been given it, in some turn), `"carried"` (it waits for the next turn's first step) or
+`"waiting"` (it is in the queue of the turn running now, and will be taken in or handed back).
+Only a message that was handed back, or that the device never accepted, runs as a prompt. The
+device keeps the ids of the last 200 messages taken in with the session, across a restart; a
+client therefore uses one id for a message whether it steers it or prompts it (LLeMbas: the
+message's id), and sending again is always safe.
 
 ### `_lembas/session/history` — client → agent → result
 

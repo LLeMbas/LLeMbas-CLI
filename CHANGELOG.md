@@ -45,6 +45,11 @@ Harness spec 3.10.0: a turn the harness starts by itself is a turn like any othe
   back over, the message is kept with the session — also across a restart of the service — and
   the agent reads it at the start of its next turn. It used to wait in memory, and with
   `busy_input: queue` came back attached to an unrelated later prompt.
+- **A message is never given to the agent twice.** After a dropped connection the web UI may not
+  know whether a message you sent while the agent worked was read; sending it again is now safe —
+  the agent recognises it and says whether it was read already or is waiting for the next turn.
+  A message the agent had no time for when the connection was down is kept for its next turn
+  after any kind of turn, not only one it started by itself.
 - **Stop in the web UI stops the reply you stopped.** If your message was still waiting behind a
   turn the agent had started by itself (answering a finished job or a subagent), Stop used to end
   that turn instead and your message ran afterwards anyway. A server that names the turn

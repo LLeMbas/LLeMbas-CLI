@@ -163,7 +163,9 @@ export const END_META = "ended"
  *  the harness started that ended before taking them in, with nobody listening to hand them back
  *  to, which go in at the next turn's first step. */
 export const CARRIED_META = "carried"
-type Carried = { notes: string[]; steers: { text: string; id?: string }[] }
+type Carried = { notes: string[]; steers: { text: string; id?: string }[]; taken?: string[] }
+/** How many ids of steered messages the model has been given are remembered, newest last. */
+export const STEERS_KEPT = 200
 
 export class Engine {
   messages: Message[] = []
@@ -269,12 +271,13 @@ export class Engine {
 
   /** What the store holds for this session that the model has not been given yet. */
   private storedCarried(): Carried {
-    const none: Carried = { notes: [], steers: [] }
+    const none: Carried = { notes: [], steers: [], taken: [] }
     if (!this.o.store || !this.sessionId) return none
     try {
       const c = this.o.store.meta<Partial<Carried> | null>(this.sessionId, CARRIED_META)
       if (!c || typeof c !== "object") return none
       return {
+        taken: Array.isArray(c.taken) ? c.taken.filter((n): n is string => typeof n === "string").slice(-STEERS_KEPT) : [],
         notes: Array.isArray(c.notes) ? c.notes.filter((n): n is string => typeof n === "string") : [],
         steers: Array.isArray(c.steers) ? c.steers.filter((x) => x && typeof x.text === "string").map((x) => ({ text: x.text, ...(typeof x.id === "string" ? { id: x.id } : {}) })) : [],
       }
@@ -286,7 +289,7 @@ export class Engine {
   private saveCarried() {
     if (!this.o.store || !this.sessionId) return
     try {
-      this.o.store.setMeta(this.sessionId, CARRIED_META, this.carried.notes.length || this.carried.steers.length ? this.carried : null)
+      this.o.store.setMeta(this.sessionId, CARRIED_META, this.carried.notes.length || this.carried.steers.length || this.carried.taken?.length ? this.carried : null)
     } catch {}
   }
 
@@ -295,6 +298,19 @@ export class Engine {
   keepNote(text: string) {
     this.carried.notes.push(text)
     this.saveCarried()
+  }
+
+  /** What became of a steered message, by the id its sender gave it: `taken` — the model has been
+   *  given it, in some turn of this session (the last STEERS_KEPT ids are remembered, with the
+   *  session); `carried` — kept for the next turn's first step; `waiting` — in the running turn's
+   *  queue, to be taken in or handed back. Undefined: not known here, or handed back as unsent.
+   *  A prompt carrying such an id is that same message and must not give it to the model twice. */
+  steerState(id: string): "taken" | "carried" | "waiting" | undefined {
+    if (!id) return undefined
+    if (this.carried.taken?.includes(id)) return "taken"
+    if (this.carried.steers.some((x) => x.id === id)) return "carried"
+    if (this.inboxIds.includes(id)) return "waiting"
+    return undefined
   }
 
   /** Messages steered into this turn that it ended before taking in, with nobody to hand them
@@ -886,12 +902,14 @@ export class Engine {
     }
     // What an earlier turn left (carry) goes in whatever the mode; the inbox only when steering.
     const late = this.carried.steers.splice(0)
-    if (late.length) this.saveCarried()
     const now = this.busyInput === "steer" ? this.inbox.splice(0) : []
     const nowIds = this.busyInput === "steer" ? this.inboxIds.splice(0) : []
     if (!late.length && !now.length) return notes.length > 0
     const texts = [...late.map((x) => x.text), ...now]
     const ids = [...late.map((x) => x.id), ...nowIds].filter((i): i is string => typeof i === "string")
+    // The model has these now: their ids are remembered with the session (steerState).
+    if (ids.length) this.carried.taken = [...(this.carried.taken ?? []), ...ids].slice(-STEERS_KEPT)
+    if (late.length || ids.length) this.saveCarried()
     this.turnSteers.push(...texts)
     this.push({ role: "user", parts: [{ type: "text", text: `${this.o.steerMark ?? STEER_MARK}\n${texts.join("\n\n")}` }], turn: false })
     this.o.bus.emit({ type: "steered", texts, ...(ids.length ? { ids } : {}) })

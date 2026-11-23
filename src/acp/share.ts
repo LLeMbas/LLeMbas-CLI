@@ -473,6 +473,9 @@ export class Share {
       const turnId = typeof p?.turnId === "string" && p.turnId ? p.turnId : crypto.randomUUID()
       // A turn id taken already: the original's answer.
       if (this.turns.has(turnId)) return this.turns.run(turnId, () => Promise.reject(new Error("unreachable")))
+      // A steered message's id, sent again as a prompt: not given to the model twice.
+      const steered = this.app.engine.steerState(turnId)
+      if (steered) return { stopReason: "end_turn", _meta: { lembas: { turnId, steered } } }
       // What the client holds for the session (its instructions, personalization, library scope),
       // passed on by the hub: read into the prompt here as the service would.
       if (p?.context && typeof p.context === "object") this.app.setContext(p.context as SessionContext, typeof p?.instance === "string" ? p.instance : undefined)

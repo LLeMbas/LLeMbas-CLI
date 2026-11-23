@@ -134,6 +134,12 @@ follows 3.10.0 as first written follows this.
   comes before the `inbox` event that says the queue is empty.
 - **A wake that may not start a turn** (a schedule's session on an interactive-only model): the
   session is idle again and the note is kept for the person's next message.
+- **A steered message is given to the model once** (`_lembas/steer`; part of `harness_turns`). A
+  prompt's turn that ends with no link up carries its too-late steers to the next turn, as a
+  harness turn does — an `unsent` in an answer nobody reads was a message lost. And a
+  `session/prompt` whose `turnId` is the `messageId` of a steered message the device still knows
+  (taken in, carried, or waiting in the running turn) does not run: it is answered with
+  `_meta.lembas.steered` saying which. A client that lost the link can send again safely.
 - **`session/cancel` may name its turn** (`_meta.lembas.turnId`; part of `harness_turns`, which no
   release has carried yet; `conformance/cancel.json`, 7 cases). A prompt can now wait behind a
   turn its client did not start, and a cancel that names no turn stops whatever runs: a client

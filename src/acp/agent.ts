@@ -1124,6 +1124,10 @@ export class AcpAgent {
     // A turn id this session has taken already: not run again — the original's answer,
     // now or when it is done.
     if (s.turns.has(turnId)) return s.turns.run(turnId, () => Promise.reject(new Error("unreachable")))
+    // An id this session knows as a steered message's: the same message, sent again as a prompt by
+    // a client that could not tell what became of it. The model is not given it twice.
+    const steered = s.app.engine.steerState(turnId)
+    if (steered) return { stopReason: "end_turn", _meta: { lembas: { turnId, steered } } }
     // Spec 3.5.0: a scheduled turn is judged again (the setting may have been turned off since the
     // session was opened); a prompt without `scheduled` is the person's, in the run's agent chat.
     const scheduled = this.judgeScheduled(p?._meta?.lembas?.scheduled)
@@ -1223,7 +1227,7 @@ export class AcpAgent {
       const reason = await app.turns.prompt(prepared.prompt, prepared.extra, prepared.shown, { turnId, attachments: prepared.attachments })
       // Messages sent mid-task (`_lembas/steer`) that the task ended before taking in: handed back,
       // so the web UI sends them as the next turn rather than losing them.
-      const unsent = app.engine.takeInbox()
+      const unsent = this.leftover(s)
       return { stopReason: STOP[reason] ?? "end_turn", _meta: { lembas: { turnId, ...(unsent.length ? { unsent } : {}), ...(prepared.command ? { command: prepared.command } : {}) } } }
     } finally {
       // A command's model and mode hold for its prompt only — unless the turn itself changed the
@@ -1232,6 +1236,17 @@ export class AcpAgent {
       if (prepared.model) app.returnModel(prev)
       if (prepared.mode && app.engine.mode === (this.limits ? clampMode(prepared.mode, this.limits.maxMode) : prepared.mode)) app.engine.mode = prev.mode
     }
+  }
+
+  /** What a prompt's turn ended before taking in (`_lembas/steer`). With a client there to read
+   *  the answer it is handed back (`unsent`); with none — the link is down as the turn ends — it
+   *  is kept with the session for the next turn's first step, as after a turn the harness
+   *  started (engine.carry): an answer nobody reads would lose it. One or the other. */
+  private leftover(s: Session): string[] {
+    const agent = s.agent ?? this
+    if (!agent.peer.isClosed) return s.app.engine.takeInbox()
+    s.app.engine.carry()
+    return []
   }
 
   /** A scheduled request's settings as this device runs them (spec 3.5.0), or undefined when the
@@ -1271,7 +1286,7 @@ export class AcpAgent {
     try {
       if (prepared.model) app.switchModel(prepared.model, "borrowed")
       const reason = await app.turns.prompt(prepared.prompt, prepared.extra, prepared.shown, { turnId, attachments: prepared.attachments })
-      const unsent = app.engine.takeInbox()
+      const unsent = this.leftover(s)
       return { stopReason: STOP[reason] ?? "end_turn", _meta: { lembas: meta(unsent.length ? { unsent } : {}, reason, finalReply(app.engine.messages), error) } }
     } finally {
       off()
