@@ -182,6 +182,9 @@ export interface Session {
   off?: () => void
   /** Prompts that came while it worked: they wait their turn instead of being refused. */
   queue?: Promise<unknown>
+  /** The turn the harness started by itself and runs now (a note waking the session, acp.md *A turn
+   *  the harness starts*): no prompt of the client's began it, and `end` lets the queue move on. */
+  own?: { turnId: string; end: () => void }
   /** Its turns by id: a prompt sent twice runs once. */
   turns: TurnLog<PromptResult>
   /** The command set last sent to the client, to send it again only when it changed. */
@@ -193,6 +196,37 @@ export interface Session {
   /** The scheduled turn it runs now (spec 3.5.0): its mode is the ceiling, its approvals wait
    *  the schedule's wait and say so, and nobody answers a question or a plan. */
   scheduled?: ScheduledTurn
+}
+
+/** Whether a turn runs in the session now, whoever started it: a prompt of the client's, or the
+ *  harness's own (a note waking it). What status, steer, compact, rewind and letting go ask. */
+export const working = (s: Session): boolean => s.prompting || s.own !== undefined
+
+/** A `task` event of a turn no prompt of the client's began — the harness's own. It is kept in the
+ *  session's turn log as a terminal's turns are (running, then the last one finished, with no
+ *  answer of this side's), and it holds the queue: a prompt that arrives meanwhile runs after it,
+ *  never beside it. True for such a turn's events. */
+function ownTurn(s: Session, e: Event): boolean {
+  if (e.type !== "task" || !e.turnId) return false
+  if (e.state === "start") {
+    // While a prompt of the client's runs, every turn is that prompt's.
+    if (s.prompting) return false
+    let end!: () => void
+    const over = new Promise<void>((r) => (end = r))
+    s.own = { turnId: e.turnId, end }
+    s.turns.started(e.turnId)
+    const tail = (s.queue ?? Promise.resolve()).then(() => over)
+    s.queue = tail
+    void tail.then(() => {
+      if (s.queue === tail) s.queue = undefined
+    })
+    return true
+  }
+  if (s.own?.turnId !== e.turnId) return false
+  s.turns.ended(e.turnId)
+  s.own.end()
+  s.own = undefined
+  return true
 }
 
 /** What `session/prompt` answers. */
@@ -300,6 +334,10 @@ export const CAPABILITIES = [
   // Harness spec 3.9.0: `model` on a Dir of `_lembas/directories` — the model last used in
   // exactly that directory — and `list: false`, the directory alone.
   "directory_model",
+  // Harness spec 3.10.0 (acp.md, *A turn the harness starts*): a turn a note starts by itself is a
+  // turn in `status`, takes a steer, makes a prompt wait, hands back `unsent` on its `task` end
+  // and is in `history` with `machine`.
+  "harness_turns",
 ] as const
 export const STOP: Record<string, string> = { stop: "end_turn", steps: "max_turn_requests", budget: "max_tokens", cancelled: "cancelled", error: "end_turn" }
 
@@ -415,7 +453,7 @@ const ATTACHMENT = { test: (t: string) => /^<(file|directory|shell|image) /.test
  *  not text. */
 export function historyTurns(messages: Message[], cwd = "") {
   type Tool = { id: string; name: string; args: string; output?: string; isError?: boolean }
-  type Turn = { role: "user"; text: string; turnId?: string; attachments?: ReturnType<typeof storedAttachments> } | { role: "assistant"; text: string; reasoning: string; tools: Tool[] }
+  type Turn = { role: "user"; text: string; turnId?: string; attachments?: ReturnType<typeof storedAttachments>; machine?: true } | { role: "assistant"; text: string; reasoning: string; tools: Tool[] }
   const turns: Turn[] = []
   let reply: Extract<Turn, { role: "assistant" }> | undefined
   const calls = new Map<string, Tool>()
@@ -425,7 +463,8 @@ export function historyTurns(messages: Message[], cwd = "") {
       const texts = m.parts.map((p) => (p.type === "text" ? p.text : ""))
       const text = texts.filter((t) => !ATTACHMENT.test(t)).join("\n").trim()
       const attachments = storedAttachments(texts, cwd)
-      if (text || attachments.length) turns.push({ role: "user", text, ...(m.turnId ? { turnId: m.turnId } : {}), ...(attachments.length ? { attachments } : {}) })
+      // A turn the harness started (a note, with its mark) is in the history as what it is.
+      if (text || attachments.length) turns.push({ role: "user", text, ...(m.turnId ? { turnId: m.turnId } : {}), ...(attachments.length ? { attachments } : {}), ...(m.machine ? { machine: true as const } : {}) })
       continue
     }
     if (!reply) {
@@ -827,8 +866,9 @@ export class AcpAgent {
     s.agent = this
     this.equipShow(s)
     s.off = s.app.bus.on((e) => {
+      const own = ownTurn(s, e)
       if (s.agent !== this) return
-      this.forward(s, e)
+      this.forward(s, e, own)
       // A turn can change the set (skill_manage made a skill, a command file was written).
       if (e.type === "task" && e.state === "end") this.sendCommands(s)
     })
@@ -975,18 +1015,18 @@ export class AcpAgent {
   /** Whether a session runs here, and whether it is working (the hub, before a terminal opens it). */
   holding(id: string): "busy" | "idle" | undefined {
     const s = this.sessions.get(id)
-    return s ? (s.prompting ? "busy" : "idle") : undefined
+    return s ? (working(s) ? "busy" : "idle") : undefined
   }
 
   /** Whether any session this link runs is working, or has prompts waiting. */
   anyBusy(): boolean {
-    return [...this.sessions.values()].some((s) => s.prompting || s.queue)
+    return [...this.sessions.values()].some((s) => working(s) || s.queue)
   }
 
   /** Let go of an idle session: a terminal carries it on from the store. */
   drop(id: string) {
     const s = this.sessions.get(id)
-    if (!s || s.prompting) return
+    if (!s || working(s)) return
     this.sessions.delete(id)
     void s.app.close()
   }
@@ -1259,7 +1299,8 @@ export class AcpAgent {
         sessionId: id,
         exists: true,
         held: "here",
-        busy: s.prompting,
+        // Every turn that runs, whoever started it: a wake turn is named like any other.
+        busy: working(s),
         title: (this.store ??= new Store()).session(id)?.title ?? "",
         ...(s.turns.running ? { turnId: s.turns.running } : {}),
         queued: s.turns.queued(),
@@ -1346,7 +1387,7 @@ export class AcpAgent {
     const t = this.terminalFor(p)
     if (t) return t.client.request("hub/rewind", { sessionId: t.sessionId, turnId }, 15_000)
     const s = this.get(p)
-    if (s.prompting || s.turns.queued().length) throw new RpcError(INVALID_PARAMS, "this session is working — rewind it when the reply is done")
+    if (working(s) || s.turns.queued().length) throw new RpcError(INVALID_PARAMS, "this session is working — rewind it when the reply is done")
     const reverted = s.app.turns.rewind(turnId)
     if (reverted === undefined) throw new RpcError(INVALID_PARAMS, `this session has no turn ${turnId}`)
     s.turns.forget(reverted)
@@ -1385,7 +1426,7 @@ export class AcpAgent {
     const t = this.terminalFor(p)
     if (t) return t.client.request("hub/compact", { sessionId: t.sessionId }, 600_000)
     const s = this.get(p)
-    if (s.prompting) throw new RpcError(INVALID_PARAMS, "this session is working — compact it when the reply is done")
+    if (working(s)) throw new RpcError(INVALID_PARAMS, "this session is working — compact it when the reply is done")
     try {
       return { summary: await s.app.engine.compact() }
     } catch (e) {
@@ -1416,7 +1457,9 @@ export class AcpAgent {
     const t = this.terminalFor(p)
     if (t) return t.client.request("hub/steer", { sessionId: t.sessionId, text, messageId: id }, 15_000)
     const s = this.get(p)
-    if (!s.prompting) throw new RpcError(INVALID_PARAMS, "this session is not working on anything; send it as a prompt")
+    // Any turn that runs takes it in, the harness's own included: a message typed while the model
+    // answers a subagent's report joins that turn.
+    if (!working(s)) throw new RpcError(INVALID_PARAMS, "this session is not working on anything; send it as a prompt")
     s.app.engine.enqueue(text, id)
     return { queued: s.app.engine.queued }
   }
@@ -1515,10 +1558,17 @@ export class AcpAgent {
     this.peer.notify("session/update", { sessionId: s.id, update })
   }
 
-  private forward(s: Session, e: Event) {
+  private forward(s: Session, e: Event, own = false) {
     // A model change says whether the model is this link's instance's: its ref is the
     // provider's now (`deepseek/x`), so the ref alone no longer tells.
-    const event = e.type === "model" ? { ...e, instance: this.isInstance(e.connection) } : e.type === "team" ? { ...e, tree: treeOf(s.app) } : e
+    let event: Event | Record<string, unknown> = e.type === "model" ? { ...e, instance: this.isInstance(e.connection) } : e.type === "team" ? { ...e, tree: treeOf(s.app) } : e
+    // The end of a turn the harness started has no prompt's answer to carry what was steered into
+    // it too late: it goes back on the event (`unsent`, as in a prompt's answer) — to a client
+    // that hears events; otherwise it stays for the next turn's first step.
+    if (own && e.type === "task" && e.state === "end" && this.lembas && !this.peer.isClosed) {
+      const unsent = s.app.engine.takeInbox()
+      if (unsent.length) event = { ...e, unsent }
+    }
     if (this.lembas) this.peer.notify("_lembas/event", { sessionId: s.id, event })
     switch (e.type) {
       case "text":

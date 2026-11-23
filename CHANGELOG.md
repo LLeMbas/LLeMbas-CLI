@@ -6,6 +6,33 @@ All notable changes to LLeMbas CLI. The format follows
 
 ## [Unreleased]
 
+Harness spec 3.10.0: a turn the harness starts by itself is a turn like any other over the link.
+
+### Added
+
+- **Harness spec 3.10.0: a turn the harness starts** (`harness/acp.md`, capability
+  `harness_turns`). When a background job or a subagent finishes while the session is idle, its
+  note starts a turn by itself. In an agent chat driven from the web, that turn now behaves like
+  one you started: the chat shows it as working and can follow it after a restart or a dropped
+  connection, and the session's history marks the note as the harness's (`machine`) rather than
+  as something you typed. The server uses this from the version that carries spec 3.10.0.
+
+### Fixed
+
+- **A message sent while the agent answers a subagent's report is no longer refused.** It joins
+  that turn at its next step, as it does during a turn you started; one the turn ended before
+  taking in is handed back to the web UI to send next instead of being lost.
+- **A prompt sent while the agent answers a finished job or a subagent's report waits its turn.**
+  It used to fail with `busy`, and left the session's record of which turn was running wrong.
+- **Compacting or rewinding a session is refused while such a turn runs**, and the service no
+  longer lets go of the session, or closes the link for a change of `remote:` settings, under it.
+
+### Changed
+
+- **The main agent is told plainly how reports reach it** (`blocks/team_lead.md`): it does not
+  wait or ask for them, each one starts its next turn, and it then answers you unasked — it never
+  tells you to ask again. Sessions started before this keep the prompt they began with.
+
 ## [2.0.0-beta.12] — 2026-11-18
 
 Harness spec 3.9.0: the model last used in a directory, Chat and Agentic schedules, models that are for a person's own turns only.

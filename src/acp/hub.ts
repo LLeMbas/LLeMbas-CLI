@@ -180,7 +180,7 @@ export class Hub {
 
   /** Whether anything works here now: a session the link runs, or one a terminal shares mid-turn. */
   busy(): boolean {
-    return [...this.held.values()].some((s) => s.prompting || s.queue) || [...this.shared.values()].some((s) => s.busy)
+    return [...this.held.values()].some((s) => s.prompting || s.own || s.queue) || [...this.shared.values()].some((s) => s.busy)
   }
 
   private announce(s: Shared) {
