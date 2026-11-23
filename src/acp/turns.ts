@@ -127,6 +127,17 @@ export function reattach(o: { turn: string; machine?: boolean; status: { turnId?
   return { do: "resend" }
 }
 
+/** Which turn a `session/cancel` touches (harness/acp.md; conformance/cancel.json). `turn`: the id
+ *  it names (`_meta.lembas.turnId`), absent for ACP's own cancel, which means the running turn.
+ *  A turn that is named and waits is taken out of the queue and the running one left alone; one
+ *  that is neither running nor waiting is nobody's to stop. */
+export function cancelOf(o: { turn?: string; running?: string; queued?: readonly string[] }): { cancelled: "running" | "queued" | "none"; stops?: string; withdraws?: string } {
+  if (o.turn === undefined) return o.running !== undefined ? { cancelled: "running", stops: o.running } : { cancelled: "none" }
+  if (o.running === o.turn) return { cancelled: "running", stops: o.turn }
+  if (o.queued?.includes(o.turn)) return { cancelled: "queued", withdraws: o.turn }
+  return { cancelled: "none" }
+}
+
 export class TurnLog<R = unknown> {
   private entries = new Map<string, Entry<R>>()
   private values = new Map<string, R | null>()

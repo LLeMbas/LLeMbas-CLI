@@ -134,6 +134,14 @@ follows 3.10.0 as first written follows this.
   comes before the `inbox` event that says the queue is empty.
 - **A wake that may not start a turn** (a schedule's session on an interactive-only model): the
   session is idle again and the note is kept for the person's next message.
+- **`session/cancel` may name its turn** (`_meta.lembas.turnId`; part of `harness_turns`, which no
+  release has carried yet; `conformance/cancel.json`, 7 cases). A prompt can now wait behind a
+  turn its client did not start, and a cancel that names no turn stops whatever runs: a client
+  stopping a reply whose prompt still waited stopped the harness's turn instead, and its own
+  prompt ran later with nobody following. With the id: the turn is stopped if it runs; taken out
+  of the queue if it waits — its `session/prompt` answered `cancelled`, the running turn left
+  alone; nothing if it is neither. Sent as a request, the cancel is answered
+  `{ cancelled: "running" | "queued" | "none" }`. Without the id, as before.
 
 ## 3.9.0
 

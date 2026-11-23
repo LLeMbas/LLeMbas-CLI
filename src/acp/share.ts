@@ -18,7 +18,7 @@ import { readLevel } from "../provider/effort.ts"
 import { clampMode, effortOf, markRemote, permissionParams, planParams, planReplyFrom, questionParams, questionReplyFrom, replyFrom, STOP, type PromptResult } from "./agent.ts"
 import { jobList, jobOutput, jobSend, jobStop, jobTranscript, teamFindings, teamStop, teamTranscript, teamView, treeOf } from "./jobs.ts"
 import type { SessionContext } from "../app.ts"
-import { sessionTurnFile, sessionTurns, type TurnLog } from "./turns.ts"
+import { cancelOf, sessionTurnFile, sessionTurns, type TurnLog } from "./turns.ts"
 import { dropAttachments, preparePrompt } from "./prompt.ts"
 import { connectHub, Hub } from "./hub.ts"
 import { isLocal } from "../config/paths.ts"
@@ -459,6 +459,9 @@ export class Share {
     }
   }
 
+  /** The web UI's prompts that have not started here yet, by turn id: what takes one back. */
+  private waiting = new Map<string, () => void>()
+
   private mine(p: any) {
     if (!this.sharedId || p?.sessionId !== this.sharedId) throw new RpcError(INVALID_PARAMS, "that session is not open in this terminal any more")
   }
@@ -496,8 +499,28 @@ export class Share {
         // A command's mode from the web never goes past remote.max_mode in a session shared under
         // the device's limits (not by name), as in a session the service runs.
         if (input.mode && !this.explicit) input.mode = clampMode(input.mode, limits.maxMode)
-        const reason = await this.hooks.prompt({ ...input, turnId }, started)
-        return { stopReason: STOP[reason] ?? "end_turn", _meta: { lembas: { turnId, ...(command ? { command } : {}) } } }
+        // Until it starts it may be taken back (`session/cancel` with its id): answered as
+        // cancelled now, and when the terminal comes to it nothing is sent.
+        let withdrawn = false
+        let bail!: (r: PromptResult) => void
+        const gone = new Promise<PromptResult>((r) => (bail = r))
+        this.waiting.set(turnId, () => ((withdrawn = true), this.waiting.delete(turnId), bail({ stopReason: "cancelled", _meta: { lembas: { turnId } } })))
+        const begin = () => {
+          this.waiting.delete(turnId)
+          if (withdrawn) throw new Error("withdrawn")
+          started()
+        }
+        // A hook may call `begin` before it returns its promise: its throw is the promise's.
+        let asked: Promise<string>
+        try {
+          asked = this.hooks.prompt({ ...input, turnId }, begin)
+        } catch (e) {
+          asked = Promise.reject(e)
+        }
+        const ran = asked
+          .then((reason): PromptResult => ({ stopReason: STOP[reason] ?? "end_turn", _meta: { lembas: { turnId, ...(command ? { command } : {}) } } }))
+        ran.catch(() => {})
+        return Promise.race([ran, gone]).finally(() => this.waiting.delete(turnId))
       })
     })
     // The terminal's turns: `_lembas/session/status` for a shared session asks here.
@@ -590,6 +613,15 @@ export class Share {
     })
     peer.on("hub/cancel", (p) => {
       if (this.sharedId && p?.sessionId === this.sharedId) this.app.cancel()
+    })
+    // The same with the turn named (acp.md `session/cancel`): that turn and no other.
+    peer.handle("hub/cancel", (p) => {
+      this.mine(p)
+      const running = this.app.turns.current?.turnId
+      const found = cancelOf({ turn: String(p?.turnId ?? ""), ...(running ? { running } : {}), queued: [...this.waiting.keys()] })
+      if (found.withdraws !== undefined) this.waiting.get(found.withdraws)?.()
+      else if (found.stops !== undefined) this.app.cancel()
+      return { cancelled: found.cancelled }
     })
     peer.handle("hub/mode", (p) => {
       this.mine(p)

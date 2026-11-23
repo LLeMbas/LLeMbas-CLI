@@ -33,7 +33,7 @@ import { dropAttachments, preparePrompt, storedAttachments } from "./prompt.ts"
 import { addPendingDeleted, clearPendingDeleted, pendingDeleted } from "./pending.ts"
 import { pickShell, shellLaunch } from "./shellrc.ts"
 import { callTitle } from "../session/display.ts"
-import { sessionTurnFile, sessionTurns, TurnLog } from "./turns.ts"
+import { cancelOf, sessionTurnFile, sessionTurns, TurnLog } from "./turns.ts"
 import { expandHome } from "../config/paths.ts"
 import { asMode, MODES, type Mode } from "../config/schema.ts"
 import { isLevel, readLevel, type Level } from "../provider/effort.ts"
@@ -188,6 +188,9 @@ export interface Session {
   own?: { turnId: string; end: () => void }
   /** Its turns by id: a prompt sent twice runs once. */
   turns: TurnLog<PromptResult>
+  /** The prompts waiting their turn, by id: what takes one out of the queue (`session/cancel`
+   *  with its turnId) — it is answered as cancelled then, and never runs. */
+  waiting?: Map<string, () => void>
   /** The command set last sent to the client, to send it again only when it changed. */
   commands?: string
   /** Spec 3.8.0: the report the run under way has written (the last one), for its answer. */
@@ -564,7 +567,10 @@ export class AcpAgent {
     peer.on("_lembas/terminal/input", (p) => this.terminalInput(p))
     peer.on("_lembas/terminal/resize", (p) => this.terminalResize(p))
     peer.on("_lembas/terminal/close", (p) => this.terminalClose(String(p?.terminalId ?? "")))
-    peer.on("session/cancel", (p) => this.cancel(p))
+    // ACP's notification, answered with nothing — and the same as a request, answered with what
+    // was found (acp.md `session/cancel`).
+    peer.on("session/cancel", (p) => void this.cancel(p).catch(() => {}))
+    peer.handle("session/cancel", (p) => this.cancel(p))
     // With the hub (the service), the sessions are its, not this link's: a link that drops
     // and comes back -- the instance updated, the network blinked -- finds them still working, and
     // the instance follows them again instead of losing the turn. Without it (`serve --stdio`), the
@@ -1153,15 +1159,30 @@ export class AcpAgent {
         s.app.setAutomated(false)
       }
     }
-    return s.turns.run(turnId, (started) => {
-      // Idle: it starts now, in this tick — a steer sent right after it must find the session working.
-      const next = s.queue ? s.queue.then(() => run(started), () => run(started)) : run(started)
+    /** The queue's tail is this turn until it is over. */
+    const chain = (next: Promise<PromptResult>): Promise<PromptResult> => {
       const tail = next.catch(() => {})
       s.queue = tail
       void tail.then(() => {
         if (s.queue === tail) s.queue = undefined
       })
       return next
+    }
+    return s.turns.run(turnId, (started) => {
+      // Idle: it starts now, in this tick — a steer sent right after it must find the session working.
+      if (!s.queue) return chain(run(started))
+      // It waits its turn — and may be taken back while it does (`session/cancel` with its id):
+      // answered as cancelled at once, and when its place in the queue comes nothing runs.
+      let withdrawn = false
+      let bail!: (r: PromptResult) => void
+      const gone = new Promise<PromptResult>((r) => (bail = r))
+      const cancelled: PromptResult = { stopReason: "cancelled", _meta: { lembas: { turnId, ...(scheduled ? { scheduled: runOutcome({ runId: scheduled.runId, reason: "cancelled", text: "" }) } : {}) } } }
+      const waiting = (s.waiting ??= new Map())
+      waiting.set(turnId, () => ((withdrawn = true), waiting.delete(turnId), bail(cancelled)))
+      const turn = () => (waiting.delete(turnId), withdrawn ? Promise.resolve(cancelled) : run(started))
+      const ran = chain(s.queue.then(turn, turn))
+      ran.catch(() => {})
+      return Promise.race([ran, gone])
     })
   }
 
@@ -1547,10 +1568,35 @@ export class AcpAgent {
     return {}
   }
 
-  private cancel(p: any) {
+  /** `session/cancel`: stop the running turn — or, with `_meta.lembas.turnId`, that turn and no
+   *  other: stopped when it runs, taken out of the queue when it waits (its prompt is answered as
+   *  cancelled and never runs), nothing when it is neither. What was found is the answer. */
+  private async cancel(p: any): Promise<{ cancelled: "running" | "queued" | "none" }> {
+    const named = p?._meta?.lembas?.turnId
+    const turn = typeof named === "string" && named.trim() ? named.trim().slice(0, 100) : undefined
     const t = this.terminalFor(p)
-    if (t) return t.client.notify("hub/cancel", { sessionId: t.sessionId })
-    this.sessions.get(String(p?.sessionId ?? ""))?.app.cancel()
+    if (t) {
+      // The terminal knows its turns. One named is asked of it; a terminal of a build that has no
+      // such request is not told to stop whatever runs there.
+      if (turn !== undefined) return t.client.request<{ cancelled: "running" | "queued" | "none" }>("hub/cancel", { sessionId: t.sessionId, turnId: turn }, 15_000).catch(() => ({ cancelled: "none" as const }))
+      t.client.notify("hub/cancel", { sessionId: t.sessionId })
+      return { cancelled: t.busy ? "running" : "none" }
+    }
+    const s = this.sessions.get(String(p?.sessionId ?? ""))
+    if (!s) return { cancelled: "none" }
+    // ACP's own cancel: whatever runs, as ever.
+    if (turn === undefined) {
+      const ran = working(s)
+      s.app.cancel()
+      return { cancelled: ran ? "running" : "none" }
+    }
+    const found = cancelOf({ turn, ...(s.turns.running ? { running: s.turns.running } : {}), queued: s.turns.queued() })
+    if (found.withdraws !== undefined) {
+      const take = s.waiting?.get(found.withdraws)
+      if (!take) return { cancelled: "none" }
+      take()
+    } else if (found.stops !== undefined) s.app.cancel()
+    return { cancelled: found.cancelled }
   }
 
   private update(s: Session, update: Record<string, unknown>) {

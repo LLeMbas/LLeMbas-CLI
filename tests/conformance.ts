@@ -39,7 +39,7 @@ import { fillPrompt as fillText } from "../src/prompt/fill.ts"
 import { isSilent, judgeCase, monitorHash, notifyInstruction, reportResult, reportTool, runLeaves, scheduledMode, stripSentinel } from "../src/acp/scheduled.ts"
 
 import { clientModel, records, startModel, type SessionKind } from "../src/session/lastmodel.ts"
-import { reattach } from "../src/acp/turns.ts"
+import { cancelOf, reattach } from "../src/acp/turns.ts"
 import { outstanding, type OutstandingInput } from "../src/session/outstanding.ts"
 import { background, scheduledRefusal, twin, type BackgroundCall, type Listed } from "../src/provider/interactive.ts"
 
@@ -58,6 +58,8 @@ function readableUnder(grants: Record<string, string> | undefined, path: string)
 }
 
 export const AREAS: Record<string, (c: Case) => unknown> = {
+  // Spec 3.10.0: which turn a `session/cancel` touches (src/acp/turns.ts).
+  cancel: (c) => cancelOf({ turn: c.turn as string | undefined, running: c.running as string | undefined, queued: c.queued as string[] | undefined }),
   // Spec 3.10.0: what a session still has out when no turn of it runs (src/session/outstanding.ts).
   outstanding: (c) => outstanding(c as unknown as OutstandingInput),
   // Spec 3.10.0: a row reattached after a restart or a dropped link — the client's rule (src/acp/turns.ts).

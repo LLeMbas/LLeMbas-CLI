@@ -45,6 +45,10 @@ Harness spec 3.10.0: a turn the harness starts by itself is a turn like any othe
   back over, the message is kept with the session — also across a restart of the service — and
   the agent reads it at the start of its next turn. It used to wait in memory, and with
   `busy_input: queue` came back attached to an unrelated later prompt.
+- **Stop in the web UI stops the reply you stopped.** If your message was still waiting behind a
+  turn the agent had started by itself (answering a finished job or a subagent), Stop used to end
+  that turn instead and your message ran afterwards anyway. A server that names the turn
+  (harness spec 3.10.0) now gets exactly that turn stopped, or taken out of the queue.
 - **A job's or subagent's note that arrives after you pressed Stop survives a restart** and goes
   in with your next message, as before.
 - **In a schedule's chat on a model for interactive use only**, a subagent's report that may not

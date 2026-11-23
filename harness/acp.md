@@ -69,7 +69,7 @@ change to the protocol is a change here first, then in both projects.
 | `tree` | spec 3.4.0 (`subagents.md` §5–§13): the `team` event; `_lembas/team`, `_lembas/team/transcript`, `_lembas/team/findings`, `_lembas/team/stop`; `subagent` on `session/request_permission` |
 | `scheduled` | spec 3.5.0 (*Scheduled work on a linked computer*, below): `scheduled` in `_meta.lembas` of `session/new` and `session/prompt` read, and the run's outcome in the prompt's answer; `scheduled` on `session/request_permission`; `_lembas/monitor`; `limits.scheduled` in `_lembas/hello` and `initialize`. Listed by every build that has it, whatever the setting says: whether this device *accepts* scheduled work is `limits.scheduled` |
 | `directory_model` | spec 3.9.0 (*The model last used in a directory*, below): `model` on a `Dir` of `_lembas/directories`' answer; `list: false` in its params |
-| `harness_turns` | spec 3.10.0 (*A turn the harness starts*, below): such a turn is a turn in `_lembas/session/status` (`busy`, `turnId`, then `lastTurnId`), takes `_lembas/steer`, hands back `unsent` on its `task` end, makes a prompt wait, and is in `_lembas/session/history` as a user turn with `machine` |
+| `harness_turns` | spec 3.10.0 (*A turn the harness starts*, below): such a turn is a turn in `_lembas/session/status` (`busy`, `turnId`, then `lastTurnId`), takes `_lembas/steer`, hands back `unsent` on its `task` end, makes a prompt wait, and is in `_lembas/session/history` as a user turn with `machine`; and — since prompts now wait behind turns the client did not start — `_meta.lembas.turnId` on `session/cancel` names the turn to stop or to take out of the queue, and `session/cancel` sent as a request is answered |
 | `reports` | spec 3.8.0 (`reports.md` §6): `scheduled.notify` in `_meta.lembas` of `session/new` and `session/prompt` read; `report_write` offered to the model of a schedule's run that notifies; the report the run wrote carried in the prompt's answer (`scheduled.report`); the status `silent` no longer given to a turn whose request said `notify` |
 
 ## Standard ACP, as used here
@@ -216,10 +216,38 @@ where `_meta.lembas` may also carry:
 
 Params: `{ sessionId, modeId }`, lowered to `remote.max_mode`. Result `{}`.
 
-### `session/cancel` — client → agent (notification)
+### `session/cancel` — client → agent (notification, or a request)
 
-Params: `{ sessionId }`. Stops the running turn, whoever started it: the client's prompt, a turn
-typed in a terminal, or one the harness started. Prompts waiting behind it still run. **It stops
+Params: `{ sessionId, _meta?: { lembas?: { turnId?: string } } }`.
+
+**Without a `turnId`** — ACP's own cancel, and all a device before 3.10.0 knows: stops the running
+turn, whoever started it: the client's prompt, a turn typed in a terminal, or one the harness
+started. Prompts waiting behind it still run.
+
+**With `_meta.lembas.turnId`** (spec 3.10.0, capability `harness_turns`; `conformance/cancel.json`)
+the client says **which turn it means** — where `session/prompt` carries the same id, in
+`_meta.lembas` like every other extension of an ACP method — and only that turn is touched:
+
+| The turn named is | The device |
+|---|---|
+| **running** | stops it, as a cancel without an id does |
+| **queued** (its `session/prompt` waits behind another turn) | takes it out of the queue: it never runs, its `session/prompt` is answered at once with `stopReason: "cancelled"` (a scheduled one with `scheduled.status: "cancelled"`), and **the turn that runs is not touched**. The id stays known: the same prompt sent again gets that answer and does not run |
+| **neither** (finished already, or never heard of) | does nothing |
+
+Without the id a client that stops a reply whose prompt still waits on the device stops whatever
+runs there instead — the harness's own turn, a terminal's — and its own prompt runs afterwards
+with nobody following it. A client sends the id whenever it knows the turn it means and the
+device lists `harness_turns`; a device without the capability ignores `_meta` and stops the
+running turn, so to such a device a client sends a cancel only when its own turn is the one
+running (`_lembas/session/status`).
+
+**The answer.** As a notification it is answered with nothing, as ACP has it. Sent as a
+**request** (the same method and params, with an id) a device with the capability answers
+`{ cancelled: "running" | "queued" | "none" }` — what it found the turn to be, or for a cancel
+without an id whether a turn ran — so a client that needs to know whether anything was stopped
+asks, and one that does not need not wait.
+
+**It stops
 the turn, not the team**: subagents that work go on, and a report that arrives later starts a turn
 as any does (*A turn the harness starts*) — a subagent is stopped by `_lembas/team/stop`. The one
 exception is a scheduled turn, where Stop stops the run and its subagents with it (*Scheduled
@@ -684,7 +712,8 @@ with the note as its user message (`loop.json` `jobs`, `team.md` §7). Nobody ty
   stopped turn like any other: its user turn is in the history under its id, the note with it,
   and the model reads it with the next message. Nothing of it is lost.
 - **A prompt** (`session/prompt`) that arrives while it runs waits its turn — it is in `queued` —
-  and runs after the turn's `task` end. A prompt carrying the harness turn's own id does not run:
+  and runs after the turn's `task` end; the client that no longer wants it takes it back with
+  `session/cancel` and its `turnId`, which leaves this turn alone. A prompt carrying the harness turn's own id does not run:
   the id is known, and the answer is `null` (the turn has none of this side's).
 - **Compacting and rewinding** (`_lembas/session/compact`, `_lembas/session/rewind`) are refused
   while it runs, as during any turn. Once it has ended it is rewound by its id like any turn.
