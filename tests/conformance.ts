@@ -40,6 +40,7 @@ import { isSilent, judgeCase, monitorHash, notifyInstruction, reportResult, repo
 
 import { clientModel, records, startModel, type SessionKind } from "../src/session/lastmodel.ts"
 import { reattach } from "../src/acp/turns.ts"
+import { outstanding, type OutstandingInput } from "../src/session/outstanding.ts"
 import { background, scheduledRefusal, twin, type BackgroundCall, type Listed } from "../src/provider/interactive.ts"
 
 type Case = Record<string, unknown>
@@ -57,6 +58,8 @@ function readableUnder(grants: Record<string, string> | undefined, path: string)
 }
 
 export const AREAS: Record<string, (c: Case) => unknown> = {
+  // Spec 3.10.0: what a session still has out when no turn of it runs (src/session/outstanding.ts).
+  outstanding: (c) => outstanding(c as unknown as OutstandingInput),
   // Spec 3.10.0: a row reattached after a restart or a dropped link — the client's rule (src/acp/turns.ts).
   reattach: (c) => reattach({ turn: c.turn as string, machine: c.machine === true, status: c.status as { turnId?: string; queued?: string[]; lastTurnId?: string } }),
   // Spec 3.9.0: the model last used in a directory (src/session/lastmodel.ts).

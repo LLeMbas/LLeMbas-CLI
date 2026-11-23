@@ -219,7 +219,11 @@ Params: `{ sessionId, modeId }`, lowered to `remote.max_mode`. Result `{}`.
 ### `session/cancel` — client → agent (notification)
 
 Params: `{ sessionId }`. Stops the running turn, whoever started it: the client's prompt, a turn
-typed in a terminal, or one the harness started. Prompts waiting behind it still run.
+typed in a terminal, or one the harness started. Prompts waiting behind it still run. **It stops
+the turn, not the team**: subagents that work go on, and a report that arrives later starts a turn
+as any does (*A turn the harness starts*) — a subagent is stopped by `_lembas/team/stop`. The one
+exception is a scheduled turn, where Stop stops the run and its subagents with it (*Scheduled
+work*, *The run waits for its subagents*).
 
 ### `session/update` — agent → client (notification)
 
@@ -446,6 +450,35 @@ In a scheduled turn:
 - Subagents as in an agent chat (`agents`, the tree, findings); a subagent's call only the person
   can allow is an approval like the main agent's, with `scheduled` beside `subagent`.
 
+**The run waits for its subagents** (spec 3.10.0; `conformance/outstanding.json`, `run_waits`). In
+a chat the main agent's turn may end while subagents work, and each report wakes it with a turn
+of its own (`subagents.md` §9). A run has nobody to read those turns and one answer to give, so
+**a scheduled turn does not end while a subagent it started is still out** — a team's subagent
+that is `working`, `waiting` or `paused`, a background `task` subagent still running — or while a
+report waits for the main agent to get a slot:
+
+- When the main agent's reply ends with subagents out, the turn stays open: its progress is
+  `waiting_for_subagents` (`progress.md` §4), it holds no slot of its model meanwhile (`team.md`
+  §8, and takes one again before it goes on), and **each report reaches it in the same turn**, as
+  a note at a step boundary (`team.md` §7) — never as a turn of its own. The model reads exactly
+  what a woken turn would have given it.
+- So a run is **one turn**, from its `task` start to its `task` end, with the run's `turnId` on
+  every event; `report_write` is offered throughout; and the answer's `text` and `report` are
+  from the turn's last reply — given after the last report came in.
+- **Background commands are not waited for** — one may never end. A command the run left running
+  is still the run's (`interactive.md` §2): its note later wakes a turn of the session, which is
+  scheduled work, and in which `report_write` answers its `unavailable` text: the run has
+  answered, and there is no answer left to carry a report.
+- **What bounds the wait**: nothing new. Every subagent's own turn ends by its step limit and its
+  budgets; the session's time budget, where one is set, counts the wait (looked at when the
+  next report comes in, as between any two steps); and a run that says
+  nothing for the client's inactivity limit is stopped by the client, as any run is. While it
+  waits, the tree (`team`), the subagents' tool calls (`sub_tool`) and their phases are still said.
+- **Stop (`session/cancel`) on a scheduled turn stops the run**: the turn, and every subagent of
+  it that still works or waits. The same when the turn ends any other way with subagents still
+  out — an error, the step limit, a budget: they are stopped with it, and none of them leaves a
+  note. **Nothing of a run's subagents works after its answer.**
+
 ### How the turn ends and reports
 
 `session/prompt`'s answer carries the run's outcome in `_meta.lembas.scheduled`:
@@ -637,10 +670,19 @@ with the note as its user message (`loop.json` `jobs`, `team.md` §7). Nobody ty
 - **Steer** (`_lembas/steer`): accepted while it runs, taken in at its next step, said with
   `steered`. A message it ended before taking in comes back as `unsent` on its `task` end event —
   it has no prompt's answer to carry it — and the client sends it next, as it does a prompt's
-  `unsent`. With no client listening the message stays, and goes in at the next turn's first step;
-  so it does in a session a terminal runs, where it stays in the terminal's own queue.
-- **Stop** (`session/cancel`): stops it. Notes it had not given the model yet start no further turn:
-  they go in with the person's next message.
+  `unsent`. That `task` end comes **before** any `inbox` event that says the queue is empty, so an
+  emptied queue is never read as messages taken in. With no client listening (no link is up) the
+  message is **kept with the session — across a restart of the device — and goes in at the next
+  turn's first step**, whoever starts that turn and whatever the device's own setting for messages
+  typed mid-task: it is said with `steered` and its id there, and is never handed back as `unsent`
+  as well. In a session a terminal runs it stays in the terminal's own queue.
+- **Stop** (`session/cancel`): stops it — and nothing else: no subagent is stopped with it, and a
+  report that arrives afterwards starts a turn as any does. Notes it had not given the model yet
+  start no further turn: they are kept with the session — across a restart — and go in with the
+  person's next message. A turn stopped **while it still waits for a model slot** (`team.md` §8)
+  had already begun for the client — its `task` start and its `prompt` were said — so it is a
+  stopped turn like any other: its user turn is in the history under its id, the note with it,
+  and the model reads it with the next message. Nothing of it is lost.
 - **A prompt** (`session/prompt`) that arrives while it runs waits its turn — it is in `queued` —
   and runs after the turn's `task` end. A prompt carrying the harness turn's own id does not run:
   the id is known, and the answer is `null` (the turn has none of this side's).
@@ -649,9 +691,13 @@ with the note as its user message (`loop.json` `jobs`, `team.md` §7). Nobody ty
 - **History** (`_lembas/session/history`): its user turn is there, with its `turnId`, `machine: true`
   and the whole note as `text`; the reply follows it.
 - **The link** is not closed for a change of limits while one runs (*`_lembas/hello`*: "once no
-  session is working").
+  session is working"), nor while one is about to: see *A session that still has work out*.
 - **Scheduled sessions.** A turn a schedule's job wakes is the schedule's work: it does not run on
-  an interactive-only model (`interactive.md`), and the device says so in a `notice` instead.
+  an interactive-only model (`interactive.md`), and the device says so in a `notice` instead. No
+  turn starts, so the session is idle again — the main agent holds no slot for it — and the note
+  is kept, as after a Stop: it goes in with the person's next message. During a schedule's run
+  itself no such turn starts at all: the run's turn takes its subagents' reports in (*The run
+  waits for its subagents*).
 
 **The client's side.** The row it keeps for such a turn is the harness's (`machine`), keyed by the
 turn's id; the reply after it is filled from the events between that id's `prompt` and its `task`
@@ -665,6 +711,26 @@ A device without `harness_turns` (before 3.10.0) runs these turns the same way a
 with `machine` and both `task` events with the id, but its `status` says `busy: false` and names no
 turn while one runs, it refuses a steer then, and a prompt sent then fails (`-32603`); a client
 follows such a turn by its `task` events alone and sends nothing to the session until its end.
+
+## A session that still has work out (spec 3.10.0)
+
+A session's turn may end with work of it still going on **in the device's process**: a subagent
+that works or waits for a slot, a report about to wake the main agent, a background command.
+`_lembas/session/status` then says `busy: false` — no turn runs — and shows the work in `tree` and
+`jobs`. The device treats such a session as **not idle** wherever letting go of it would lose
+that work (`conformance/outstanding.json`, `has_work`):
+
+- it does not close the link for a change of limits (*`_lembas/hello`*), and a service does not
+  start again on a newly installed release, until no session has a turn running or waiting **and
+  none has work out**;
+- **a terminal on the device that opens the session is refused, in words that name what still
+  works**, as it is while a turn runs. A terminal is another process: it could carry the
+  conversation on from the store, but not the subagents and commands, and closing the service's
+  copy would stop them with no report ever arriving. So the session stays where its work is; the
+  person waits, or stops the subagents and jobs (`_lembas/team/stop`, `_lembas/job/stop`), and
+  opens it then.
+
+Deleting the session (`_lembas/session/delete`) still stops everything, as it says.
 
 ## `_lembas/*` methods
 
@@ -685,7 +751,8 @@ that is not linked.
 
 The device's limits apply to every request as they are at that moment. When what the hello and
 `initialize` said changes (the device's `remote:` block was edited — a folder added, remote work
-turned on), the device closes the link once no session is working and dials again at once, so the
+turned on), the device closes the link once no session is working — no turn runs or waits, and no
+session has work out (*A session that still has work out*) — and dials again at once, so the
 client hears the new limits.
 
 ### `_lembas/event` — agent → client

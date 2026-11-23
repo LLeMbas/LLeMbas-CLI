@@ -107,6 +107,34 @@ over the link. A new capability and two fields; one prompt text made plainer; no
   person in that turn, unasked, and never tells the person to ask again. A session keeps the system
   prompt it was started with (`context.md` §10), so only sessions started after the change read it.
 
+Amended before any release carried it, after a review of the CLI's implementation found work that
+could be lost around such turns. No capability, field or method is added by these; a client that
+follows 3.10.0 as first written follows this.
+
+- **A schedule's run waits for its subagents** (`acp.md`, *Scheduled work* → *The run waits for its
+  subagents*; `reports.md` §2). A scheduled turn on a device does not end while a subagent it
+  started is still out: the turn stays open (`waiting_for_subagents`), each report reaches the main
+  agent in the same turn, and the answer's `text` and `report` come from the last reply. Before,
+  the run answered with the reply that ended the main agent's first turn ("the subagents are on
+  it") and the real answer came in a turn `report_write` was not offered in. A run is one turn;
+  background commands are not waited for; Stop on a scheduled turn stops the run's subagents too,
+  and so does any other end of the turn with subagents still out.
+- **A session that still has work out** (`acp.md`, section of that name; `conformance/outstanding.json`,
+  8 cases): with no turn running, a subagent that works or waits, a report about to wake the main
+  agent, or a background command makes a session *not idle* for the device — the link is not
+  closed for a change of limits, a service does not start again for an update, and a terminal
+  opening the session is refused in words. `status.busy` still means "a turn runs".
+- **Stop, said whole** (`session/cancel`; *A turn the harness starts*): it stops the turn and no
+  subagent (the scheduled turn apart); a turn stopped while it waited for a model slot is in the
+  history like any stopped turn, its note with it; notes a stopped turn had not delivered are kept
+  with the session, across a restart.
+- **A steer nobody could be handed** (*A turn the harness starts*, Steer): kept with the session,
+  across a restart, and taken in at the next turn's first step in every mode — said with `steered`
+  and its id — and never also handed back as `unsent`. And the `task` end that carries `unsent`
+  comes before the `inbox` event that says the queue is empty.
+- **A wake that may not start a turn** (a schedule's session on an interactive-only model): the
+  session is idle again and the note is kept for the person's next message.
+
 ## 3.9.0
 
 Written ahead of the implementations; the CLI carries it in the same round. A new capability and
