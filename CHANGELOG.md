@@ -27,6 +27,30 @@ Harness spec 3.10.0: a turn the harness starts by itself is a turn like any othe
 - **Compacting or rewinding a session is refused while such a turn runs**, and the service no
   longer lets go of the session, or closes the link for a change of `remote:` settings, under it.
 
+- **A schedule that uses subagents now reports its real answer.** A scheduled run on this
+  computer used to answer as soon as the main agent had started its subagents ("they are on
+  it"), and the result arrived later in a turn that could not file a report. The run now stays
+  open until its subagents have reported, shows *Waiting for subagents* meanwhile, and its answer
+  and its report come from the last reply. Stopping the run stops its subagents too.
+- **Subagents and background jobs are no longer cut off by the service.** While a session's
+  subagents were working and the main agent was idle, the service counted the session as idle: an
+  update restarted it under them, and opening the session in a terminal stopped them without a
+  word, so their reports never came. The service now waits for them before it restarts or
+  redials, and a terminal that opens such a session is told what still runs and how to stop it.
+- **Stopping a turn that was waiting for a free model slot no longer loses what started it.** A
+  finished job's note, or your own message, stays in the conversation and the model reads it with
+  the next message.
+- **A message sent from the web while the link drops is not lost.** If the agent was answering a
+  subagent's report and finished before taking your message in, with no connection to hand it
+  back over, the message is kept with the session — also across a restart of the service — and
+  the agent reads it at the start of its next turn. It used to wait in memory, and with
+  `busy_input: queue` came back attached to an unrelated later prompt.
+- **A job's or subagent's note that arrives after you pressed Stop survives a restart** and goes
+  in with your next message, as before.
+- **In a schedule's chat on a model for interactive use only**, a subagent's report that may not
+  start a turn by itself no longer leaves the main agent marked as working: the session is idle
+  and the report goes in with your next message.
+
 ### Changed
 
 - **The main agent is told plainly how reports reach it** (`blocks/team_lead.md`): it does not

@@ -29,6 +29,7 @@ import type { SubagentResult } from "./tool/task.ts"
 import type { Client, ResolvedModel } from "./provider/types.ts"
 import { modelTitle, firstReply, promptTitle } from "./session/title.ts"
 import { Turns } from "./session/turns.ts"
+import { outstanding, type Outstanding } from "./session/outstanding.ts"
 import { Snapshots } from "./git/snapshot.ts"
 import { CWD_META, REMOTE_META, SCHEDULED_META, SCHEDULED_MODEL_META, Store } from "./session/store.ts"
 import { BUILTIN_TOOLS } from "./tool/registry.ts"
@@ -174,6 +175,12 @@ export interface App {
   jobsSessionId(): string
   /** The open session's jobs, running first. */
   jobs(): Job[]
+  /** What the session still has out when no turn of it runs (session/outstanding.ts): subagents
+   *  that work or wait, a report waiting for the main agent, background commands. */
+  out(): Outstanding
+  /** Stop every subagent of the session — a team's members, background `task` subagents — without
+   *  a note: a schedule's run that ended leaves none working (acp.md, *Scheduled work*). */
+  stopSubagents(): void
   /** A note for the open session (a job's end, a subagent's message), beginning with its mark: to
    *  the model's next step while a turn runs, else a turn of its own marked `machine`. `shown`:
    *  the line a transcript shows for it. */
@@ -501,7 +508,14 @@ export function createApp(o: AppOptions): App {
     if (turns.current || engine.busy) return engine.note(text)
     // A turn a schedule's job wakes is the schedule's: not run on an interactive-only model.
     const no = kind === "scheduled" ? notAutomated(engine.model) : undefined
-    if (no) return void bus.emit({ type: "notice", level: "warn", message: `a job's note did not start a turn: ${no}` })
+    if (no) {
+      // No turn — so the note waits for the person's next message, kept with the session, and the
+      // main agent is idle again: a team that woke it gave it a slot for a turn that will not run
+      // (it would hold the slot, and every later report would be handed to that turn).
+      engine.keepNote(text)
+      teamRt.leadDone()
+      return void bus.emit({ type: "notice", level: "warn", message: `a job's note did not start a turn: ${no} It goes in with your next message.` })
+    }
     void turns.prompt(text, [], shown, { machine: true }).catch((e) => bus.emit({ type: "notice", level: "warn", message: `a job's note could not start a turn: ${(e as Error).message}` }))
   }
   const detach = registry.attach({ sessionId: jobsSessionId, bus, wake, store, runningMax: () => loaded.config.limits?.jobs ?? registry.limits.runningMax })
@@ -512,7 +526,7 @@ export function createApp(o: AppOptions): App {
     if (e.type !== "done") return
     const left = engine.takeNotes()
     if (!left.length) return
-    if (e.reason === "cancelled") return void engine.pendingContext.push(...left)
+    if (e.reason === "cancelled") return void left.forEach((n) => engine.keepNote(n))
     setTimeout(() => {
       for (const n of left) wake(n, shownLine(n))
     }, 0)
@@ -766,6 +780,9 @@ export function createApp(o: AppOptions): App {
       forget: () => teamRt.team.forgetTold(),
       beforeTurn: (signal) => teamRt.beforeLeadTurn(signal),
     },
+    // A schedule's run is not over while its subagents work (acp.md, *Scheduled work*): the run's
+    // turn waits for their reports. Any other turn ends, and a report wakes the session.
+    hold: { out: () => (automated && kind === "scheduled" && out().run_waits ? Math.max(1, out().subagents.length) : 0), rest: () => teamRt.leadDone() },
     changing: () => changing(),
     modeText: modeNote,
     // The configured MCP servers, up to loop.json's wait: their tools in the first list.
@@ -835,6 +852,14 @@ export function createApp(o: AppOptions): App {
   })
   // The lead's turn ended: it is idle, and its slot frees (team.md §8).
   bus.on((e) => e.type === "done" && teamRt.leadDone())
+  /** What the session still has out (session/outstanding.ts): its subagents, its background jobs. */
+  const out = (): Outstanding =>
+    outstanding({
+      agents: teamRt.team.tree().map((a) => ({ name: a.name, state: a.state })),
+      jobs: registry.running(jobsSessionId()).filter((j) => !j.team).map((j) => ({ id: j.id, kind: j.kind, state: j.state })),
+    })
+  // A turn that waits for its subagents looks again when one of them changes or ends.
+  bus.on((e) => (e.type === "team" || e.type === "job") && engine.poke())
   // Spec 3.4.0: the main agent's mode reaches down the tree; its progress and context are in it.
   bus.on((e) => {
     if (e.type === "mode") teamRt.mainMode(e.mode)
@@ -1150,6 +1175,17 @@ export function createApp(o: AppOptions): App {
     registry,
     jobsSessionId,
     jobs: () => registry.list(jobsSessionId()),
+    out,
+    stopSubagents() {
+      // The team's members leave it, with no note about it (stopAll); a background `task`
+      // subagent ends without one too — nobody is left to read either.
+      teamRt.stopAll()
+      for (const j of registry.running(jobsSessionId())) {
+        if (j.kind !== "subagent") continue
+        j.quiet = true
+        registry.stop(j)
+      }
+    },
     wake,
     team: teamRt,
     get context() {

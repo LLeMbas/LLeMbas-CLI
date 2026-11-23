@@ -103,6 +103,11 @@ export interface EngineOptions {
     /** Spec 3.4.0, a subagent: it ended by its own call (team_finish): the turn stops after this step. */
     ended?(): boolean
   }
+  /** A turn with nobody at it — a schedule's run (acp.md, *Scheduled work*) — does not end while
+   *  subagents it started still work: their reports come into the same turn. `out`: how many are
+   *  still out, 0 when the turn may end (and always 0 for any other turn); `rest`: the agent gives
+   *  up its model slot while it waits. `poke()` says that the answer may have changed. */
+  hold?: { out(): number; rest?(): void }
 }
 
 /** What a prompt carries besides its text. */
@@ -152,6 +157,13 @@ const wrapUpText = (limit: string) => fillPrompt(LOOP.wrap_up.message, { limit }
 export const PLAN_META = "plan"
 /** How the session's last turn ended when it did not finish (display.md §4): `{ reason, error? }`. */
 export const END_META = "ended"
+/** What was meant for the model and has not reached it, kept with the session so that a restart
+ *  does not lose it: `notes` — the harness's notes that started no turn (the turn was stopped, or
+ *  might not start), which go in with the next message; `steers` — messages steered into a turn
+ *  the harness started that ended before taking them in, with nobody listening to hand them back
+ *  to, which go in at the next turn's first step. */
+export const CARRIED_META = "carried"
+type Carried = { notes: string[]; steers: { text: string; id?: string }[] }
 
 export class Engine {
   messages: Message[] = []
@@ -181,6 +193,10 @@ export class Engine {
   private notes: string[] = []
   /** Those given to the model in this turn: kept word for word through a compaction, like the prompt. */
   private turnSteers: string[] = []
+  /** Kept with the session (CARRIED_META) until the model has them. */
+  private carried: Carried = { notes: [], steers: [] }
+  /** The turn waits for its subagents' reports (EngineOptions.hold): what ends the wait. */
+  private poked: (() => void) | undefined
   /** busy_input: steer — the inbox goes in at the next step; queue — it waits for the task to end. */
   busyInput: "steer" | "queue" = "steer"
   /** The session's plan (plan_write / plan_update), kept with the session and put into the
@@ -248,6 +264,51 @@ export class Engine {
     this.plan = this.storedPlan()
     this.results = this.resultsFor(o.sessionId)
     this.kept = this.storedPrefix()
+    this.carried = this.storedCarried()
+  }
+
+  /** What the store holds for this session that the model has not been given yet. */
+  private storedCarried(): Carried {
+    const none: Carried = { notes: [], steers: [] }
+    if (!this.o.store || !this.sessionId) return none
+    try {
+      const c = this.o.store.meta<Partial<Carried> | null>(this.sessionId, CARRIED_META)
+      if (!c || typeof c !== "object") return none
+      return {
+        notes: Array.isArray(c.notes) ? c.notes.filter((n): n is string => typeof n === "string") : [],
+        steers: Array.isArray(c.steers) ? c.steers.filter((x) => x && typeof x.text === "string").map((x) => ({ text: x.text, ...(typeof x.id === "string" ? { id: x.id } : {}) })) : [],
+      }
+    } catch {
+      return none
+    }
+  }
+
+  private saveCarried() {
+    if (!this.o.store || !this.sessionId) return
+    try {
+      this.o.store.setMeta(this.sessionId, CARRIED_META, this.carried.notes.length || this.carried.steers.length ? this.carried : null)
+    } catch {}
+  }
+
+  /** A note of the harness's that starts no turn — the turn it was for was stopped, or may not
+   *  start: kept with the session, and given to the model with the next message. */
+  keepNote(text: string) {
+    this.carried.notes.push(text)
+    this.saveCarried()
+  }
+
+  /** Messages steered into this turn that it ended before taking in, with nobody to hand them
+   *  back to: kept with the session, and given to the model at the next turn's first step — in
+   *  every `busy_input` mode, since nobody will send them again. Emptied from the inbox, so they
+   *  are never handed back as well. */
+  carry(): number {
+    const texts = this.inbox.splice(0)
+    const ids = this.inboxIds.splice(0)
+    if (!texts.length) return 0
+    this.carried.steers.push(...texts.map((text, i) => ({ text, ...(ids[i] ? { id: ids[i] } : {}) })))
+    this.saveCarried()
+    this.o.bus.emit({ type: "inbox", texts: [], mode: this.busyInput })
+    return texts.length
   }
 
   /** The prefix the store holds for this session, if any: a resumed session sends what it kept. */
@@ -534,6 +595,7 @@ export class Engine {
     this.keptBase = undefined
     this.lastRequest = undefined
     this.kept = this.storedPrefix()
+    this.carried = this.storedCarried()
     this.o.bus.emit({ type: "plan", plan: this.plan })
     this.o.toolCtx.readFiles.clear()
     this.o.toolCtx.fileStamps.clear()
@@ -724,11 +786,17 @@ export class Engine {
     this.inbox.push(text)
     this.inboxIds.push(id)
     this.o.bus.emit({ type: "inbox", texts: [...this.inbox], mode: this.busyInput })
+    this.poke()
   }
 
   /** How many messages wait. */
   get queued(): number {
     return this.inbox.length
+  }
+
+  /** The messages that wait, left where they are. */
+  get unsent(): string[] {
+    return [...this.inbox]
   }
 
   /** Take one waiting message out (↑ in the box, to look at or edit it); `putBack` returns it. */
@@ -759,6 +827,45 @@ export class Engine {
    *  carries its own mark. */
   note(text: string) {
     this.notes.push(text)
+    this.poke()
+  }
+
+  /** Something a waiting turn waits on may have changed (EngineOptions.hold): a note came, a
+   *  subagent ended or was stopped. */
+  poke() {
+    const p = this.poked
+    this.poked = undefined
+    p?.()
+  }
+
+  /** Whether something waits to go to the model at the next step. */
+  private hasInput(): boolean {
+    return this.notes.length > 0 || this.carried.steers.length > 0 || (this.busyInput === "steer" && this.inbox.length > 0)
+  }
+
+  /** The reply is done and subagents of this turn are still out (EngineOptions.hold): wait for
+   *  what they send. True: something came, and the turn goes on with it. False: nothing is out
+   *  any more, or the turn was stopped (`signal`). */
+  private async awaitReports(signal: AbortSignal): Promise<boolean> {
+    const hold = this.o.hold
+    if (!hold || hold.out() === 0) return false
+    // Its slot goes to whoever waits for one: the reports are what it waits for.
+    hold.rest?.()
+    while (!signal.aborted && !this.hasInput() && hold.out() > 0) {
+      this.progress.set({ phase: "waiting_for_subagents", running: hold.out() })
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          signal.removeEventListener("abort", done)
+          if (this.poked === done) this.poked = undefined
+          resolve()
+        }
+        this.poked = done
+        signal.addEventListener("abort", done, { once: true })
+      })
+    }
+    if (signal.aborted || !this.hasInput()) return false
+    // A slot again before it goes on (team.md §8) — it may wait for one, and be stopped waiting.
+    return this.o.team?.beforeTurn ? await this.o.team.beforeTurn(signal) : true
   }
 
   /** Notes the task ended before delivering. */
@@ -777,13 +884,18 @@ export class Engine {
       const said = notes.map((n) => n.split("\n").find((l, i) => i > 0 && l.trim()) ?? n.split("\n")[0]!).join("; ")
       this.o.bus.emit({ type: "notice", level: noteNeedsAttention(said) ? "warn" : "info", message: said })
     }
-    if (this.busyInput !== "steer" || !this.inbox.length) return notes.length > 0
-    const texts = this.inbox.splice(0)
-    const ids = this.inboxIds.splice(0).filter((i): i is string => typeof i === "string")
+    // What an earlier turn left (carry) goes in whatever the mode; the inbox only when steering.
+    const late = this.carried.steers.splice(0)
+    if (late.length) this.saveCarried()
+    const now = this.busyInput === "steer" ? this.inbox.splice(0) : []
+    const nowIds = this.busyInput === "steer" ? this.inboxIds.splice(0) : []
+    if (!late.length && !now.length) return notes.length > 0
+    const texts = [...late.map((x) => x.text), ...now]
+    const ids = [...late.map((x) => x.id), ...nowIds].filter((i): i is string => typeof i === "string")
     this.turnSteers.push(...texts)
     this.push({ role: "user", parts: [{ type: "text", text: `${this.o.steerMark ?? STEER_MARK}\n${texts.join("\n\n")}` }], turn: false })
     this.o.bus.emit({ type: "steered", texts, ...(ids.length ? { ids } : {}) })
-    this.o.bus.emit({ type: "inbox", texts: [], mode: this.busyInput })
+    this.o.bus.emit({ type: "inbox", texts: [...this.inbox], mode: this.busyInput })
     return true
   }
 
@@ -810,7 +922,9 @@ export class Engine {
     this.busy = true
     this.o.bus.emit({ type: "prompt", text: shown, ...(meta.turnId ? { turnId: meta.turnId } : {}), ...(meta.attachments?.length ? { attachments: meta.attachments } : {}), ...(meta.machine ? { machine: true as const } : {}) })
     try {
-      return await this.run(text, [...this.pendingContext.splice(0), ...extra], meta.turnId, meta.machine, meta.maxSteps)
+      const kept = this.carried.notes.splice(0)
+      if (kept.length) this.saveCarried()
+      return await this.run(text, [...kept, ...this.pendingContext.splice(0), ...extra], meta.turnId, meta.machine, meta.maxSteps)
     } finally {
       this.busy = false
     }
@@ -825,6 +939,17 @@ export class Engine {
     if (!this.kept || this.kept.model !== this.model.ref) await this.o.beforeFirst?.()
     // A team's lead holds a slot of its model while its turn runs (team.md §8): it may wait for one.
     if (this.o.team?.beforeTurn && !(await this.o.team.beforeTurn(signal))) {
+      // Stopped while it waited for a slot. The turn has begun for everyone who listens — its
+      // `task` start and its `prompt` were said — so its message is in the conversation as any
+      // stopped turn's is, under the turn's id: a note that started it is not lost with it (and
+      // what was waiting to go in with it, `extra`, is not either), and the model reads it with
+      // the next message.
+      this.push({
+        role: "user",
+        parts: [{ type: "text", text }, ...extra.map((t) => (typeof t === "string" ? { type: "text" as const, text: t } : t))],
+        ...(turnId ? { turnId } : {}),
+        ...(machine ? { machine } : {}),
+      })
       bus.emit({ type: "done", reason: "cancelled" })
       return "cancelled"
     }
@@ -975,7 +1100,16 @@ export class Engine {
         bus.emit({ type: "notice", level: "warn", message: `the reply hit the output limit${limit} while writing a tool call; a call cut short is not run, and the model is told to split it` })
       // The model is done, but the user said something meanwhile: it carries on with that, in the
       // same task.
-      if (calls.length === 0 && !wrapUp && (this.notes.length || (this.busyInput === "steer" && this.inbox.length))) continue
+      if (calls.length === 0 && !wrapUp && this.hasInput()) continue
+      // A run with nobody at it is not over while its subagents work: it waits for their reports,
+      // which come in at this step boundary, and answers after the last one.
+      if (calls.length === 0 && !wrapUp && this.o.hold) {
+        if (await this.awaitReports(signal)) continue
+        if (signal.aborted) {
+          bus.emit({ type: "done", reason: "cancelled" })
+          return "cancelled"
+        }
+      }
       if (calls.length === 0 || wrapUp) {
         const reason = wrapUp ? (ranOut ? "budget" : "steps") : "stop"
         bus.emit({ type: "done", reason })

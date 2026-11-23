@@ -23,7 +23,7 @@ import { join } from "node:path"
 import { isLocal, paths } from "../config/paths.ts"
 import type { Mode } from "../config/schema.ts"
 import type { CommandInfo } from "../session/commands.ts"
-import { clampMode, refusalFor, type AcpAgent, type Limits } from "./agent.ts"
+import { clampMode, keeps, occupied, refusalFor, type AcpAgent, type Limits } from "./agent.ts"
 import { addPendingDeleted } from "./pending.ts"
 import { INVALID_PARAMS, Peer, RpcError, type Transport } from "./rpc.ts"
 
@@ -178,9 +178,12 @@ export class Hub {
     if (this.agent === agent) this.agent = undefined
   }
 
-  /** Whether anything works here now: a session the link runs, or one a terminal shares mid-turn. */
+  /** Whether anything works here now: a session the link runs — a turn of it, or with none
+   *  running its subagents and background jobs, which live in this process — or one a terminal
+   *  shares mid-turn. While it is true the service does not start again for an update and the
+   *  link is not closed for a change of limits. */
   busy(): boolean {
-    return [...this.held.values()].some((s) => s.prompting || s.own || s.queue) || [...this.shared.values()].some((s) => s.busy)
+    return [...this.held.values()].some(occupied) || [...this.shared.values()].some((s) => s.busy)
   }
 
   private announce(s: Shared) {
@@ -202,9 +205,15 @@ export class Hub {
   private releaseFor(peer: Peer, id: string): void {
     const other = this.shared.get(id)
     if (other && other.client !== peer && !other.client.isClosed) throw new RpcError(INVALID_PARAMS, `this session is open in another terminal (pid ${other.pid})`)
-    const held = this.agent?.holding(id)
-    if (held === "busy") throw new RpcError(INVALID_PARAMS, "this session is working on a prompt from the web UI — wait for it to finish, then open it")
-    if (held) this.agent!.drop(id)
+    // The hub's own copy — whether a link is up or not: it is let go of only when nothing of it
+    // works here. A terminal cannot take over a turn, a subagent or a background job that runs in
+    // this process, and closing the copy would stop them; so it is refused, in words.
+    const held = this.held.get(id)
+    if (!held) return
+    const why = keeps(held)
+    if (why) throw new RpcError(INVALID_PARAMS, why)
+    this.held.delete(id)
+    void held.app.close()
   }
 
   private accept(peer: Peer) {

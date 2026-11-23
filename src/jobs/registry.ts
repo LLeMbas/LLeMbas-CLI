@@ -496,6 +496,7 @@ export class JobRegistry {
     job.ended = undefined
     job.exit = undefined
     job.lastError = undefined
+    job.quiet = undefined
     this.persist(job)
     this.emit(job, "start")
   }
@@ -526,7 +527,8 @@ export class JobRegistry {
     this.persist(job)
     this.forget(job.sessionId)
     this.emit(job, "end")
-    if (!job.silent) this.deliver(job, text)
+    // `quiet`: stopped with nobody left to read its note (a schedule's run that ended).
+    if (!job.silent && !job.quiet) this.deliver(job, text)
     return { text, stopped }
   }
 

@@ -47,6 +47,7 @@ import type { Hub } from "./hub.ts"
 import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
 import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs, teamFindings, teamStop, teamTranscript, teamView, treeOf } from "./jobs.ts"
 import { isNote } from "../session/prefix.ts"
+import { outstandingReason } from "../session/outstanding.ts"
 import { deniedText, finalReply, judgeMonitor, monitorTimeout, notifyOf, permissionFor, refusalText, runMonitor, runOutcome, SCHEDULED, scheduledMode, type Report, type ScheduledTurn } from "./scheduled.ts"
 
 export const ACP_VERSION = 1
@@ -201,6 +202,19 @@ export interface Session {
 /** Whether a turn runs in the session now, whoever started it: a prompt of the client's, or the
  *  harness's own (a note waking it). What status, steer, compact, rewind and letting go ask. */
 export const working = (s: Session): boolean => s.prompting || s.own !== undefined
+
+/** Whether the session is anything but idle: a turn runs or waits its turn — or none does, and
+ *  work of it is still out: a subagent that works or waits, a report about to wake it, a
+ *  background command (session/outstanding.ts; acp.md, *A session that still has work out*). What
+ *  the service asks before it starts again for an update, closes the link for a change of limits,
+ *  or lets a terminal have the session: each of those would lose that work. */
+export const occupied = (s: Session): boolean => working(s) || s.queue !== undefined || s.app.out().has_work
+
+/** Why a terminal may not have this session now, in words — or undefined when it may. */
+export function keeps(s: Session): string | undefined {
+  if (working(s) || s.queue !== undefined) return "this session is working on a prompt from the web UI — wait for it to finish, then open it"
+  return outstandingReason(s.app.out())
+}
 
 /** A `task` event of a turn no prompt of the client's began — the harness's own. It is kept in the
  *  session's turn log as a terminal's turns are (running, then the last one finished, with no
@@ -1012,25 +1026,6 @@ export class AcpAgent {
   }
   private store?: Store
 
-  /** Whether a session runs here, and whether it is working (the hub, before a terminal opens it). */
-  holding(id: string): "busy" | "idle" | undefined {
-    const s = this.sessions.get(id)
-    return s ? (working(s) ? "busy" : "idle") : undefined
-  }
-
-  /** Whether any session this link runs is working, or has prompts waiting. */
-  anyBusy(): boolean {
-    return [...this.sessions.values()].some((s) => working(s) || s.queue)
-  }
-
-  /** Let go of an idle session: a terminal carries it on from the store. */
-  drop(id: string) {
-    const s = this.sessions.get(id)
-    if (!s || working(s)) return
-    this.sessions.delete(id)
-    void s.app.close()
-  }
-
   notifyInstance(method: string, params: unknown) {
     this.peer.notify(method, params)
   }
@@ -1261,6 +1256,10 @@ export class AcpAgent {
       off()
       if (prepared.model) app.returnModel(prev)
       app.engine.mode = turn.mode
+      // Nothing of a run's subagents works after its answer: by a turn that ended as meant they
+      // have all reported (the turn waited for them); one that was stopped, failed or ran out of
+      // steps or budget takes them with it — nobody would read what they report.
+      if (app.out().run_waits) app.stopSubagents()
     }
   }
 
@@ -1563,13 +1562,19 @@ export class AcpAgent {
     // provider's now (`deepseek/x`), so the ref alone no longer tells.
     let event: Event | Record<string, unknown> = e.type === "model" ? { ...e, instance: this.isInstance(e.connection) } : e.type === "team" ? { ...e, tree: treeOf(s.app) } : e
     // The end of a turn the harness started has no prompt's answer to carry what was steered into
-    // it too late: it goes back on the event (`unsent`, as in a prompt's answer) — to a client
-    // that hears events; otherwise it stays for the next turn's first step.
-    if (own && e.type === "task" && e.state === "end" && this.lembas && !this.peer.isClosed) {
-      const unsent = s.app.engine.takeInbox()
-      if (unsent.length) event = { ...e, unsent }
+    // it too late. To a client that hears events it goes back on the event (`unsent`, as in a
+    // prompt's answer) — said before the queue is said to be empty, so an emptied queue is never
+    // read as messages taken in. With nobody listening it is kept with the session and goes in at
+    // the next turn's first step (engine.carry): one or the other, never both.
+    let handedBack = false
+    if (own && e.type === "task" && e.state === "end") {
+      if (this.lembas && !this.peer.isClosed) {
+        const unsent = s.app.engine.unsent
+        if (unsent.length) (event = { ...e, unsent }), (handedBack = true)
+      } else s.app.engine.carry()
     }
     if (this.lembas) this.peer.notify("_lembas/event", { sessionId: s.id, event })
+    if (handedBack) s.app.engine.takeInbox()
     switch (e.type) {
       case "text":
         return this.update(s, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: e.text } })
