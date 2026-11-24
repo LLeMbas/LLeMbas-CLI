@@ -64,6 +64,8 @@ export interface RemoteState {
   terminal: boolean
   /** Accept scheduled work (spec 3.5.0). */
   scheduled: boolean
+  /** Device files may change files that run code (spec 3.11.0). */
+  files_that_run_code: boolean
 }
 
 export function remoteState(b: RemoteBlock = remoteBlock()): RemoteState {
@@ -73,6 +75,7 @@ export function remoteState(b: RemoteBlock = remoteBlock()): RemoteState {
     max_mode: b.max_mode ?? "edit",
     terminal: b.terminal === true,
     scheduled: b.scheduled === true,
+    files_that_run_code: b.files_that_run_code === true,
   }
 }
 

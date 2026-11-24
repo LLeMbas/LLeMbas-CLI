@@ -16,7 +16,9 @@ export async function guardExisting(abs: string, ctx: ToolContext): Promise<bool
   if (!st.isFile()) throw new ToolError(`${abs} is not a regular file`)
   if (!ctx.readFiles.has(abs)) throw new ToolError(`${abs} exists and has not been read in this session. Read it first.`)
   const seen = ctx.fileStamps.get(abs)
-  if (seen !== undefined && st.mtimeMs > seen + 1) throw new ToolError(`${abs} changed since you last read it. Read it again before changing it.`)
+  // A file the session reads through the client's editor is judged by its text there (below): its
+  // change time on disk moves whenever the editor saves, which is no change the model missed.
+  if (!ctx.editorSeen?.has(abs) && seen !== undefined && st.mtimeMs > seen + 1) throw new ToolError(`${abs} changed since you last read it. Read it again before changing it.`)
   // The same for text the client's editor holds unsaved: "read it first" follows the text.
   if (await changedInEditor(abs, ctx)) throw new ToolError(`${abs} changed since you last read it. Read it again before changing it.`)
   return true

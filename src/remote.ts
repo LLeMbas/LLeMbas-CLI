@@ -8,10 +8,11 @@
 //   lembas remote mode <manual|edit|auto|plan>     remote.max_mode
 //   lembas remote terminal <on|off>                remote.terminal
 //   lembas remote scheduled <on|off>               remote.scheduled: Accept scheduled work (spec 3.5.0)
+//   lembas remote files-that-run-code <on|off>     remote.files_that_run_code (spec 3.11.0), off by default
 //
 // Every change goes through the global config writer, which keeps the file's comments. A running
 // `lembas service` reads the block again whenever it uses it, so a change applies to it within a few
-// seconds, no restart (acp/link.ts). --json prints one object: {enabled, roots, max_mode, terminal, scheduled}.
+// seconds, no restart (acp/link.ts). --json prints one object: {enabled, roots, max_mode, terminal, scheduled, files_that_run_code}.
 import { resolve } from "node:path"
 import { ConfigError } from "./config/load.ts"
 import { expandHome } from "./config/paths.ts"
@@ -19,7 +20,7 @@ import { coveredBy, realOrResolved, remoteBlock, remoteState, rootFor, type Remo
 import { MODES, type Mode } from "./config/schema.ts"
 import { updateGlobalConfig } from "./config/write.ts"
 
-export const REMOTE_USAGE = `usage: lembas remote list | add <dir>… | remove <dir>… | enable | disable | mode <${MODES.join("|")}> | terminal <on|off> | scheduled <on|off>  [--json]`
+export const REMOTE_USAGE = `usage: lembas remote list | add <dir>… | remove <dir>… | enable | disable | mode <${MODES.join("|")}> | terminal <on|off> | scheduled <on|off> | files-that-run-code <on|off>  [--json]`
 
 export interface Io {
   out: (line: string) => void
@@ -36,6 +37,7 @@ function describe(s: RemoteState): string[] {
     `max mode: ${s.max_mode}`,
     `terminal: ${s.terminal ? "on" : "off"}`,
     `accept scheduled work: ${s.scheduled ? "on" : "off"}`,
+    `files that run code may be changed from the web: ${s.files_that_run_code ? "on" : "off"}`,
   ]
 }
 
@@ -153,6 +155,15 @@ export function remoteCommand(argv: string[], io: Io = stdio): number {
     if (rest.length !== 1 || (v !== "on" && v !== "off")) return io.err("usage: lembas remote scheduled <on|off>"), 2
     write([[["scheduled"], v === "on"]])
     if (v === "on" && block.enabled !== true) said.push("remote work is off: scheduled work needs it too — lembas remote add <dir> or enable")
+    return show()
+  }
+
+  // remote.files_that_run_code (spec 3.11.0): whether the file manager of the web UI and the apps
+  // may change git's own files, a project's agent configuration and the shell's start-up files.
+  if (sub === "files-that-run-code") {
+    const v = rest[0]
+    if (rest.length !== 1 || (v !== "on" && v !== "off")) return io.err("usage: lembas remote files-that-run-code <on|off>"), 2
+    write([[["files_that_run_code"], v === "on"]])
     return show()
   }
 

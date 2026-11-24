@@ -298,7 +298,7 @@ export const LOOP: {
    *  editor block of a prompt, diff items and a client's buffers. */
   editor: {
     complete: { max_bytes: number; max_tokens_default: number; max_tokens_cap: number }
-    rewrite: { selection_max_bytes: number; context_max_lines: number; context_max_bytes: number; instruction_max_chars: number }
+    rewrite: { selection_max_bytes: number; context_max_lines: number; context_max_bytes: number; instruction_max_chars: number; concurrent_max: number }
     context: { selection_max_chars: number; diagnostics_max: number; diagnostic_max_chars: number; open_max: number }
     diff: { max_bytes: number }
     buffers: { timeout_seconds: number }
@@ -310,6 +310,9 @@ export const LOOP: {
     uploads_max: number
     upload_idle_seconds: number
     search_max: number
+    upload_max_bytes: number
+    indexes_max: number
+    runs_code: { segments: string[]; project_dir: string; project: string[]; home: string[] }
     show: { text_max_bytes: number; media_max_bytes: number; media_wait_seconds: number }
   }
 } = LOOP_JSON

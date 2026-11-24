@@ -10,6 +10,7 @@ import { AcpAgent, type Limits } from "../src/acp/agent.ts"
 import { Peer, type Transport } from "../src/acp/rpc.ts"
 import { paths } from "../src/config/paths.ts"
 import { setTrust } from "../src/project/root.ts"
+import { LOOP } from "../src/harness.ts"
 import { delta, fakeProvider, toolCall, type Fake } from "./fake-provider.ts"
 
 let fake: Fake | undefined
@@ -69,7 +70,7 @@ const err = (message: string, status: number) => Response.json({ error: { messag
 
 /** A fake LLeMbas server for the editor routes, and this machine logged in to it. `complete`
  *  answers each completion (given the body and the request, which aborts when the device closes it). */
-function server(o: { complete?: (body: any, req: Request) => Response | Promise<Response>; editor?: boolean; allowed?: string[] | null } = {}) {
+function server(o: { complete?: (body: any, req: Request) => Response | Promise<Response>; editor?: boolean; allowed?: string[] | null; slowEditorMs?: number } = {}) {
   const state = { autocomplete: "f/m" as string | null, source: "instance" as string | null, main: null as string | null }
   const settings = () => ({ autocomplete: { model: state.autocomplete, source: state.source, allowed: o.allowed ?? null }, main: { model: state.main } })
   const s = Bun.serve({
@@ -82,6 +83,7 @@ function server(o: { complete?: (body: any, req: Request) => Response | Promise<
       if (u.pathname === "/v1/models") return Response.json({ data: [{ id: "f/m", name: "Flash", default: true }, { id: "f/deep", name: "Deep", kind: "chat" }, { id: "f/embed", kind: "embedding" }] })
       if (u.pathname === "/v1/lembas/complete" && o.complete) return o.complete(body, req)
       if (u.pathname === "/v1/lembas/editor" && o.editor !== false) {
+        if (o.slowEditorMs) await Bun.sleep(o.slowEditorMs)
         if (req.method === "PUT") {
           if (body.autocomplete_model === "f/nope") return err("f/nope is not one of your models.", 404)
           if ("autocomplete_model" in body) (state.autocomplete = body.autocomplete_model ?? "f/m"), (state.source = body.autocomplete_model ? "person" : "instance")
@@ -579,4 +581,210 @@ test("show: a client without media is not handed a picture; a table is named for
   await media.c.request("session/prompt", { sessionId: s2.sessionId, prompt: [{ type: "text", text: "show" }] })
   expect(sent[0]).toMatchObject({ path: "loaves.csv", kind: "table", text: "kind,count\nrye,3\n" })
   expect(sent[0].handle).toBeUndefined()
+})
+
+// ── after the review ────────────────────────────────────────────────────────────────────────
+
+test("unsaved text is never replaced from the disk: a client that stops answering at edit time refuses the edit", async () => {
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "r1", "read", JSON.stringify({ path: "a.txt" }))] },
+    { chunks: [toolCall(0, "e1", "edit", JSON.stringify({ path: "a.txt", old: "saved", new: "clobbered" }))] },
+    { chunks: [toolCall(0, "w1", "write", JSON.stringify({ path: "a.txt", content: "clobbered\n" }))] },
+    { chunks: [delta({ content: "done" })] },
+  ])
+  config(fake.url)
+  const root = project({ "a.txt": "saved text\n" })
+  const file = join(root, "a.txt")
+  let reads = 0
+  const writes: string[] = []
+  const { c } = await editor({
+    fs: { readTextFile: true, writeTextFile: true },
+    handlers: {
+      // The first read gives the buffer; after that the editor is busy and fails.
+      "fs/read_text_file": () => {
+        if (reads++ === 0) return { content: "saved text\nand a line not saved yet\n" }
+        throw new Error("the editor is busy")
+      },
+      "fs/write_text_file": (p) => (writes.push(p.content), null),
+    },
+  })
+  const s: any = await c.request("session/new", { cwd: root, _meta: { mode: "auto" } })
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "go" }] })
+  const tools = fake.requests.at(-1).messages.filter((m: any) => m.role === "tool").map((m: any) => m.content)
+  expect(tools[0]).toContain("2: and a line not saved yet")
+  // Neither the edit nor the overwrite fell back to the disk's text.
+  expect(tools[1]).toContain("Read it again before changing it")
+  expect(tools[2]).toContain("Read it again before changing it")
+  expect(writes).toEqual([])
+  expect(readFileSync(file, "utf8")).toBe("saved text\n")
+})
+
+test("only the read tool and a write that ran count as reading: a patch that was shown and refused does not", async () => {
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "r1", "read", JSON.stringify({ path: "a.txt" }))] },
+    { chunks: [toolCall(0, "p1", "apply_patch", JSON.stringify({ patch: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-two\n+three\n" }))] },
+    { chunks: [toolCall(0, "w1", "write", JSON.stringify({ path: "a.txt", content: "mine\n" }))] },
+    { chunks: [delta({ content: "done" })] },
+  ])
+  config(fake.url)
+  const root = project({ "a.txt": "one\n" })
+  let buffer = "one\n"
+  let reads = 0
+  const { c } = await editor({
+    fs: { readTextFile: true, writeTextFile: true },
+    // The patch is the one card refused; the write would be allowed.
+    ask: (p) => ({ outcome: { outcome: "selected", optionId: String(p.toolCall.rawInput?.patch ?? "") ? "deny" : "once" } }),
+    handlers: {
+      "fs/read_text_file": () => {
+        // After the model's read the person types: the buffer is "two" from then on.
+        const now = buffer
+        if (reads++ === 0) buffer = "two\n"
+        return { content: now }
+      },
+      "fs/write_text_file": (p) => ((buffer = p.content), null),
+    },
+  })
+  const s: any = await c.request("session/new", { cwd: root, _meta: { mode: "manual" } })
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "go" }] })
+  const tools = fake.requests.at(-1).messages.filter((m: any) => m.role === "tool").map((m: any) => m.content)
+  expect(tools[0]).toContain("1: one")
+  // The preview of the refused patch looked at "two" — the model never did. The overwrite is refused.
+  expect(tools[2]).toContain("changed since you last read it")
+  expect(buffer).toBe("two\n")
+})
+
+test("the link's client is never asked for a file's text, whatever it says of fs", async () => {
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "r1", "read", JSON.stringify({ path: "a.txt" }))] },
+    { chunks: [toolCall(0, "e1", "edit", JSON.stringify({ path: "a.txt", old: "disk", new: "changed" }))] },
+    { chunks: [delta({ content: "done" })] },
+  ])
+  config(fake.url)
+  const root = project({ "a.txt": "on disk\n" })
+  const calls: string[] = []
+  const { c } = await editor({
+    limits: { roots: [root], maxMode: "auto", approvalTimeoutMs: 3000, requireTrust: true },
+    fs: { readTextFile: true, writeTextFile: true },
+    handlers: { "fs/read_text_file": (p) => (calls.push(p.path), { content: "the server's own text\n" }), "fs/write_text_file": (p) => (calls.push(p.path), null) },
+  })
+  const s: any = await c.request("session/new", { cwd: root, _meta: { mode: "auto" } })
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "go" }] })
+  expect(calls).toEqual([])
+  expect(fake.requests[1].messages.find((m: any) => m.role === "tool").content).toContain("1: on disk")
+  expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("on changed\n")
+})
+
+test("a write the editor never confirms is not written to the disk as well; one it took is not refused later for the disk's change time", async () => {
+  const old = LOOP.editor.buffers.timeout_seconds
+  LOOP.editor.buffers.timeout_seconds = 0.3
+  try {
+    fake = fakeProvider([
+      { chunks: [toolCall(0, "w1", "write", JSON.stringify({ path: "slow.txt", content: "one\n" }))] },
+      { chunks: [toolCall(0, "w2", "write", JSON.stringify({ path: "new.txt", content: "first\n" }))] },
+      { chunks: [toolCall(0, "w3", "write", JSON.stringify({ path: "new.txt", content: "second\n" }))] },
+      { chunks: [delta({ content: "done" })] },
+    ])
+    config(fake.url)
+    const root = project()
+    const buffers: Record<string, string> = {}
+    const { c } = await editor({
+      fs: { readTextFile: true, writeTextFile: true },
+      handlers: {
+        "fs/read_text_file": (p) => {
+          if (!(p.path in buffers)) throw new Error("not open")
+          return { content: buffers[p.path] }
+        },
+        "fs/write_text_file": async (p) => {
+          // slow.txt: the editor never answers in time.
+          if (p.path.endsWith("slow.txt")) return new Promise(() => {})
+          buffers[p.path] = p.content
+          // The editor's save reaches the disk a moment after it answered.
+          setTimeout(() => writeFileSync(p.path, p.content), 40)
+          return null
+        },
+      },
+    })
+    const s: any = await c.request("session/new", { cwd: root, _meta: { mode: "auto" } })
+    await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "go" }] })
+    const tools = fake.requests.at(-1).messages.filter((m: any) => m.role === "tool").map((m: any) => m.content)
+    expect(tools[0]).toContain("did not confirm writing")
+    // Not written by the device as well: two writers would cross.
+    expect(await Bun.file(join(root, "slow.txt")).exists()).toBe(false)
+    expect(tools[1]).toContain("Created")
+    // The second write is judged by the text in the editor, not by the save that landed in between.
+    expect(tools[2]).not.toContain("changed since")
+    expect(tools[2]).not.toContain("Read it")
+    expect(buffers[join(root, "new.txt")]).toBe("second\n")
+  } finally {
+    LOOP.editor.buffers.timeout_seconds = old
+  }
+})
+
+/** A model's server that never answers, and says when a request to it is closed. */
+function hangingProvider() {
+  const state = { open: 0, closed: 0 }
+  const s = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.method !== "POST") return Response.json({ data: [] })
+      state.open++
+      await new Promise<void>((resolve) => req.signal.addEventListener("abort", () => (state.closed++, resolve())))
+      return new Response("gone", { status: 499 })
+    },
+  })
+  return { url: `http://127.0.0.1:${s.port}/v1`, state, stop: () => s.stop(true) }
+}
+
+test("rewrites: at most four at once; every one stops when its client goes, with an id or without", async () => {
+  const hang = hangingProvider()
+  try {
+    config(hang.url)
+    const { c, close } = await editor()
+    const running = [0, 1, 2, 3].map((i) => refusal(c.request("_lembas/edit", { text: "y", instruction: "i", ...(i % 2 ? { id: `e${i}` } : {}) })))
+    await until(() => hang.state.open === 4, "four rewrites to reach the model")
+    const fifth = await refusal(c.request("_lembas/edit", { text: "y", instruction: "i" }))
+    expect(fifth.data).toEqual({ reason: "busy" })
+    expect(hang.state.open).toBe(4)
+    // An id longer than 100 characters is cut the same way where it is given and where it is cancelled.
+    c.notify("_lembas/edit/cancel", { id: "e1" })
+    await until(() => hang.state.closed === 1, "the cancelled rewrite's request to close")
+    const long = "x".repeat(150)
+    const sixth = c.request("_lembas/edit", { id: long, text: "y", instruction: "i" })
+    await until(() => hang.state.open === 5, "the long-id rewrite to reach the model")
+    c.notify("_lembas/edit/cancel", { id: long })
+    expect(await sixth).toEqual({ text: "", cancelled: true })
+    // The client goes: the three still running — two of them without an id — are stopped.
+    close()
+    await until(() => hang.state.closed === 5, "every rewrite's request to close")
+    void running
+  } finally {
+    hang.stop()
+  }
+})
+
+test("a rewrite cancelled while its model is still being chosen never reaches the model", async () => {
+  fake = fakeProvider([{ chunks: [delta({ content: "never" })] }])
+  config(fake.url)
+  // The person's main model is asked of the server first, and the server is slow about it.
+  server({ slowEditorMs: 300 })
+  const { c } = await editor()
+  const edit = c.request("_lembas/edit", { id: "early", text: "y", instruction: "i" })
+  await until(() => seen.some((s) => s.path === "/v1/lembas/editor"), "the settings to be asked for")
+  c.notify("_lembas/edit/cancel", { id: "early" })
+  expect(await edit).toEqual({ text: "", cancelled: true })
+  await Bun.sleep(350)
+  expect(fake.requests.length).toBe(0)
+})
+
+test("a typed message that begins like the editor's block is shown as typed", async () => {
+  fake = fakeProvider([{ chunks: [delta({ content: "ok" })] }])
+  config(fake.url)
+  const root = project()
+  const { c } = await editor()
+  const s: any = await c.request("session/new", { cwd: root })
+  const typed = "<editor>\nis this tag valid XML?"
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: typed }], _meta: { lembas: { editor: { path: "a.xml" } } } })
+  const h: any = await c.request("_lembas/session/history", { sessionId: s.sessionId })
+  // What was typed is there; the block the client added is not.
+  expect(h.turns[0].text).toBe(typed)
 })

@@ -44,7 +44,8 @@ import { outstanding, type OutstandingInput } from "../src/session/outstanding.t
 import { background, scheduledRefusal, twin, type BackgroundCall, type Listed } from "../src/provider/interactive.ts"
 
 import { diffContent, editorBlock, rewriteMessage, rewriteModel, RewriteOutput, trimWindow } from "../src/acp/editor.ts"
-import { baseCheck, judgePath, type FsOp } from "../src/acp/files.ts"
+import { baseCheck, judgePath, runsCode, sameAgain, type FsOp } from "../src/acp/files.ts"
+import { textFrom, writeTo } from "../src/tool/buffers.ts"
 import { showPlan } from "../src/tool/show.ts"
 
 type Case = Record<string, unknown>
@@ -87,13 +88,16 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
       const r = rewriteModel({ asked: c.asked as string | undefined, session: c.session as string | undefined, main: c.main as string | undefined, served: c.served as string[], start: c.start as string | undefined })
       return { model: r.model, from: r.from }
     }
+    if (c.kind === "buffer") return "read" in c ? { text: textFrom({ tracked: c.tracked === true, read: c.read as "text" | "fails" | "none" }) } : { write: writeTo({ tracked: c.tracked === true, write: c.write as "taken" | "refused" | "unknown" | "none" }) }
     if (c.kind === "diff") return { content: diffContent({ editor: c.editor === true, when: c.when as "ask" | "done", bytes: c.bytes as number, max: c.max as number }) }
     throw new Error(`editor: unknown kind ${String(c.kind)}`)
   },
   // Spec 3.11.0: device files (src/acp/files.ts).
   device_files: (c) => {
     if (c.kind === "base") return baseCheck({ ...("base" in c ? { base: c.base } : {}), overwrite: c.overwrite, current: (c.current ?? null) as string | null })
+    if (c.kind === "again") return sameAgain(c.first as string, c.again as Parameters<typeof sameAgain>[1])
     const guardedRoots = c.protected as string[]
+    const home = c.home as string | undefined
     const links = (c.links ?? {}) as Record<string, string>
     return judgePath({
       op: c.op as FsOp,
@@ -107,6 +111,7 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
       maxMode: c.max_mode as Mode,
       real: (p) => followLinks(links, p),
       deep: c.deep === true,
+      ...(home && c.files_that_run_code !== true ? { runsCode: (p: string) => runsCode(p, home) } : {}),
     })
   },
   // Spec 3.11.0: what the show tool sends for a file (src/tool/show.ts).

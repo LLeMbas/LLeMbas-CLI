@@ -1091,6 +1091,10 @@
           "description": "Accept scheduled work (harness acp.md, spec 3.5.0): let your schedules on the LLeMbas instance run here as agent turns, in the folders remote work may use, in the schedule's mode (Edit unless it says Auto) lowered to max_mode. Default false. lembas service scheduled on|off.",
           "type": "boolean"
         },
+        "files_that_run_code": {
+          "description": "Let the file manager of the web UI and the apps change files that run code here (harness acp.md, spec 3.11.0): git's hooks and configuration, a project's agent configuration, your shell's start-up files. Default false: they can be read from there, and are changed only on this machine.",
+          "type": "boolean"
+        },
         "terminal_integration": {
           "description": "Shell integration in those terminals (bash, zsh, fish): after your own startup files, the shell marks each prompt, command and exit status (OSC 133) and its directory (OSC 7), so the web UI shows the directory, a mark beside each finished command, and can jump between commands. false: the shell starts as it is. Default true.",
           "type": "boolean"

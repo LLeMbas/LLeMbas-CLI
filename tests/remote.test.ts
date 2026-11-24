@@ -37,7 +37,7 @@ test("list --json: one object, the defaults applied", () => {
   const r = run("list", "--json")
   expect(r.code).toBe(0)
   expect(r.out).toHaveLength(1)
-  expect(r.json()).toEqual({ enabled: false, roots: [], max_mode: "edit", terminal: false, scheduled: false })
+  expect(r.json()).toEqual({ enabled: false, roots: [], max_mode: "edit", terminal: false, scheduled: false, files_that_run_code: false })
   // Without --json, lines a person reads.
   const plain = run("list")
   expect(plain.out.join("\n")).toContain("remote work: off")
@@ -54,7 +54,7 @@ test("add: absolute real paths, turns remote work on, skips duplicates and cover
   const r = run("add", a, link, "--json")
   expect(r.code).toBe(0)
   // The link is stored as where it leads.
-  expect(r.json()).toEqual({ enabled: true, roots: [a, b], max_mode: "edit", terminal: false, scheduled: false })
+  expect(r.json()).toEqual({ enabled: true, roots: [a, b], max_mode: "edit", terminal: false, scheduled: false, files_that_run_code: false })
   // Again, and a directory inside one: nothing more.
   const again = run("add", a, join(a, "sub"))
   expect(again.code).toBe(0)
@@ -212,7 +212,7 @@ test("the service links with remote work off, says no roots and refuses everythi
   // Turned on from outside, as Desktop does: it links again, saying the new roots, and serves.
   run("add", a)
   await until(() => hellos.length === 2, "a second hello")
-  expect(hellos[1].limits).toEqual({ roots: [a], max_mode: "edit", require_trust: true, scheduled: false })
+  expect(hellos[1].limits).toEqual({ roots: [a], max_mode: "edit", require_trust: true, scheduled: false, files_that_run_code: false })
   expect(states.some((s) => s.detail === "the remote settings changed; linking again")).toBe(true)
   await ask("initialize", { protocolVersion: 1, clientCapabilities: { _meta: { lembas: { protocol: 2 } } } })
   expect((await ask("_lembas/directories", {})).result.places.map((p: any) => [p.path, p.accepted])).toEqual([[a, true]])
@@ -225,4 +225,13 @@ test("the service links with remote work off, says no roots and refuses everythi
   expect(hellos[3].limits.roots).toEqual([])
   stop.abort()
   expect((await done).state).toBe("stopped")
+})
+
+test("files-that-run-code: off by default, switched on and off", () => {
+  fresh()
+  expect(run("files-that-run-code", "on", "--json").json().files_that_run_code).toBe(true)
+  expect(run("list").out.join("\n")).toContain("files that run code may be changed from the web: on")
+  expect(run("files-that-run-code", "off", "--json").json().files_that_run_code).toBe(false)
+  expect(run("files-that-run-code").code).toBe(2)
+  expect(run("files-that-run-code", "maybe").code).toBe(2)
 })

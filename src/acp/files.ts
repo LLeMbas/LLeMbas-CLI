@@ -3,7 +3,8 @@
 // What bounds them is this device: only inside `remote.roots` with remote work on; a path judged
 // where it really is, symlinks followed first; never the CLI's own files, never a protected path;
 // read-only where the device allows plan mode only. conformance/device_files.json.
-import { closeSync, cpSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readlinkSync, readSync, renameSync, rmSync, statSync, writeFileSync, writeSync, chmodSync } from "node:fs"
+import { closeSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, renameSync, rmSync, statSync, writeFileSync, writeSync, chmodSync } from "node:fs"
+import { cp, rm } from "node:fs/promises"
 import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
@@ -12,12 +13,12 @@ import type { Mode } from "../config/schema.ts"
 import { LOOP } from "../harness.ts"
 import { realPath } from "../permission/evaluate.ts"
 import { protectedPath, protectedRoots } from "../permission/hardline.ts"
-import { FileIndex } from "../project/files.ts"
+import fuzzysort from "fuzzysort"
 import { INVALID_PARAMS, RpcError } from "./rpc.ts"
 
 const F = LOOP.files
 
-export type FsReason = "off" | "invalid" | "outside" | "own" | "protected" | "read_only" | "missing" | "exists" | "changed" | "not_a_file" | "not_a_directory" | "no_trash" | "too_large"
+export type FsReason = "off" | "invalid" | "outside" | "own" | "protected" | "runs_code" | "read_only" | "missing" | "exists" | "changed" | "not_a_file" | "not_a_directory" | "no_trash" | "too_large"
 
 /** `read`: list, stat, read, search, a copy's source. `write`: write, mkdir, a move's or a copy's
  *  target. `remove`: delete and a move's source — the name itself, a link not followed. */
@@ -42,10 +43,12 @@ export interface Judging {
   real: (p: string) => string
   /** The method works on everything under the path too (a delete, a move, a copy's source). */
   deep?: boolean
+  /** Whether a change at `p` would change what runs on the device (`runsCode`). Absent: not judged. */
+  runsCode?: (p: string) => boolean
 }
 
 /** Whether a method may touch `path`, and where it really is (`kind: path`). The first that
- *  applies of off, invalid, outside, own, protected, read_only. */
+ *  applies of off, invalid, outside, own, protected, runs_code, read_only. */
 export function judgePath(o: Judging): { ok: true; real: string } | { refused: FsReason } {
   if (!o.enabled || o.sharedOnly || !o.roots.length) return { refused: "off" }
   const given = typeof o.path === "string" ? expandHome(o.path.trim()) : ""
@@ -61,9 +64,41 @@ export function judgePath(o: Judging): { ok: true; real: string } | { refused: F
   const deep = o.deep || o.op === "remove"
   if (own.some((d) => inside(real, d) || inside(norm, d) || (deep && inside(d, real)))) return { refused: "own" }
   if (o.guarded(norm) || o.guarded(real) || (deep && (o.guardedRoots ?? []).some((g) => inside(o.real(g), real)))) return { refused: "protected" }
+  // Reading a file that runs is reading; changing one is not the same act as changing a document.
+  if (o.op !== "read" && (o.runsCode?.(real) || o.runsCode?.(norm))) return { refused: "runs_code" }
   if (o.op !== "read" && o.maxMode === "plan") return { refused: "read_only" }
   return { ok: true, real }
 }
+
+/** Files that run code (acp.md, *Files that run code*; `loop.json` `files.runs_code`): git's own
+ *  directory (hooks and config run programs), a project's agent configuration (its config,
+ *  agents, commands, skills — and with them its MCP servers), and the start-up files of the
+ *  device's user. `_lembas/fs/*` reads them and never changes them: a path that is one, is under
+ *  one, or — for the project's and the home's — holds one. */
+export function runsCode(p: string, home: string, R: typeof F.runs_code = F.runs_code): boolean {
+  const parts = p.split("/")
+  if (parts.some((x) => R.segments.includes(x))) return true
+  const at = parts.lastIndexOf(R.project_dir)
+  if (at >= 0) {
+    const rest = parts.slice(at + 1)
+    // The directory itself (moved or copied into place it brings all of them), or one of its names.
+    if (!rest.length || R.project.includes(rest[0]!)) return true
+  }
+  return R.home.some((h) => {
+    const g = join(home, h)
+    return inside(p, g) || (p !== home && inside(g, p) && inside(p, home))
+  })
+}
+
+/** After anything was waited for, a path is judged again: the method goes on only when it is
+ *  still allowed and still the same place (`kind: again`). Otherwise something moved under it. */
+export function sameAgain(first: string, again: { ok: true; real: string } | { refused: FsReason }): { act: true } | { refused: FsReason } {
+  if ("refused" in again) return { refused: again.refused }
+  return again.real === first ? { act: true } : { refused: "changed" }
+}
+
+/** A part file of an upload, beside its target: never listed, searched or named by a client. */
+export const PART = /^\..*\.lembas-part$/
 
 const HASH = /^sha256:[0-9a-f]{64}$/
 
@@ -81,6 +116,8 @@ export interface FsLimits {
   maxMode: Mode
   enabled?: boolean
   sharedOnly?: boolean
+  /** `remote.files_that_run_code`: files that run code may be changed. Absent: no. */
+  runsCode?: boolean
 }
 
 const SENTENCES: Record<string, (p: string) => string> = {
@@ -94,6 +131,7 @@ const SENTENCES: Record<string, (p: string) => string> = {
   exists: (p) => `${p} already exists on this computer`,
   not_a_file: (p) => `${p} is not a file`,
   not_a_directory: (p) => `${p} is not a folder`,
+  runs_code: (p) => `${p} is a file that runs code on this computer (git's own files, a project's agent configuration, or a start-up file): it can be read from here, and is changed from here only once the computer allows it — lembas remote files-that-run-code on there (remote.files_that_run_code)`,
 }
 
 const refuse = (reason: FsReason, path: string, message?: string, extra: Record<string, unknown> = {}): never => {
@@ -107,14 +145,82 @@ export function ownDirs(): string[] {
 
 const guarded = (p: string) => protectedPath(p) !== undefined
 
-/** `sha256:` and the hex digest of a file's content, read in pieces. */
-export async function hashFile(abs: string): Promise<string> {
+const yieldNow = () => new Promise<void>((r) => setImmediate(r))
+
+/** `sha256:` and the hex digest of an open file's content, read in pieces, letting other work in
+ *  between. By descriptor: the file that was judged is the file that is read, whatever becomes
+ *  of its name meanwhile. */
+export async function hashFd(fd: number): Promise<string> {
   const h = createHash("sha256")
-  for await (const chunk of createReadStream(abs)) h.update(chunk as Buffer)
+  const buf = Buffer.alloc(1024 * 1024)
+  for (let at = 0; ; ) {
+    const n = readSync(fd, buf, 0, buf.length, at)
+    if (n <= 0) break
+    h.update(buf.subarray(0, n))
+    at += n
+    await yieldNow()
+  }
   return `sha256:${h.digest("hex")}`
 }
 
+/** The same for a path this process chose itself (the show tool's file). */
+export async function hashFile(abs: string): Promise<string> {
+  const fd = openSync(abs, "r")
+  try {
+    return await hashFd(fd)
+  } finally {
+    closeSync(fd)
+  }
+}
+
 const hashBytes = (b: Uint8Array) => `sha256:${createHash("sha256").update(b).digest("hex")}`
+
+/** The part files of uploads under way, kept in the state directory so that a process that died
+ *  with one open can take it away at its next start. */
+const journalFile = () => join(paths.state, "uploads.json")
+function journal(change?: (list: string[]) => string[]): string[] {
+  let list: string[] = []
+  try {
+    const read = JSON.parse(readFileSync(journalFile(), "utf8"))
+    if (Array.isArray(read)) list = read.filter((x): x is string => typeof x === "string")
+  } catch {}
+  if (!change) return list
+  const next = change(list)
+  try {
+    mkdirSync(paths.state, { recursive: true, mode: 0o700 })
+    writeFileSync(journalFile(), JSON.stringify(next), { mode: 0o600 })
+  } catch {}
+  return next
+}
+
+/** Whether a part file's name still leads to where it was made: its directory, as recorded, is
+ *  its own real path (nothing on the way became a link), and the name is a plain file. */
+function partInPlace(part: string): boolean {
+  try {
+    return realPath(dirname(part)) === dirname(part) && lstatSync(part).isFile()
+  } catch {
+    return false
+  }
+}
+
+/** Part files a process left behind (it was killed with an upload open): removed, once, by the
+ *  next one. Only what the journal names and what is named like a part file. */
+export function sweepParts(live: ReadonlySet<string> = new Set()): string[] {
+  const gone: string[] = []
+  journal((list) =>
+    list.filter((part) => {
+      if (live.has(part)) return true
+      if (PART.test(basename(part)) && partInPlace(part)) {
+        try {
+          rmSync(part, { force: true })
+          gone.push(part)
+        } catch {}
+      }
+      return false
+    }),
+  )
+  return gone
+}
 
 interface Upload {
   id: string
@@ -123,6 +229,8 @@ interface Upload {
   part: string
   fd: number
   received: number
+  /** What was said of it when it began (for the sentences). */
+  said: string
   base: unknown
   overwrite: unknown
   timer: ReturnType<typeof setTimeout>
@@ -180,21 +288,60 @@ export function moveToTrash(abs: string, env: NodeJS.ProcessEnv = process.env, p
   }
 }
 
+/** One change at a time, for every link of this process: a path that was judged stays what it
+ *  was judged to be until the method that judged it has acted, because nothing else that changes
+ *  files through these methods runs in between. */
+let changes: Promise<unknown> = Promise.resolve()
+function oneAtATime<T>(fn: () => T | Promise<T>): Promise<T> {
+  const run = changes.then(fn, fn)
+  changes = run.catch(() => {})
+  return run
+}
+
+let swept = false
+
+/** The names under a folder, for a search by name: kept for the few folders searched last. */
+interface Names {
+  at: number
+  all: string[]
+}
+
 /** `_lembas/fs/*` for one link. */
 export class DeviceFiles {
   private uploads = new Map<string, Upload>()
-  private indexes = new Map<string, FileIndex>()
+  private names = new Map<string, Names>()
 
-  constructor(private limits: () => FsLimits | undefined) {}
+  constructor(private limits: () => FsLimits | undefined) {
+    if (!swept) {
+      swept = true
+      sweepParts()
+    }
+  }
 
-  /** Where `path` really is for `op`, or the refusal. */
-  private judge(op: FsOp, path: unknown, deep = false): string {
+  private judging(op: FsOp, path: unknown, deep = false) {
     const L = this.limits()
     const said = typeof path === "string" ? path : ""
-    if (!L) return refuse("off", said)
-    const r = judgePath({ op, path: said, roots: L.roots, own: ownDirs(), guarded, guardedRoots: protectedRoots(), enabled: L.enabled !== false, sharedOnly: L.sharedOnly, maxMode: L.maxMode, real: realPath, deep })
-    if ("refused" in r) return refuse(r.refused, said)
+    if (!L) return { refused: "off" as FsReason }
+    if (PART.test(basename(said))) return { refused: "invalid" as FsReason }
+    const home = realPath(homedir())
+    return judgePath({ op, path: said, roots: L.roots, own: ownDirs(), guarded, guardedRoots: protectedRoots(), enabled: L.enabled !== false, sharedOnly: L.sharedOnly, maxMode: L.maxMode, real: realPath, deep, ...(L.runsCode === true ? {} : { runsCode: (p: string) => runsCode(p, home) }) })
+  }
+
+  /** Where `path` really is for `op`, or the refusal. Nothing is waited for between this and
+   *  the act it allows — see `again`. */
+  private judge(op: FsOp, path: unknown, deep = false): string {
+    const r = this.judging(op, path, deep)
+    if ("refused" in r) return refuse(r.refused, typeof path === "string" ? path : "")
     return r.real
+  }
+
+  /** After something was waited for: the path judged once more, and still the same place. */
+  private again(op: FsOp, path: unknown, first: string, deep = false): void {
+    const r = sameAgain(first, this.judging(op, path, deep))
+    if ("act" in r) return
+    const said = typeof path === "string" ? path : ""
+    if (r.refused === "changed") return refuse("changed", said, `${said} is not where it was a moment ago — something moved under it while this was being done. Nothing was written; look at the folder again`)
+    return refuse(r.refused, said)
   }
 
   /** Whether an entry is one these methods will not open (the CLI's own, or protected). */
@@ -214,22 +361,34 @@ export class DeviceFiles {
     const l = lstatSync(abs)
     let link: string | undefined
     let st = l
+    let outside = false
     if (l.isSymbolicLink()) {
       link = readlinkSync(abs)
-      try {
-        st = statSync(abs)
-      } catch {}
+      outside = !this.isInside(abs)
+      // What a link that leads out points to is not looked at: its name and target are all that is said.
+      if (!outside)
+        try {
+          st = statSync(abs)
+        } catch {}
     }
-    const outside = link !== undefined && !this.isInside(abs)
     return {
       name: basename(abs),
       path: abs,
-      kind: st.isDirectory() ? "dir" : st.isFile() ? "file" : "other",
-      size: st.isFile() ? st.size : 0,
+      kind: outside ? "other" : st.isDirectory() ? "dir" : st.isFile() ? "file" : "other",
+      size: !outside && st.isFile() ? st.size : 0,
       mtime: Math.round(st.mtimeMs),
       ...(link !== undefined ? { link } : {}),
       ...(outside ? { outside: true as const } : {}),
       ...(this.closed(abs) ? { protected: true as const } : {}),
+    }
+  }
+
+  /** What is at `abs` now, links followed: a folder, something else, or nothing. */
+  private kindOf(abs: string): "dir" | "other" | undefined {
+    try {
+      return statSync(abs).isDirectory() ? "dir" : "other"
+    } catch {
+      return undefined
     }
   }
 
@@ -242,70 +401,62 @@ export class DeviceFiles {
       return { path: "", entries: roots.sort().map((d) => this.entry(d)) }
     }
     const dir = this.judge("read", wanted)
-    let st: ReturnType<typeof statSync>
-    try {
-      st = statSync(dir)
-    } catch {
-      return refuse("missing", wanted)
-    }
-    if (!st.isDirectory()) return refuse("not_a_directory", wanted)
-    const names = readdirSync(dir).filter((n) => p?.hidden === true || !n.startsWith("."))
+    const there = this.kindOf(dir)
+    if (!there) return refuse("missing", wanted)
+    if (there !== "dir") return refuse("not_a_directory", wanted)
+    // Folders first, then by name — decided from the directory's own record, so that only the
+    // entries that are answered are looked at one by one.
+    const all = readdirSync(dir, { withFileTypes: true }).filter((d) => (p?.hidden === true || !d.name.startsWith(".")) && !PART.test(d.name))
+    const isDir = (d: (typeof all)[number]) => d.isDirectory() || (d.isSymbolicLink() && this.isInside(join(dir, d.name)) && this.kindOf(join(dir, d.name)) === "dir")
+    const ranked = all.map((d) => ({ name: d.name, dir: isDir(d) })).sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
     const entries: Entry[] = []
-    for (const n of names) {
+    for (const d of ranked.slice(0, F.list_max)) {
       try {
-        entries.push(this.entry(join(dir, n)))
+        entries.push(this.entry(join(dir, d.name)))
       } catch {}
     }
-    entries.sort((a, b) => (a.kind === "dir" ? 0 : 1) - (b.kind === "dir" ? 0 : 1) || a.name.localeCompare(b.name))
     const up = dirname(dir)
     const parent = up !== dir && this.isInside(up) ? up : ""
-    return { path: dir, parent, entries: entries.slice(0, F.list_max), ...(entries.length > F.list_max ? { truncated: true } : {}) }
+    return { path: dir, parent, entries, ...(ranked.length > F.list_max ? { truncated: true } : {}) }
   }
 
   async stat(p: any) {
+    const said = String(p?.path ?? "")
     const abs = this.judge("read", p?.path)
-    if (!existsSync(abs)) return refuse("missing", String(p?.path))
+    if (!existsSync(abs)) return refuse("missing", said)
     const e = this.entry(abs)
-    return { ...e, ...(p?.hash === true && e.kind === "file" ? { hash: await hashFile(abs) } : {}) }
-  }
-
-  /** What is at `abs` now, links followed: a folder, something else, or nothing. */
-  private kindOf(abs: string): "dir" | "other" | undefined {
+    if (p?.hash !== true || e.kind !== "file") return e
+    // Opened in the same breath as it was judged: the hash is of that file.
+    const fd = openSync(abs, "r")
     try {
-      return statSync(abs).isDirectory() ? "dir" : "other"
-    } catch {
-      return undefined
+      return { ...e, hash: await hashFd(fd) }
+    } finally {
+      closeSync(fd)
     }
-  }
-
-  private file(abs: string, said: string) {
-    let st: ReturnType<typeof statSync>
-    try {
-      st = statSync(abs)
-    } catch {
-      return refuse("missing", said)
-    }
-    if (!st.isFile()) return refuse("not_a_file", said)
-    return st
   }
 
   read(p: any) {
     const said = String(p?.path ?? "")
     const abs = this.judge("read", p?.path)
-    const st = this.file(abs, said)
-    const offset = Number.isInteger(p?.offset) && p.offset > 0 ? (p.offset as number) : 0
-    const length = Math.max(0, Math.min(F.chunk_max_bytes, Number.isInteger(p?.length) && p.length >= 0 ? (p.length as number) : F.chunk_max_bytes))
-    const buf = Buffer.alloc(Math.max(0, Math.min(length, st.size - offset)))
-    const fd = openSync(abs, "r")
-    let n = 0
+    let fd: number
     try {
-      if (buf.length) n = readSync(fd, buf, 0, buf.length, offset)
+      fd = openSync(abs, "r")
+    } catch {
+      return refuse("missing", said)
+    }
+    try {
+      const st = fstatSync(fd)
+      if (!st.isFile()) return refuse("not_a_file", said)
+      const offset = Number.isInteger(p?.offset) && p.offset > 0 ? (p.offset as number) : 0
+      const length = Math.max(0, Math.min(F.chunk_max_bytes, Number.isInteger(p?.length) && p.length >= 0 ? (p.length as number) : F.chunk_max_bytes))
+      const buf = Buffer.alloc(Math.max(0, Math.min(length, st.size - offset)))
+      const n = buf.length ? readSync(fd, buf, 0, buf.length, offset) : 0
+      const data = buf.subarray(0, n)
+      const eof = offset + n >= st.size
+      return { path: abs, size: st.size, mtime: Math.round(st.mtimeMs), offset, data: data.toString("base64"), eof, ...(offset === 0 && eof ? { hash: hashBytes(data) } : {}) }
     } finally {
       closeSync(fd)
     }
-    const data = buf.subarray(0, n)
-    const eof = offset + n >= st.size
-    return { path: abs, size: st.size, mtime: Math.round(st.mtimeMs), offset, data: data.toString("base64"), eof, ...(offset === 0 && eof ? { hash: hashBytes(data) } : {}) }
   }
 
   private decoded(data: unknown): Buffer {
@@ -315,13 +466,19 @@ export class DeviceFiles {
     return b
   }
 
+  /** The hash of the file at `abs` now, or null when there is none. */
   private async current(abs: string): Promise<string | null> {
+    let fd: number
     try {
-      if (!statSync(abs).isFile()) return null
+      fd = openSync(abs, "r")
     } catch {
       return null
     }
-    return hashFile(abs)
+    try {
+      return fstatSync(fd).isFile() ? await hashFd(fd) : null
+    } finally {
+      closeSync(fd)
+    }
   }
 
   private async checkBase(u: { target: string; base: unknown; overwrite: unknown }, said: string) {
@@ -342,10 +499,18 @@ export class DeviceFiles {
   private drop(u: Upload) {
     clearTimeout(u.timer)
     this.uploads.delete(u.id)
+    // The part file is removed by its name only while that name is still in the target's own
+    // directory. Where the folder was moved from under it, the name may lead anywhere: the file
+    // is emptied through its descriptor instead, and left where it lies.
+    const inPlace = partInPlace(u.part)
+    try {
+      if (!inPlace) ftruncateSync(u.fd, 0)
+    } catch {}
     try {
       closeSync(u.fd)
     } catch {}
-    rmSync(u.part, { force: true })
+    if (inPlace) rmSync(u.part, { force: true })
+    journal((list) => list.filter((x) => x !== u.part))
   }
 
   private idle(u: Upload) {
@@ -354,52 +519,84 @@ export class DeviceFiles {
     ;(u.timer as { unref?: () => void }).unref?.()
   }
 
-  async write(p: any) {
+  /** One part into an upload's part file — by its descriptor, never by name — within the cap. */
+  private take(u: Upload, data: Buffer) {
+    if (u.received + data.length > F.upload_max_bytes) {
+      this.drop(u)
+      return refuse("too_large", u.said, `${u.said} is larger than the ${Math.round(F.upload_max_bytes / 1024 / 1024)} MB one file may be from here — nothing was written`)
+    }
+    writeSync(u.fd, data)
+    u.received += data.length
+  }
+
+  write(p: any) {
+    return oneAtATime(() => this.writing(p))
+  }
+
+  private async writing(p: any) {
     // A later part of an upload already begun.
     if (typeof p?.upload === "string") {
       const u = this.uploads.get(p.upload)
       if (!u) return refuse("invalid", "", "that upload is not open any more — start the write again")
-      // Judged again: the limits may have changed since the first part.
-      this.judge("write", u.target)
       const data = this.decoded(p.data)
-      writeSync(u.fd, data)
-      u.received += data.length
+      try {
+        // Judged again with every part: the limits, and the place, may have changed since the first.
+        this.again("write", u.target, u.target)
+        this.take(u, data)
+      } catch (e) {
+        if (this.uploads.has(u.id)) this.drop(u)
+        throw e
+      }
       if (p.more === true) {
         this.idle(u)
         return { upload: u.id, received: u.received }
       }
-      return this.commit(u, u.target)
+      return this.commit(u)
     }
     const said = String(p?.path ?? "")
     const target = this.judge("write", p?.path)
     if (this.kindOf(target) === "dir") return refuse("not_a_file", said)
     if (!existsSync(dirname(target))) return refuse("missing", dirname(said), `the folder ${dirname(said)} does not exist on this computer — make it first`)
     const data = this.decoded(p?.data)
-    await this.checkBase({ target, base: p?.base, overwrite: p?.overwrite }, said)
     if (p?.more === true && this.uploads.size >= F.uploads_max) return refuse("too_large", said, `this computer already takes ${F.uploads_max} files at once — wait for one to finish`)
+    // Hashing what is there is waited for — so the path is judged again after it, and the part
+    // file is opened in the same breath as that second look.
+    await this.checkBase({ target, base: p?.base, overwrite: p?.overwrite }, said)
+    this.again("write", p?.path, target)
     const id = crypto.randomUUID()
     const part = join(dirname(target), `.${basename(target)}.${id.slice(0, 8)}.lembas-part`)
-    const u: Upload = { id, target, part, fd: openSync(part, "wx", 0o600), received: 0, base: p?.base, overwrite: p?.overwrite, timer: setTimeout(() => {}, 0) }
+    journal((list) => [...list, part])
+    let fd: number
+    try {
+      fd = openSync(part, "wx", 0o600)
+    } catch (e) {
+      journal((list) => list.filter((x) => x !== part))
+      throw e
+    }
+    const u: Upload = { id, target, part, fd, received: 0, said, base: p?.base, overwrite: p?.overwrite, timer: setTimeout(() => {}, 0) }
     this.uploads.set(id, u)
     try {
-      writeSync(u.fd, data)
-      u.received = data.length
+      this.take(u, data)
     } catch (e) {
-      this.drop(u)
+      if (this.uploads.has(id)) this.drop(u)
       throw e
     }
     if (p?.more === true) {
       this.idle(u)
       return { upload: id, received: u.received }
     }
-    return this.commit(u, said)
+    return this.commit(u)
   }
 
-  /** The last part is in: the base checked once more, then the file put in place whole. */
-  private async commit(u: Upload, said: string) {
+  /** The last part is in: the base checked once more, the path judged once more, the part file
+   *  proved to be where the target is — and then, with nothing waited for in between, the file
+   *  put in place whole. */
+  private async commit(u: Upload) {
     try {
       closeSync(u.fd)
-      await this.checkBase(u, said)
+      await this.checkBase(u, u.said)
+      this.again("write", u.target, u.target)
+      if (!partInPlace(u.part)) refuse("changed", u.said, `${u.said} is not where it was a moment ago — something moved under it while this was being done. Nothing was written; look at the folder again`)
       // The file keeps its mode; a new one gets the usual.
       let mode = 0o644
       try {
@@ -408,24 +605,32 @@ export class DeviceFiles {
       chmodSync(u.part, mode)
       renameSync(u.part, u.target)
     } catch (e) {
-      rmSync(u.part, { force: true })
+      if (partInPlace(u.part)) rmSync(u.part, { force: true })
       throw e
     } finally {
       clearTimeout(u.timer)
       this.uploads.delete(u.id)
+      journal((list) => list.filter((x) => x !== u.part))
     }
-    const st = statSync(u.target)
-    return { path: u.target, size: st.size, mtime: Math.round(st.mtimeMs), hash: await hashFile(u.target) }
+    const fd = openSync(u.target, "r")
+    try {
+      const st = fstatSync(fd)
+      return { path: u.target, size: st.size, mtime: Math.round(st.mtimeMs), hash: await hashFd(fd) }
+    } finally {
+      closeSync(fd)
+    }
   }
 
   mkdir(p: any) {
-    const said = String(p?.path ?? "")
-    const abs = this.judge("write", p?.path)
-    const there = this.kindOf(abs)
-    if (there === "dir") return { path: abs }
-    if (there) return refuse("exists", said, `${said} exists on this computer and is not a folder`)
-    mkdirSync(abs, { recursive: true })
-    return { path: abs }
+    return oneAtATime(() => {
+      const said = String(p?.path ?? "")
+      const abs = this.judge("write", p?.path)
+      const there = this.kindOf(abs)
+      if (there === "dir") return { path: abs }
+      if (there) return refuse("exists", said, `${said} exists on this computer and is not a folder`)
+      mkdirSync(abs, { recursive: true })
+      return { path: abs }
+    })
   }
 
   /** The target of a move or a copy: free, or to be replaced when the client said so — a folder
@@ -442,50 +647,114 @@ export class DeviceFiles {
     return abs
   }
 
+  /** A whole tree copied, off the main thread: a link is copied as a link, never followed. */
+  private tree(from: string, to: string) {
+    return cp(from, to, { recursive: true, verbatimSymlinks: true, force: true })
+  }
+
   move(p: any) {
-    const from = this.judge("remove", p?.from)
-    try {
-      lstatSync(from)
-    } catch {
-      return refuse("missing", String(p?.from))
-    }
-    const to = this.target(p?.to, p?.overwrite)
-    if (inside(to, from)) return refuse("invalid", String(p?.to), "a folder cannot be moved into itself")
-    try {
-      renameSync(from, to)
-    } catch (e) {
-      if ((e as { code?: string }).code !== "EXDEV") throw e
-      // Another file system: copied whole, then the original removed.
-      cpSync(from, to, { recursive: true, verbatimSymlinks: true, force: true })
-      rmSync(from, { recursive: true, force: true })
-    }
-    return { path: to }
+    return oneAtATime(async () => {
+      const from = this.judge("remove", p?.from)
+      try {
+        lstatSync(from)
+      } catch {
+        return refuse("missing", String(p?.from))
+      }
+      const to = this.target(p?.to, p?.overwrite)
+      if (inside(to, from)) return refuse("invalid", String(p?.to), "a folder cannot be moved into itself")
+      try {
+        renameSync(from, to)
+      } catch (e) {
+        if ((e as { code?: string }).code !== "EXDEV") throw e
+        // Another file system: copied whole, then the original removed. Nothing else changes
+        // files from here meanwhile (oneAtATime).
+        await this.tree(from, to)
+        await rm(from, { recursive: true, force: true })
+      }
+      return { path: to }
+    })
   }
 
   copy(p: any) {
-    const from = this.judge("read", p?.from, true)
-    if (!existsSync(from)) return refuse("missing", String(p?.from))
-    const to = this.target(p?.to, p?.overwrite)
-    if (inside(to, from)) return refuse("invalid", String(p?.to), "a folder cannot be copied into itself")
-    // A link is copied as a link, never followed: a copy does not reach what a link points to.
-    cpSync(from, to, { recursive: true, verbatimSymlinks: true, force: true })
-    return { path: to }
+    return oneAtATime(async () => {
+      const from = this.judge("read", p?.from, true)
+      if (!existsSync(from)) return refuse("missing", String(p?.from))
+      const to = this.target(p?.to, p?.overwrite)
+      if (inside(to, from)) return refuse("invalid", String(p?.to), "a folder cannot be copied into itself")
+      await this.tree(from, to)
+      return { path: to }
+    })
   }
 
   delete(p: any) {
-    const said = String(p?.path ?? "")
-    const abs = this.judge("remove", p?.path)
-    try {
-      lstatSync(abs)
-    } catch {
-      return refuse("missing", said)
+    return oneAtATime(async () => {
+      const said = String(p?.path ?? "")
+      const abs = this.judge("remove", p?.path)
+      try {
+        lstatSync(abs)
+      } catch {
+        return refuse("missing", said)
+      }
+      if (p?.permanent !== true) {
+        if (moveToTrash(abs)) return { deleted: true, trash: true }
+        return refuse("no_trash", said, `this computer has no trash that can take ${said}: deleting it cannot be undone. Send the delete again with permanent: true once the person has agreed`)
+      }
+      await rm(abs, { recursive: true, force: true })
+      return { deleted: true, trash: false }
+    })
+  }
+
+  /** The names under `root`, listed off the main thread and kept a few seconds; the folders
+   *  searched longest ago are forgotten beyond `files.indexes_max`. */
+  private async namesOf(root: string): Promise<string[]> {
+    const kept = this.names.get(root)
+    if (kept && Date.now() - kept.at < 5000) {
+      this.names.delete(root)
+      this.names.set(root, kept)
+      return kept.all
     }
-    if (p?.permanent !== true) {
-      if (moveToTrash(abs)) return { deleted: true, trash: true }
-      return refuse("no_trash", said, `this computer has no trash that can take ${said}: deleting it cannot be undone. Send the delete again with permanent: true once the person has agreed`)
+    const MAX = 50_000
+    const files: string[] = []
+    if (Bun.which("rg") !== null) {
+      // Gitignored files are left out (ripgrep's own rule); hidden ones are named.
+      const proc = Bun.spawn(["rg", "--files", "--hidden", "--glob", "!.git"], { cwd: root, stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+      const timer = setTimeout(() => proc.kill(), 20_000)
+      let buf = ""
+      const decoder = new TextDecoder()
+      try {
+        outer: for await (const chunk of proc.stdout as unknown as AsyncIterable<Uint8Array>) {
+          buf += decoder.decode(chunk, { stream: true })
+          let nl: number
+          while ((nl = buf.indexOf("\n")) >= 0) {
+            const f = buf.slice(0, nl)
+            buf = buf.slice(nl + 1)
+            if (f) files.push(f)
+            if (files.length >= MAX) break outer
+          }
+        }
+      } finally {
+        clearTimeout(timer)
+        proc.kill()
+      }
+    } else {
+      let n = 0
+      for await (const f of new Bun.Glob("**/*").scan({ cwd: root, dot: true, onlyFiles: true, followSymlinks: false })) {
+        if (f.split("/").some((x) => x === ".git" || x === "node_modules")) continue
+        files.push(f)
+        if (files.length >= MAX) break
+        if (++n % 500 === 0) await yieldNow()
+      }
     }
-    rmSync(abs, { recursive: true, force: true })
-    return { deleted: true, trash: false }
+    const dirs = new Set<string>()
+    for (const f of files) {
+      const parts = f.split("/")
+      for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/") + "/")
+    }
+    const all = [...dirs, ...files].filter((f) => !PART.test(basename(f))).sort()
+    this.names.delete(root)
+    this.names.set(root, { at: Date.now(), all })
+    while (this.names.size > F.indexes_max) this.names.delete(this.names.keys().next().value!)
+    return all
   }
 
   async search(p: any) {
@@ -495,22 +764,23 @@ export class DeviceFiles {
     if (!there) return refuse("missing", said)
     if (there !== "dir") return refuse("not_a_directory", said)
     const query = typeof p?.query === "string" ? p.query : ""
+    // Judged as each is answered, not when the search began: what is named can still be opened.
     const open = (rel: string) => {
       const abs = join(root, rel)
-      return !this.closed(abs) && this.isInside(abs)
+      return !PART.test(basename(rel)) && !this.closed(abs) && this.isInside(abs)
     }
     if (p?.content !== true) {
       const limit = Math.max(1, Math.min(50, Number(p?.limit) || 20))
-      let index = this.indexes.get(root)
-      if (!index) this.indexes.set(root, (index = new FileIndex(root)))
-      const found = index.search(query, limit).filter((f) => open(f.replace(/\/$/, "")))
+      const all = await this.namesOf(root)
+      const hits = query ? fuzzysort.go(query, all, { limit: 200, threshold: -10000 }).map((h) => h.target) : all
+      const found = hits.filter((f) => open(f.replace(/\/$/, ""))).slice(0, limit)
       return { root, files: found.map((f) => ({ path: f.replace(/\/$/, ""), kind: f.endsWith("/") ? "dir" : "file" })) }
     }
     if (!query) return refuse("invalid", said, "query must say what to look for")
     if (Bun.which("rg") === null) return refuse("invalid", said, "searching inside files needs ripgrep (rg) on this computer")
     const limit = Math.max(1, Math.min(F.search_max, Number(p?.limit) || F.search_max))
     // Gitignored files are left out (ripgrep's own rule); hidden ones are looked into.
-    const args = ["rg", "--line-number", "--no-heading", "--color", "never", "--hidden", "--glob", "!.git", "--max-columns", "400", "--null", ...(p?.regex === true ? [] : ["--fixed-strings"]), "-e", query, "."]
+    const args = ["rg", "--line-number", "--no-heading", "--color", "never", "--hidden", "--glob", "!.git", "--glob", "!*.lembas-part", "--max-columns", "400", "--null", ...(p?.regex === true ? [] : ["--fixed-strings"]), "-e", query, "."]
     const proc = Bun.spawn(args, { cwd: root, stdout: "pipe", stderr: "ignore", stdin: "ignore" })
     const timer = setTimeout(() => proc.kill(), 20_000)
     const matches: { path: string; line: number; text: string }[] = []
@@ -547,5 +817,6 @@ export class DeviceFiles {
   /** The link is gone: unfinished uploads go with it. */
   close() {
     for (const u of [...this.uploads.values()]) this.drop(u)
+    this.names.clear()
   }
 }

@@ -13,7 +13,7 @@
 // block: a directory outside `roots` is refused, a mode beyond `max_mode` is lowered to it, an
 // untrusted project is refused, and an approval nobody answers in time is a denial. The hardline
 // applies in every mode, as everywhere.
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs"
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { createApp, InteractiveOnlyError, type App, type SessionContext } from "../app.ts"
 import { INTERACTIVE_REASON } from "../provider/interactive.ts"
@@ -49,7 +49,7 @@ import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs, teamFi
 import { isNote } from "../session/prefix.ts"
 import { outstandingReason } from "../session/outstanding.ts"
 import { CANCELLED, changeBytes, completeBody, completeOnServer, currentLogin, diffContent, diffItems, editorBlock, editorSettings, loginOrRefuse, modelsForPicker, rewriteModel, rewriteParams, runRewrite, settingsToSet, type Login } from "./editor.ts"
-import { DeviceFiles, hashFile } from "./files.ts"
+import { DeviceFiles, hashFd } from "./files.ts"
 import { clientFor, ModelError, resolveModel } from "../provider/index.ts"
 import { ProviderError, type ResolvedModel } from "../provider/types.ts"
 import { lastModel, startModel } from "../session/lastmodel.ts"
@@ -57,6 +57,10 @@ import { readRaw } from "../config/settings.ts"
 import { LOOP } from "../harness.ts"
 import type { ShowRequest } from "../tool/show.ts"
 import { deniedText, finalReply, judgeMonitor, monitorTimeout, notifyOf, permissionFor, refusalText, runMonitor, runOutcome, SCHEDULED, scheduledMode, type Report, type ScheduledTurn } from "./scheduled.ts"
+
+/** The client's own id for a request (`_lembas/complete`, `_lembas/edit` and their cancels), read
+ *  the same way wherever it is read. */
+const requestId = (v: unknown): string | undefined => (typeof v === "string" && v ? v.slice(0, 100) : undefined)
 
 export const ACP_VERSION = 1
 /** The link's version (LLeMbas `services/device_link.py:PROTOCOL`, harness/acp.md *Versions*). 3:
@@ -83,6 +87,9 @@ export interface Limits {
   enabled?: boolean
   /** Accept scheduled work (`remote.scheduled`, spec 3.5.0), with remote work on. Absent: no. */
   scheduled?: boolean
+  /** `remote.files_that_run_code` (spec 3.11.0): device files may change files that run code.
+   *  Absent: no. */
+  filesThatRunCode?: boolean
   /** The link a terminal holds for /remote on a machine whose remote work is off: only
    *  the sessions shared from that terminal can be reached; the web UI opens none of its own. */
   sharedOnly?: boolean
@@ -499,7 +506,9 @@ export function historyTurns(messages: Message[], cwd = "") {
     if (m.role === "user") {
       reply = undefined
       const texts = m.parts.map((p) => (p.type === "text" ? p.text : ""))
-      const text = texts.filter((t) => !ATTACHMENT.test(t)).join("\n").trim()
+      // The words typed are the first part; an attachment never is — so a message that happens to
+      // start like one is still shown.
+      const text = texts.filter((t, i) => i === 0 || !ATTACHMENT.test(t)).join("\n").trim()
       const attachments = storedAttachments(texts, cwd)
       // A turn the harness started (a note, with its mark) is in the history as what it is.
       if (text || attachments.length) turns.push({ role: "user", text, ...(m.turnId ? { turnId: m.turnId } : {}), ...(attachments.length ? { attachments } : {}), ...(m.machine ? { machine: true as const } : {}) })
@@ -555,12 +564,14 @@ export class AcpAgent {
   private login?: Login
   /** The one autocomplete request under way: a newer one stops it. */
   private completion?: { id?: string; abort: AbortController }
-  /** The rewrites under way that carried an id, by it. */
-  private rewrites = new Map<string, AbortController>()
-  /** Files handed to the client by the show tool, for `_lembas/show/read`, while their request is open. */
-  private handles = new Map<string, { abs: string; size: number; mtimeMs: number }>()
+  /** Every rewrite under way — stopped with the client — and those that carried an id, by it. */
+  private rewrites = new Set<AbortController>()
+  private rewriteIds = new Map<string, AbortController>()
+  /** Files handed to the client by the show tool, for `_lembas/show/read`, while their request is
+   *  open: each an open descriptor, so what is read is the file the tool was allowed to show. */
+  private handles = new Map<string, { fd: number; size: number; mtimeMs: number }>()
   /** `_lembas/fs/*`: the device's files, on the link only. */
-  private files = new DeviceFiles(() => (this.limits ? { roots: this.limits.roots, maxMode: this.limits.maxMode, enabled: this.limits.enabled, sharedOnly: this.limits.sharedOnly } : undefined))
+  private files = new DeviceFiles(() => (this.limits ? { roots: this.limits.roots, maxMode: this.limits.maxMode, enabled: this.limits.enabled, sharedOnly: this.limits.sharedOnly, runsCode: this.limits.filesThatRunCode === true } : undefined))
 
   constructor(
     private peer: Peer,
@@ -605,7 +616,7 @@ export class AcpAgent {
     peer.handle("_lembas/complete", (p) => this.complete(p))
     peer.on("_lembas/complete/cancel", (p) => this.completeCancel(p))
     peer.handle("_lembas/edit", (p) => this.edit(p))
-    peer.on("_lembas/edit/cancel", (p) => this.rewrites.get(String(p?.id ?? ""))?.abort())
+    peer.on("_lembas/edit/cancel", (p) => this.rewriteIds.get(requestId(p?.id) ?? "")?.abort())
     peer.handle("_lembas/models", async () => modelsForPicker(loginOrRefuse(currentLogin())))
     peer.handle("_lembas/editor/settings", (p) => this.editorSettings(p))
     peer.handle("_lembas/show/read", (p) => this.showRead(p))
@@ -638,7 +649,8 @@ export class AcpAgent {
       for (const id of [...this.terminals.keys()]) this.terminalClose(id)
       // What this client had under way goes with it: its autocomplete, its rewrites, its uploads.
       this.completion?.abort.abort()
-      for (const a of this.rewrites.values()) a.abort()
+      for (const a of this.rewrites) a.abort()
+      for (const h of this.handles.values()) closeSync(h.fd)
       this.handles.clear()
       this.files.close()
     })
@@ -652,7 +664,9 @@ export class AcpAgent {
     this.editorClient = said?.editor === true
     this.media = said?.media === true
     const fs = p?.clientCapabilities?.fs
-    this.clientFs = { read: fs?.readTextFile === true, write: fs?.writeTextFile === true }
+    // Honoured on `serve --stdio` only: the link's client is a server, which holds no buffers of
+    // this machine's files — taking its word would have every file tool read from it and write to it.
+    this.clientFs = this.limits ? { read: false, write: false } : { read: fs?.readTextFile === true, write: fs?.writeTextFile === true }
     for (const s of this.sessions.values()) if (s.agent === this) this.equipShow(s)
     // The sessions this link took over (the hub's) get their command set once the client
     // knows the agent — after this answer, not before it.
@@ -678,7 +692,7 @@ export class AcpAgent {
         lembas: {
           protocol: this.protocol,
           harness_spec: HARNESS_VERSION,
-          limits: this.limits ? { roots: this.limits.roots, max_mode: this.limits.maxMode, scheduled: this.limits.scheduled === true } : null,
+          limits: this.limits ? { roots: this.limits.roots, max_mode: this.limits.maxMode, scheduled: this.limits.scheduled === true, files_that_run_code: this.limits.filesThatRunCode === true } : null,
           // The login's connection: a `model` event's ref `<connection>/<name>` is the
           // instance's own model `<name>`; any other ref is one only this device has.
           connection: this.instanceConnection ?? null,
@@ -981,18 +995,19 @@ export class AcpAgent {
    *  is now. On `serve --stdio` the client is on this machine, and is told where the file is too. */
   private async showMedia(s: Session, req: Extract<ShowRequest, { file: string }>, callId?: string) {
     const { file, ...said } = req
-    const st = statSync(file)
+    const fd = openSync(file, "r")
+    const st = fstatSync(fd)
     const handle = `h_${crypto.randomUUID()}`
-    this.handles.set(handle, { abs: file, size: st.size, mtimeMs: st.mtimeMs })
+    this.handles.set(handle, { fd, size: st.size, mtimeMs: st.mtimeMs })
     try {
-      const hash = await hashFile(file)
+      const hash = await hashFd(fd)
       return (await this.peer.request(
         "_lembas/show",
-        { sessionId: s.id, toolCallId: callId ?? "", ...said, hash, handle, ...(this.limits ? {} : { uri: `file://${file.split("/").map(encodeURIComponent).join("/")}` }) },
+        { sessionId: s.id, toolCallId: callId ?? "", ...said, size: st.size, hash, handle, ...(this.limits ? {} : { uri: `file://${file.split("/").map(encodeURIComponent).join("/")}` }) },
         LOOP.files.show.media_wait_seconds * 1000,
       )) as { shown?: unknown; reason?: unknown } | undefined
     } finally {
-      this.handles.delete(handle)
+      if (this.handles.delete(handle)) closeSync(fd)
     }
   }
 
@@ -1001,24 +1016,13 @@ export class AcpAgent {
   private showRead(p: any) {
     const h = this.handles.get(String(p?.handle ?? ""))
     if (!h) throw new RpcError(INVALID_PARAMS, "that file is not being handed over any more — a handle is good until its _lembas/show is answered", { reason: "invalid" })
-    let st: ReturnType<typeof statSync>
-    try {
-      st = statSync(h.abs)
-    } catch {
-      throw new RpcError(INVALID_PARAMS, "the file is gone from this computer", { reason: "changed" })
-    }
+    const st = fstatSync(h.fd)
     if (st.size !== h.size || st.mtimeMs !== h.mtimeMs) throw new RpcError(INVALID_PARAMS, "the file changed on this computer while it was being fetched", { reason: "changed" })
     const max = LOOP.files.chunk_max_bytes
     const offset = Number.isInteger(p?.offset) && p.offset > 0 ? (p.offset as number) : 0
     const length = Math.min(max, Number.isInteger(p?.length) && p.length >= 0 ? (p.length as number) : max)
     const buf = Buffer.alloc(Math.max(0, Math.min(length, h.size - offset)))
-    const fd = openSync(h.abs, "r")
-    let n = 0
-    try {
-      if (buf.length) n = readSync(fd, buf, 0, buf.length, offset)
-    } finally {
-      closeSync(fd)
-    }
+    const n = buf.length ? readSync(h.fd, buf, 0, buf.length, offset) : 0
     return { data: buf.subarray(0, n).toString("base64"), offset, eof: offset + n >= h.size }
   }
 
@@ -1051,9 +1055,11 @@ export class AcpAgent {
         ? {
             write: async (abs: string, content: string) => {
               if (!live()) return false
+              // Taken, refused (the client answered with an error), or unknown: no answer came —
+              // the client may still apply it, so the disk is not written as well.
               return this.peer.request("fs/write_text_file", { sessionId: s.id, path: abs, content }, wait).then(
-                () => true,
-                () => false,
+                () => true as const,
+                (e) => (e instanceof RpcError && !e.noAnswer ? false : ("unknown" as const)),
               )
             },
           }
@@ -1068,7 +1074,8 @@ export class AcpAgent {
     const body = completeBody(p)
     const login = loginOrRefuse((this.login ??= currentLogin()))
     this.completion?.abort.abort()
-    const mine = { ...(typeof p?.id === "string" && p.id ? { id: p.id } : {}), abort: new AbortController() }
+    const id = requestId(p?.id)
+    const mine = { ...(id ? { id } : {}), abort: new AbortController() }
     this.completion = mine
     try {
       return await completeOnServer(login, body, mine.abort.signal)
@@ -1083,7 +1090,7 @@ export class AcpAgent {
   }
 
   private completeCancel(p: any) {
-    const id = typeof p?.id === "string" ? p.id : ""
+    const id = requestId(p?.id)
     const running = this.completion
     if (id && running && running.id === id) running.abort.abort()
   }
@@ -1102,7 +1109,26 @@ export class AcpAgent {
    *  diff. Not a turn of any session. */
   private async edit(p: any) {
     const params = rewriteParams(p)
-    const id = typeof p?.id === "string" && p.id ? p.id.slice(0, 100) : undefined
+    const id = requestId(p?.id)
+    if (this.rewrites.size >= LOOP.editor.rewrite.concurrent_max)
+      throw new RpcError(INVALID_PARAMS, `${LOOP.editor.rewrite.concurrent_max} rewrites are already being written — wait for one, or cancel it`, { reason: "busy" })
+    // Tracked from here — before the model is even known — so a cancel that comes while it is
+    // being found, and the client going away, both reach it; with an id or without.
+    const abort = new AbortController()
+    this.rewrites.add(abort)
+    if (id) this.rewriteIds.get(id)?.abort(), this.rewriteIds.set(id, abort)
+    try {
+      return await this.rewrite(p, params, id, abort)
+    } catch (e) {
+      if (abort.signal.aborted) return CANCELLED
+      throw e
+    } finally {
+      this.rewrites.delete(abort)
+      if (id && this.rewriteIds.get(id) === abort) this.rewriteIds.delete(id)
+    }
+  }
+
+  private async rewrite(p: any, params: ReturnType<typeof rewriteParams>, id: string | undefined, abort: AbortController) {
     const asked = typeof p?.model === "string" && p.model.trim() ? p.model.trim() : undefined
     const sessionId = typeof p?.sessionId === "string" ? p.sessionId : ""
     const s = sessionId ? this.sessions.get(sessionId) : undefined
@@ -1137,8 +1163,8 @@ export class AcpAgent {
       if (e instanceof ModelError) throw new RpcError(INVALID_PARAMS, e.message, { reason: "not_logged_in" })
       throw e
     }
-    const abort = new AbortController()
-    if (id) this.rewrites.get(id)?.abort(), this.rewrites.set(id, abort)
+    // Cancelled while the model was being found: nothing is sent to it.
+    if (abort.signal.aborted) return CANCELLED
     try {
       const text = await runRewrite({
         client,
@@ -1153,8 +1179,6 @@ export class AcpAgent {
       if (abort.signal.aborted) return CANCELLED
       if (e instanceof ProviderError) throw new RpcError(-32603, e.message)
       throw e
-    } finally {
-      if (id && this.rewrites.get(id) === abort) this.rewrites.delete(id)
     }
   }
 

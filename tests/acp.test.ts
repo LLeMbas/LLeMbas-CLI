@@ -144,7 +144,7 @@ test("the device's limits: outside the roots, untrusted, a higher mode", async (
   const root = project()
   const limits: Limits = { roots: [root], maxMode: "edit", approvalTimeoutMs: 50, requireTrust: true }
   const { c, init } = await client(limits)
-  expect(init._meta.lembas.limits).toEqual({ roots: [root], max_mode: "edit", scheduled: false })
+  expect(init._meta.lembas.limits).toEqual({ roots: [root], max_mode: "edit", scheduled: false, files_that_run_code: false })
   await expect(c.request("session/new", { cwd: tmpdir() })).rejects.toThrow("outside the directories")
   const untrusted = join(root, "..", `ph-untrusted-${Date.now()}`)
   mkdirSync(untrusted)

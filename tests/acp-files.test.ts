@@ -7,7 +7,8 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { AcpAgent, type Limits } from "../src/acp/agent.ts"
-import { moveToTrash } from "../src/acp/files.ts"
+import { DeviceFiles, moveToTrash, PART, sweepParts } from "../src/acp/files.ts"
+import { LOOP } from "../src/harness.ts"
 import { Peer, type Transport } from "../src/acp/rpc.ts"
 import { paths } from "../src/config/paths.ts"
 
@@ -273,7 +274,7 @@ test("outside the roots: every method refuses, and a link that points out is out
   expect(existsSync(join(root, "stolen.txt"))).toBe(false)
   // The listing names the link and says it leads out; it is not opened.
   const l: any = await c.request("_lembas/fs/list", { path: root })
-  expect(l.entries.find((e: any) => e.name === "way-out")).toMatchObject({ kind: "dir", link: outside, outside: true })
+  expect(l.entries.find((e: any) => e.name === "way-out")).toMatchObject({ kind: "other", size: 0, link: outside, outside: true })
 })
 
 test("the CLI's own files and protected paths: never read, written, moved, copied or deleted, even inside a root", async () => {
@@ -343,4 +344,191 @@ test("a device that allows plan mode only is read-only; off, shared-only, no roo
     expect((await refusal(c.request("_lembas/fs/copy", { from: file, to: join(root, "b.txt") }))).reason).toBe("off")
   }
   expect(readFileSync(file, "utf8")).toBe("alpha\n")
+})
+
+// ── one change at a time; judged again after every wait (review finding 1) ──────────────────
+
+test("a write racing two moves that swap a link into its path never lands outside the roots", async () => {
+  const { c } = await link()
+  mkdirSync(join(root, "a"))
+  // Large enough that hashing it for the base check is waited for.
+  writeFileSync(join(root, "a/keys.txt"), Buffer.alloc(24 * 1024 * 1024, 1))
+  symlinkSync(outside, join(root, "way-out"))
+  // All three at once, as a client may send them: the write, then the folder moved aside and the
+  // link moved into its place.
+  const write = refusal(c.request("_lembas/fs/write", { path: join(root, "a/keys.txt"), data: b64("planted\n"), overwrite: true }))
+  const aside = refusal(c.request("_lembas/fs/move", { from: join(root, "a"), to: join(root, "b") }))
+  const swap = refusal(c.request("_lembas/fs/move", { from: join(root, "way-out"), to: join(root, "a") }))
+  const [w] = await Promise.all([write, aside, swap])
+  // Changes run one after another: the write finished where it was judged, before either move.
+  expect(w.reason).toBeUndefined()
+  expect(readdirSync(outside).sort()).toEqual(["secret.txt"])
+  expect(readFileSync(join(root, "b/keys.txt"), "utf8")).toBe("planted\n")
+  expect(lstatSync(join(root, "a")).isSymbolicLink()).toBe(true)
+})
+
+test("a path that changes under a write while its base is hashed is judged again: refused, nothing written outside", async () => {
+  const { c } = await link()
+  mkdirSync(join(root, "a"))
+  writeFileSync(join(root, "a/keys.txt"), Buffer.alloc(48 * 1024 * 1024, 1))
+  const write = refusal(c.request("_lembas/fs/write", { path: join(root, "a/keys.txt"), data: b64("planted\n"), overwrite: true }))
+  // Not through these methods (which wait their turn): something else on the computer swaps the
+  // folder for a link that leads out, while the hash is under way.
+  await Bun.sleep(5)
+  const { renameSync } = await import("node:fs")
+  renameSync(join(root, "a"), join(root, "b"))
+  symlinkSync(outside, join(root, "a"))
+  const w = await write
+  expect(w.reason).toBe("outside")
+  expect(readdirSync(outside).sort()).toEqual(["secret.txt"])
+  expect(readdirSync(join(root, "b"))).toEqual(["keys.txt"])
+  // The same for the parts of an upload: the path is judged with each.
+  rmSync(join(root, "a"))
+  mkdirSync(join(root, "a"))
+  const up: any = await c.request("_lembas/fs/write", { path: join(root, "a/big.bin"), data: b64("one"), base: null, more: true })
+  renameSync(join(root, "a"), join(root, "c"))
+  symlinkSync(outside, join(root, "a"))
+  expect((await refusal(c.request("_lembas/fs/write", { upload: up.upload, data: b64("two") }))).reason).toBe("outside")
+  expect(readdirSync(outside).sort()).toEqual(["secret.txt"])
+  // The upload is dropped. Its part file's name now leads out, so nothing is removed by that name:
+  // the file is emptied where it lies.
+  const left = readdirSync(join(root, "c"))
+  expect(left.every((n) => PART.test(n))).toBe(true)
+  expect(left.map((n) => statSync(join(root, "c", n)).size)).toEqual([0])
+})
+
+test("a hash is of the file that was judged, whatever becomes of its name meanwhile", async () => {
+  const { c } = await link()
+  const big = Buffer.alloc(24 * 1024 * 1024, 3)
+  writeFileSync(join(root, "big.bin"), big)
+  const st = c.request<any>("_lembas/fs/stat", { path: join(root, "big.bin"), hash: true })
+  await Bun.sleep(5)
+  rmSync(join(root, "big.bin"))
+  symlinkSync(join(outside, "secret.txt"), join(root, "big.bin"))
+  expect((await st).hash).toBe(hash(big))
+})
+
+// ── files that run code (review finding 2; the owner's decision: a device setting, off) ─────
+
+test("files that run code: read from here, changed only where remote.files_that_run_code is on", async () => {
+  mkdirSync(join(root, "app/.git/hooks"), { recursive: true })
+  mkdirSync(join(root, "app/.agent/commands"), { recursive: true })
+  writeFileSync(join(root, "app/.git/config"), "[core]\n")
+  writeFileSync(join(root, "app/.agent/config.yaml"), "mode: manual\n")
+  writeFileSync(join(root, "app/readme.md"), "r\n")
+  const [ta, tb] = pair()
+  new AcpAgent(new Peer(ta), limitsFor())
+  const c = new Peer(tb)
+  const init: any = await c.request("initialize", { protocolVersion: 1, clientCapabilities: { _meta: { lembas: { protocol: 3 } } } })
+  // Said with the limits, so a client knows beforehand.
+  expect(init._meta.lembas.limits.files_that_run_code).toBe(false)
+  const hook = join(root, "app/.git/hooks/pre-commit")
+  const w = await refusal(c.request("_lembas/fs/write", { path: hook, data: b64("#!/bin/sh\n"), base: null }))
+  expect(w.reason).toBe("runs_code")
+  expect(w.message).toContain("remote.files_that_run_code")
+  for (const [m, p] of [
+    ["write", { path: join(root, "app/.git/config"), data: b64("x"), overwrite: true }],
+    ["write", { path: join(root, "app/.agent/config.yaml"), data: b64("x"), overwrite: true }],
+    ["write", { path: join(root, "app/.agent/commands/go.md"), data: b64("x"), base: null }],
+    ["mkdir", { path: join(root, "app/.git/hooks/sub") }],
+    ["delete", { path: join(root, "app/.git/config"), permanent: true }],
+    ["move", { from: join(root, "app/readme.md"), to: hook }],
+    ["move", { from: join(root, "app/.git/hooks"), to: join(root, "app/hooks") }],
+    ["copy", { from: join(root, "app/readme.md"), to: hook }],
+    ["move", { from: join(root, "docs"), to: join(root, "app/docs/.git") }],
+    ["copy", { from: join(root, "docs"), to: join(root, "docs/.agent") }],
+  ] as const)
+    expect([m, JSON.stringify(p).slice(0, 0), (await refusal(c.request(`_lembas/fs/${m}`, p))).reason]).toEqual([m, "", "runs_code"])
+  expect(existsSync(hook)).toBe(false)
+  expect(readFileSync(join(root, "app/.git/config"), "utf8")).toBe("[core]\n")
+  // Reading, listing and searching them stay allowed; so do a project's other files and the repository as a whole.
+  expect(Buffer.from((await c.request<any>("_lembas/fs/read", { path: join(root, "app/.git/config") })).data, "base64").toString()).toBe("[core]\n")
+  expect((await c.request<any>("_lembas/fs/list", { path: join(root, "app/.git") })).entries.map((e: any) => e.name)).toEqual(["hooks", "config"])
+  mkdirSync(join(root, "app/.agent/plans"))
+  await c.request("_lembas/fs/write", { path: join(root, "app/.agent/plans/next.md"), data: b64("# Plan\n"), base: null })
+  await c.request("_lembas/fs/copy", { from: join(root, "app"), to: join(root, "app2") })
+  expect(readFileSync(join(root, "app2/.git/config"), "utf8")).toBe("[core]\n")
+  // The device's own setting on: a file like any other.
+  const on = await link(limitsFor({ filesThatRunCode: true }))
+  await on.c.request("_lembas/fs/write", { path: hook, data: b64("#!/bin/sh\n"), base: null })
+  expect(readFileSync(hook, "utf8")).toBe("#!/bin/sh\n")
+})
+
+test("a start-up file of the device's user is refused where the home is shared (nothing is written there)", async () => {
+  const { c } = await link(limitsFor({ roots: [homedir()] }))
+  const rc = join(homedir(), ".bashrc")
+  const before = existsSync(rc) ? readFileSync(rc, "utf8") : undefined
+  expect((await refusal(c.request("_lembas/fs/write", { path: rc, data: b64("echo hi\n"), overwrite: true }))).reason).toBe("runs_code")
+  expect((await refusal(c.request("_lembas/fs/delete", { path: join(homedir(), ".config"), permanent: true }))).reason).not.toBeUndefined()
+  expect(existsSync(rc) ? readFileSync(rc, "utf8") : undefined).toBe(before)
+})
+
+// ── bounds (review findings 7 and 8) ────────────────────────────────────────────────────────
+
+test("an upload is capped in all; a listing is cut before its entries are looked at; few folders' names are kept", async () => {
+  const { c } = await link()
+  const F = LOOP.files
+  const old = { upload: F.upload_max_bytes, list: F.list_max }
+  try {
+    F.upload_max_bytes = 10
+    const up: any = await c.request("_lembas/fs/write", { path: join(root, "cap.bin"), data: b64("12345678"), base: null, more: true })
+    const over = await refusal(c.request("_lembas/fs/write", { upload: up.upload, data: b64("abc"), more: true }))
+    expect(over.reason).toBe("too_large")
+    // Dropped: its part file is gone and it takes no more.
+    expect(readdirSync(root).filter((n) => PART.test(n))).toEqual([])
+    expect((await refusal(c.request("_lembas/fs/write", { upload: up.upload, data: b64("a") }))).reason).toBe("invalid")
+    expect(existsSync(join(root, "cap.bin"))).toBe(false)
+    F.list_max = 1
+    const l: any = await c.request("_lembas/fs/list", { path: root })
+    expect(l.entries.map((e: any) => e.name)).toEqual(["docs"])
+    expect(l.truncated).toBe(true)
+  } finally {
+    F.upload_max_bytes = old.upload
+    F.list_max = old.list
+  }
+  const files = new DeviceFiles(() => ({ roots: [root], maxMode: "auto", enabled: true }))
+  for (const d of ["d1", "d2", "d3", "d4", "d5", "d6"]) {
+    mkdirSync(join(root, d))
+    writeFileSync(join(root, d, "f.txt"), "x")
+    await files.search({ path: join(root, d), query: "f" })
+  }
+  expect((files as unknown as { names: Map<string, unknown> }).names.size).toBe(LOOP.files.indexes_max)
+})
+
+test("part files: never listed or found, not named by a client, and swept when a process left one behind", async () => {
+  const { c } = await link()
+  const up: any = await c.request("_lembas/fs/write", { path: join(root, "slow.bin"), data: b64("needle one"), base: null, more: true })
+  const part = readdirSync(root).find((n) => PART.test(n))!
+  expect(part).toBeDefined()
+  expect((await c.request<any>("_lembas/fs/list", { path: root, hidden: true })).entries.map((e: any) => e.name)).not.toContain(part)
+  expect((await c.request<any>("_lembas/fs/search", { path: root, query: "slow" })).files).toEqual([])
+  if (Bun.which("rg") !== null) expect((await c.request<any>("_lembas/fs/search", { path: root, query: "needle", content: true })).matches).toEqual([])
+  expect((await refusal(c.request("_lembas/fs/read", { path: join(root, part) }))).reason).toBe("invalid")
+  expect((await refusal(c.request("_lembas/fs/delete", { path: join(root, part), permanent: true }))).reason).toBe("invalid")
+  // The journal names it while it is open; a process that died would leave both behind.
+  const journal = join(paths.state, "uploads.json")
+  expect(JSON.parse(readFileSync(journal, "utf8"))).toContain(join(root, part))
+  // The next process sweeps what the journal names — and only what is named like a part file.
+  writeFileSync(join(root, "keep.txt"), "k")
+  writeFileSync(journal, JSON.stringify([join(root, part), join(root, "keep.txt")]))
+  expect(sweepParts()).toEqual([join(root, part)])
+  expect(existsSync(join(root, part))).toBe(false)
+  expect(existsSync(join(root, "keep.txt"))).toBe(true)
+  expect(JSON.parse(readFileSync(journal, "utf8"))).toEqual([])
+  void up
+})
+
+test("copying a whole tree does not stop the device answering", async () => {
+  const { c } = await link()
+  mkdirSync(join(root, "tree"))
+  for (let i = 0; i < 40; i++) {
+    mkdirSync(join(root, "tree", `d${i}`))
+    for (let j = 0; j < 60; j++) writeFileSync(join(root, "tree", `d${i}`, `f${j}.txt`), "x".repeat(2000))
+  }
+  const order: string[] = []
+  const copy = c.request("_lembas/fs/copy", { from: join(root, "tree"), to: join(root, "tree2") }).then(() => order.push("copy"))
+  const read = c.request("_lembas/fs/read", { path: join(root, "a.txt") }).then(() => order.push("read"))
+  await Promise.all([copy, read])
+  expect(order).toEqual(["read", "copy"])
+  expect(readdirSync(join(root, "tree2")).length).toBe(40)
 })

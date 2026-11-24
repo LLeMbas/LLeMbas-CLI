@@ -25,7 +25,8 @@ not text shown in a chat.
   - **Unsaved text**: where the editor offers ACP's `fs/read_text_file` and
     `fs/write_text_file`, the agent reads the editor's buffers and writes through them. A file
     you changed in the editor after the agent read it is not overwritten: the agent is told to
-    read it again.
+    read it again. Text it read from the editor is never replaced with the text on disk — if the
+    editor stops answering, the edit is refused rather than worked out from the saved file.
   - **Edits as diffs**: when an edit is asked about (always in manual mode) the approval carries
     each file's text before and after, so the editor shows the diff itself; every finished edit
     carries the same, for a list of changed files. Edit and auto mode write as before.
@@ -38,6 +39,15 @@ not text shown in a chat.
   read-only where the computer allows plan mode only. A write is checked against what you last
   saw, so a file changed meanwhile is not overwritten; a delete goes to the system's trash, or is
   refused until you confirm it cannot be undone.
+  Changes run one at a time, and a path is looked at again after anything was waited for, so a
+  link moved in meanwhile cannot send a write somewhere else.
+- **Files that run code are read-only from the web unless this computer says otherwise**
+  (`remote.files_that_run_code`, off by default; `lembas remote files-that-run-code on|off`).
+  Git's hooks and configuration, a project's agent configuration (its rules, MCP servers,
+  commands, agents and skills) and your shell's start-up files can be read from the file manager
+  of the web UI and the apps, and are changed there only once you turn the setting on here. Only
+  the global configuration can turn it on. The computer says which it is with its limits, so the
+  apps can show such a file as read-only beforehand.
 - **The `show` tool also shows files that are not text** (capability `media`): a screenshot the
   agent took, a chart, a recording, a PDF or a 3D model appears in the chat of a client that can
   show one, whether or not the model can read that kind of file itself.

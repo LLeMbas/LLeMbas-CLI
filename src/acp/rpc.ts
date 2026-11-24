@@ -15,6 +15,9 @@ export class RpcError extends Error {
     public code: number,
     message: string,
     public data?: unknown,
+    /** Made here because no answer came (the wait ran out, the connection closed) — not an
+     *  answer of the other side's: what was asked may or may not have been done. */
+    public noAnswer = false,
   ) {
     super(message)
   }
@@ -39,7 +42,7 @@ export class Peer {
     t.onMessage((text) => void this.receive(text))
     t.onClose(() => {
       this.closed = true
-      for (const w of this.waiting.values()) w.reject(new RpcError(INTERNAL_ERROR, "the connection closed"))
+      for (const w of this.waiting.values()) w.reject(new RpcError(INTERNAL_ERROR, "the connection closed", undefined, true))
       this.waiting.clear()
       for (const fn of this.closers) fn()
     })
@@ -71,7 +74,7 @@ export class Peer {
       if (timeoutMs)
         timer = setTimeout(() => {
           this.waiting.delete(id)
-          reject(new RpcError(INTERNAL_ERROR, `${method}: no answer in ${Math.round(timeoutMs / 1000)}s`))
+          reject(new RpcError(INTERNAL_ERROR, `${method}: no answer in ${Math.round(timeoutMs / 1000)}s`, undefined, true))
         }, timeoutMs)
       this.waiting.set(id, {
         resolve: (v) => (clearTimeout(timer), resolve(v)),

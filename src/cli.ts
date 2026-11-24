@@ -50,7 +50,8 @@ Usage:
                                   Accept scheduled work: your schedules may run here as agent
                                   turns (remote.scheduled, off by default)
   lembas remote list | add <dir>… | remove <dir>… | enable | disable
-         | mode <manual|edit|auto|plan> | terminal <on|off> | scheduled <on|off>  [--json]
+         | mode <manual|edit|auto|plan> | terminal <on|off> | scheduled <on|off>
+         | files-that-run-code <on|off>  [--json]
                                   what the instance may do here (remote:): the directories it may
                                   work in (add turns remote work on), the most permissive mode,
                                   terminals; a running service applies a change within seconds

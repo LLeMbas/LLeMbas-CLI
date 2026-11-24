@@ -391,6 +391,10 @@ function saidPath(p: unknown, root: string): string | undefined {
   return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : clean
 }
 
+/** Text of a file's or a tool's own inside the block: it cannot close the block or the selection
+ *  (`</editor>` is written `< /editor>`); nothing else of it is touched. */
+const cannotClose = (s: string) => s.replace(/<\/(editor|selection)\s*>/gi, "< /$1>")
+
 const lineOf = (v: unknown): number | undefined => (Number.isInteger(v) && (v as number) >= 1 ? (v as number) : undefined)
 
 const SEVERITIES = new Set(["error", "warning", "info", "hint"])
@@ -415,7 +419,7 @@ export function editorBlock(editor: unknown, root: string, limits: Partial<typeo
     lines.push(`Selection: ${where ? `${where} ` : ""}${range}`)
     if (typeof sel.text === "string" && sel.text) {
       if (sel.text.length > L.selection_max_chars) lines.push(`(the selection is ${sel.text.length} characters long: read the file for it)`)
-      else lines.push(`<selection>\n${sel.text.replace(/\n$/, "")}\n</selection>`)
+      else lines.push(`<selection>\n${cannotClose(sel.text.replace(/\n$/, ""))}\n</selection>`)
     }
   }
   const diagnostics = (Array.isArray(e.diagnostics) ? e.diagnostics : []).filter((d: any) => d && typeof d === "object" && typeof d.message === "string" && d.message.trim())
@@ -427,9 +431,9 @@ export function editorBlock(editor: unknown, root: string, limits: Partial<typeo
       const at = file ? `${file}${line ? `:${line}` : ""}` : line ? `line ${line}` : ""
       const severity = SEVERITIES.has(d.severity) ? (d.severity as string) : ""
       const head = [at, severity].filter(Boolean).join(" ")
-      let message = (d.message as string).replace(/\s+/g, " ").trim()
+      let message = cannotClose((d.message as string).replace(/\s+/g, " ").trim())
       if (message.length > L.diagnostic_max_chars) message = message.slice(0, L.diagnostic_max_chars) + "…"
-      const source = typeof d.source === "string" && d.source.trim() ? ` (${oneLine(d.source).trim().slice(0, 40)})` : ""
+      const source = typeof d.source === "string" && d.source.trim() ? ` (${oneLine(d.source).replace(/[<>]/g, "").trim().slice(0, 40)})` : ""
       lines.push(`- ${head ? `${head}: ` : ""}${message}${source}`)
     }
     if (diagnostics.length > L.diagnostics_max) lines.push(`(${diagnostics.length - L.diagnostics_max} more)`)

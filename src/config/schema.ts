@@ -322,6 +322,7 @@ export const Config = z.strictObject({
       require_trust: z.boolean().optional().describe("Only projects trusted on this machine (default true)."),
       terminal: z.boolean().optional().describe("Let the web UI open a terminal here (LLeMbas's terminal panel on a chat on this device): a login shell as this user, in a directory remote sessions may use. Default false."),
       scheduled: z.boolean().optional().describe("Accept scheduled work (harness acp.md, spec 3.5.0): let your schedules on the LLeMbas instance run here as agent turns, in the folders remote work may use, in the schedule's mode (Edit unless it says Auto) lowered to max_mode. Default false. lembas service scheduled on|off."),
+      files_that_run_code: z.boolean().optional().describe("Let the file manager of the web UI and the apps change files that run code here (harness acp.md, spec 3.11.0): git's hooks and configuration, a project's agent configuration, your shell's start-up files. Default false: they can be read from there, and are changed only on this machine."),
       terminal_integration: z.boolean().optional().describe("Shell integration in those terminals (bash, zsh, fish): after your own startup files, the shell marks each prompt, command and exit status (OSC 133) and its directory (OSC 7), so the web UI shows the directory, a mark beside each finished command, and can jump between commands. false: the shell starts as it is. Default true."),
     })
     .optional()

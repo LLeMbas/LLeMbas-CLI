@@ -78,9 +78,10 @@ export interface ToolContext {
    *  sound, video, a PDF — handed over by a handle it fetches. Absent: text files only, as before. */
   showsMedia?: boolean
   /** The client's editor (acp.md *Unsaved text*): the text of a file as the client has it — its
-   *  buffer when open there — and a write through it. Each answers undefined / false when the
-   *  client did not take it, and the disk is used. Absent: the disk alone. */
-  editor?: { read?(abs: string): Promise<string | undefined>; write?(abs: string, content: string): Promise<boolean> }
+   *  buffer when open there — and a write through it. `read` answers undefined when the
+   *  client did not give it; `write` true when it took the text, false when it refused, "unknown"
+   *  when it never answered (tool/buffers.ts says what each means for the disk). Absent: the disk alone. */
+  editor?: { read?(abs: string): Promise<string | undefined>; write?(abs: string, content: string): Promise<boolean | "unknown"> }
   /** The hash of each file's text as last read through the client's editor, by absolute path: an
    *  overwrite of one whose text there changed since is refused, as a changed file on disk is. */
   editorSeen?: Map<string, string>

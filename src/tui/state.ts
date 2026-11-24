@@ -537,7 +537,7 @@ export function createView(bus: Bus) {
           items.push({ kind: "user", id: nextId(), text: stripMark(m.parts[0].text).body.trim(), mid: true, machine: true })
         else if (m.role === "user")
           // What was typed; attachments (@files, ! output) went to the model but are not shown again.
-          items.push({ kind: "user", id: nextId(), text: m.parts.filter((p) => p.type === "text" && !ATTACHMENT.test(p.text)).map((p) => (p.type === "text" ? p.text : "")).join("\n") })
+          items.push({ kind: "user", id: nextId(), text: m.parts.filter((p, i) => p.type === "text" && (i === 0 || !ATTACHMENT.test(p.text))).map((p) => (p.type === "text" ? p.text : "")).join("\n") })
         else if (m.role === "assistant") {
           for (const p of m.parts) {
             if (p.type === "text" && p.text.trim()) {
