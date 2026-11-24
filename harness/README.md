@@ -87,7 +87,7 @@ file manager, and files that are not text shown in a chat. Three capabilities, o
 one tool's description; no new tool, and nothing about permissions or the hardline changes.
 
 - **An editor as the client** (`acp.md`, section of that name; capability `editor`;
-  `conformance/editor.json`, 39 cases; `loop.json` `editor`). A client says
+  `conformance/editor.json`, 49 cases; `loop.json` `editor`). A client says
   `clientCapabilities._meta.lembas.editor: true`.
   - **`_lembas/complete`** — autocomplete: `prefix` and `suffix` in, the insertion out, through
     the server's new `POST /v1/lembas/complete`. No session and nothing read per request; a newer
@@ -100,19 +100,24 @@ one tool's description; no new tool, and nothing about permissions or the hardli
     front, the cursor, the selection, diagnostics, open files) becomes one `<editor>` block in
     the user message.
   - **Unsaved text** — where the client offers ACP's `fs/read_text_file` and
-    `fs/write_text_file`, the file tools read the client's buffers and write through them.
+    `fs/write_text_file` (on `serve --stdio`), the file tools read the client's buffers and write
+    through them; text read from the editor is never replaced from the disk.
   - **Edits as diffs** — to such a client an approval card for an edit carries ACP `diff` items
     (old and new text per file), and every finished edit's update carries them too.
   - **`_lembas/models`** and **`_lembas/editor/settings`** — the models for a picker, and the
     person's two model settings (autocomplete; main) kept in their account
     (`GET`/`PUT /v1/lembas/editor`).
 - **Device files** (`acp.md`, section of that name; capability `fs`, on the link only;
-  `conformance/device_files.json`, 35 cases; `loop.json` `files`): `_lembas/fs/list`, `stat`,
+  `conformance/device_files.json`, 57 cases; `loop.json` `files`): `_lembas/fs/list`, `stat`,
   `read`, `write`, `mkdir`, `move`, `copy`, `delete`, `search` — the person's own hands on the
   files inside `remote.roots`. Symlinks followed before a path is judged; never the CLI's own
   files or a protected path; read-only where the device allows plan mode only; a write checked
   against the hash the client last saw (`base`), large files in parts; a delete goes to the
-  system's trash or is refused until the client says `permanent`.
+  system's trash or is refused until the client says `permanent`. Changes run one at a time and
+  a path is judged again after every wait, so a link moved in meanwhile is refused. **Files that
+  run code** — git's own directory, a project's agent configuration, the user's start-up files
+  (`files.runs_code`) — are read, and changed from here only where the device's
+  `remote.files_that_run_code` is on (off by default; said in `limits.files_that_run_code`).
 - **Files that are not text, shown in the chat** (`_lembas/show`; capability `media`;
   `conformance/show.json`, 18 cases; `tools/show.json`'s description). To a client that said
   `media: true` the `show` tool hands over a picture, a sound, a video, a PDF or a 3D model —

@@ -99,14 +99,14 @@ Result:
   "_meta": { "lembas": {
     "protocol": 3,
     "harness_spec": "3.0.0",
-    "limits": { "roots": ["~/work"], "max_mode": "edit", "scheduled": false },
+    "limits": { "roots": ["~/work"], "max_mode": "edit", "scheduled": false, "files_that_run_code": false },
     "connection": "example",
     "capabilities": ["directories", "configure", "…"]
   } }
 }
 ```
 
-`limits` is `null` on `serve --stdio`. `limits.scheduled` (spec 3.5.0, capability `scheduled`): whether
+`limits` is `null` on `serve --stdio`. `limits.files_that_run_code` (spec 3.11.0, capability `fs`): whether device files may change files that run code (`remote.files_that_run_code`, *Files that run code*). `limits.scheduled` (spec 3.5.0, capability `scheduled`): whether
 this device accepts scheduled work now (`remote.scheduled`, *Scheduled work on a linked computer*). `connection` is the device's name for the instance — the
 login's connection — or `null`; the `model` event and `announce` say directly whether a model is
 the instance's (`instance`).
@@ -855,8 +855,12 @@ Rewrite a selection: the selected text and an instruction in, the replacement ou
 - **`_lembas/edit/delta`** — agent → client, a notification `{ id, delta }` while it is written,
   for a request that carried an `id`: the cleaned text, in pieces. The pieces joined are the
   result's `text`.
-- **`_lembas/edit/cancel`** — client → agent, a notification `{ id }`: stops it; the request is
-  answered `{ text: "", cancelled: true }`. Several rewrites may run at once.
+- **`_lembas/edit/cancel`** — client → agent, a notification `{ id }`: stops it, whenever it
+  comes — also while the model is still being chosen; the request is answered
+  `{ text: "", cancelled: true }`. At most `editor.rewrite.concurrent_max` rewrites run at once for
+  a client (`-32602`, `data.reason: "busy"` beyond). Every rewrite — with an `id` or without —
+  stops when its client goes. An `id` is at most 100 characters; a longer one is cut, the same
+  way wherever it is read.
 
 ### Editor context in a prompt (capability `editor`)
 
@@ -898,34 +902,52 @@ session's project are said relative to it, and every path is one line of plain t
 characters, line breaks and angle brackets are taken out, so a file's name cannot close the block). Limits (`editor.context`): a selection's text over
 `selection_max_chars` is replaced by a line saying how long it is; at most `diagnostics_max`
 diagnostics, each message one line of at most `diagnostic_max_chars`; at most `open_max` open
-files; what is left out is counted (`(1 more)`). **Nothing is read because of the block** — a path in it is a name; the model reads the
+files; what is left out is counted (`(1 more)`). A closing tag of the block or of the selection
+inside the selected text or a diagnostic is written with a space after its `<` (`< /editor>`), so
+neither can end the block early; nothing else of them is changed. **Nothing is read because of the block** — a path in it is a name; the model reads the
 file with `read`, under the session's permissions, like any other. The block is the client's
-word about the editor: data to the model, like an attachment.
+word about the editor: data to the model, like an attachment. Only a part added to the message
+is ever read as the block: a message the person typed that begins with `<editor>` is shown as
+typed.
 
 ### Unsaved text: ACP `fs/read_text_file` and `fs/write_text_file`
 
 A client that offers ACP's `clientCapabilities.fs.readTextFile` holds text the disk does not have
-yet. In a session it opened:
+yet. **On `serve --stdio` only**: the link's client is a server and holds no buffer of this
+machine's files, so what it says of `fs` is not read at all. In a session an editor opened
+(`conformance/editor.json`, `kind: buffer`):
 
 - **Reading.** Wherever a file tool takes a file's text — `read`, and the text `edit`,
   `multiedit`, `write` and `apply_patch` start from — the device asks the client first:
   `fs/read_text_file { sessionId, path }` (absolute) → `{ content }`, the buffer when the file is
   open there, the disk otherwise (ACP's meaning). An error, no answer in
-  `editor.buffers.timeout_seconds`, or an answer without `content`: the disk, as before.
+  `editor.buffers.timeout_seconds`, or an answer without `content`: the disk — **unless the
+  session has read that file through the client before** (below).
 - **Writing**, with `fs.writeTextFile`: the new text goes to the client —
   `fs/write_text_file { sessionId, path, content }` — which makes it the file's content, in its
-  buffer and on disk, before it answers. An error or no answer: the device writes the disk itself.
-  A file a patch deletes or moves is deleted or moved on disk by the device.
+  buffer and on disk, before it answers. A client that **refuses** (answers with an error) leaves
+  the write to the device, which writes the disk. A client that **does not answer in time** may
+  still apply it: the device does not write the disk as well — the call fails, saying the write
+  is unconfirmed, and the model reads the file again. A file a patch deletes or moves is deleted
+  or moved on disk by the device.
+- **Text the session read from the editor is never replaced from the disk.** Once the `read`
+  tool was given a file's text by the client, a tool that changes the file needs the client's
+  text again: if the client does not give it, or refuses the write, the call is refused in words
+  (*… is open in the editor … Read it again before changing it*) and nothing is written. Without
+  this, a slow client at edit time would have the edit worked out from the disk's text and
+  written over what the person had not saved.
+- **"Read it first" follows the text.** The device remembers the text **the `read` tool** was
+  given through the client, and what a write that succeeded left there — never what a preview,
+  a refused call or a failed patch looked at. An overwrite of a file whose text there has changed
+  since is refused with the usual sentence (*changed since you last read it*). For such a file
+  the text decides, not the file's change time on disk, which moves whenever the editor saves.
 - **Nothing about permissions moves.** The call is judged exactly as before — its path with
   symlinks followed, protected paths, the mode, the rules, the hardline — and only a call that may
   run reaches the client. The client is asked for no path the tool would not have opened itself.
-- **"Read it first" follows the text.** The device remembers the text a session read through the
-  client; an overwrite of a file whose text there has changed since is refused with the usual
-  sentence (*changed since you last read it*), as a changed file on disk is.
 - Only text: a file whose first bytes on disk are not text is never asked for. Subagents of the
   session read and write the same way.
 
-A client without `fs` — the link's — changes nothing: the device reads and writes its disk.
+A client without `fs` changes nothing: the device reads and writes its disk.
 
 ### Edits as diffs
 
@@ -997,17 +1019,67 @@ session, no approval card. What bounds them is the device (`conformance/device_f
   `protected: true` and no more.
 - **A device whose `remote.max_mode` is `plan` is read-only** to these methods too: `write`,
   `mkdir`, `move`, `copy` and `delete` are refused (`read_only`).
+- **Files that run code are read, and changed only where the device says so**
+  (`remote.files_that_run_code`, off by default: `runs_code`; *Files that run code*, below).
 - The hardline is about commands and runs none here; nothing in these methods runs a program
   the person's files name.
 
+**One change at a time, and judged again after every wait.** A device answers several requests
+at once, and a path that was allowed a moment ago is not allowed for ever: between the look and
+the act another request could move a link into it. So:
+
+- `write`, `mkdir`, `move`, `copy` and `delete` run **one after another** on a device, for every
+  link of it — never two at once.
+- A method that waits for anything between judging a path and acting on it — a file hashed for
+  the `base` check, the next part of an upload — **judges the path again** and goes on only when
+  it is still allowed **and still the same place** (`kind: again`); otherwise it stops with the
+  second refusal, or `changed` (*… is not where it was a moment ago …*), having written nothing.
+  The file is put in place only after the part file is proved to lie in the target's own real
+  directory.
+- What is read is read through the file that was judged, held open — a hash, the parts of
+  `_lembas/show/read` — whatever becomes of its name meanwhile.
+
+### Files that run code
+
+A device that shares a folder shares, with it, files that are *run*: git's hooks and
+configuration, a project's agent configuration, a shell's start-up files. A model's edit of
+those asks first, in every mode but auto; these methods have no card to ask with. So the device
+has a setting of its own for them:
+
+- **`remote.files_that_run_code`** in the device's global config, **off by default**. Set with
+  `lembas remote files-that-run-code on|off` (`lembas remote list --json` says
+  `files_that_run_code`). Global only: a project's config cannot turn it on.
+- **Off**: `write`, `mkdir`, `move`, `copy` (as a target) and `delete` on such a path are refused
+  with `data.reason: "runs_code"` and a sentence that names the setting. **Reading, listing and
+  searching are always allowed.** **On**: such a path is a file like any other (every other rule
+  still holds).
+- The device says it where it says its limits: **`limits.files_that_run_code`** in
+  `_lembas/hello` and in `initialize` — so a client can show such a file as read-only, and say
+  why, before anybody tries. A change of it is a change of the limits: the device dials again.
+  A device before 3.11.0 sends none, and has no `fs`.
+
+Which paths they are is data, in one place — `loop.json` `files.runs_code`:
+
+| Key | What it names |
+|---|---|
+| `segments` (`.git`) | any path with a directory of that name in it: git's own directory and all in it. A repository as a whole is a folder like any other |
+| `project_dir` (`.agent`) and `project` (`config.yaml`, `agents`, `commands`, `skills`) | those names under a project's agent directory — its rules, its MCP servers, its commands, agents and skills — and the directory itself, which moved or copied into place would bring them all. Its other files (plans, notes) are documents |
+| `home` | those paths under the home directory of the device's user: the shells' start-up files, the session's and git's own configuration, autostart entries. Also a folder that holds one |
+
+Judged on the path given and on where it really is, like everything else. The list cannot be
+complete — any program's configuration may run something — and does not claim to be: it is the
+files a device runs without anybody deciding to.
+
 Every refusal is `-32602` with a sentence and `data: { reason }` — `off`, `outside`,
-`protected`, `own`, `read_only`, `missing`, `exists`, `changed`, `not_a_file`,
+`protected`, `own`, `runs_code`, `read_only`, `missing`, `exists`, `changed`, `not_a_file`,
 `not_a_directory`, `no_trash`, `too_large`, `invalid`. Numbers: `loop.json` `files`. Paths are
 absolute (`~` allowed); times are milliseconds since the epoch; sizes bytes.
 
 `Entry = { name, path, kind: "file" | "dir" | "other", size, mtime, link?: string, outside?: true, protected?: true }`
 — `kind` what it is with a link followed; `link` its target as written, when it is a symlink;
-`outside` a link whose target is not inside the roots (it cannot be opened); `protected` as above.
+`outside` a link whose target is not inside the roots: it cannot be opened, and nothing of what
+it points to is said — its `kind` is `other`, its `size` 0, its time the link's own; `protected`
+as above. A part file of an upload under way is never listed or found.
 
 | Method | Params | Result |
 |---|---|---|
@@ -1036,8 +1108,17 @@ above). **`base` is what the client last saw** (`kind: base`):
 A large file goes in parts: the first carries `path`, `base` and `more: true`, and is answered
 `{ upload, received }`; each next one `{ upload, data, more? }`; the part without `more` checks
 `base` **again** and puts the file in place. Parts are at most `files.chunk_max_bytes` decoded;
-at most `files.uploads_max` uploads are open on a link; one left unfinished is dropped with the
-link, and after `files.upload_idle_seconds` without a part.
+at most `files.uploads_max` uploads are open on a link, and one carries at most
+`files.upload_max_bytes` in all (`too_large` beyond, and it is dropped); one left unfinished is
+dropped with the link, and after `files.upload_idle_seconds` without a part. A part file a
+process left behind when it died is removed by the next one as it starts. A part file is removed
+by its name only while that name still lies in the target's own directory; where the folder was
+moved from under it, it is emptied and left.
+
+**Large work does not stop the device.** Copying or deleting a whole tree, hashing a large file
+and listing a folder's names for a search are done in pieces or off the main thread: the device
+goes on answering meanwhile. A listing looks one by one only at the entries it answers, and the
+names of at most `files.indexes_max` folders are kept for searching.
 
 **Deleting** goes to the system's trash where the device has one that can take the file — the
 freedesktop trash of the user's data directory on Linux, `~/.Trash` on macOS, on the same file
@@ -1057,7 +1138,7 @@ above.
 ### `_lembas/hello` — agent → client
 
 Sent once when the link opens, before `initialize`:
-`{ protocol, version, harness_spec, device: { host, platform }, limits: { roots, max_mode, require_trust, scheduled } }`
+`{ protocol, version, harness_spec, device: { host, platform }, limits: { roots, max_mode, require_trust, scheduled, files_that_run_code } }`
 (`scheduled` since spec 3.5.0: whether the device accepts scheduled work; a change of it is a
 change of the limits, below).
 
@@ -1325,8 +1406,9 @@ bytes do not travel in the request; the client fetches them while it is open:
   `text` or `code`, as before.
 - **`_lembas/show/read`** — client → agent → result: `{ handle, offset?, length? }` →
   `{ data: <base64>, offset, eof }`, at most `files.chunk_max_bytes` decoded an answer. The
-  handle names **that one file as it was when the tool ran** — a different size or change time
-  ends it — and nothing else on the device; it is good until the `_lembas/show` request is
+  handle names **that one file as it was when the tool ran** — held open from then, so a name
+  moved over it changes nothing; a different size or change time ends it — and nothing else on
+  the device; it is good until the `_lembas/show` request is
   answered, and `-32602` afterwards. So the client reads to `eof`, keeps the file where its
   generated media go (LLeMbas: the person's files, so it outlives the chat), shows it in the
   conversation by kind, and then answers `{ shown: true }`.
