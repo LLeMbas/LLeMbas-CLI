@@ -4,7 +4,7 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.0.0-beta.14] — 2026-11-24
 
 Harness spec 3.11.0: an editor as the client, the files of a linked computer, and files that are
 not text shown in a chat.
