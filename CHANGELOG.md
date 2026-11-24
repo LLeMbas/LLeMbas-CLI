@@ -26,7 +26,9 @@ not text shown in a chat.
     `fs/write_text_file`, the agent reads the editor's buffers and writes through them. A file
     you changed in the editor after the agent read it is not overwritten: the agent is told to
     read it again. Text it read from the editor is never replaced with the text on disk — if the
-    editor stops answering, the edit is refused rather than worked out from the saved file.
+    editor stops answering, the edit is refused rather than worked out from the saved file. With an
+    editor that only reads, a saved file is edited on disk; one with unsaved changes is refused
+    until you save it.
   - **Edits as diffs**: when an edit is asked about (always in manual mode) the approval carries
     each file's text before and after, so the editor shows the diff itself; every finished edit
     carries the same, for a list of changed files. Edit and auto mode write as before.

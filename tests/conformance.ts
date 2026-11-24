@@ -88,7 +88,7 @@ export const AREAS: Record<string, (c: Case) => unknown> = {
       const r = rewriteModel({ asked: c.asked as string | undefined, session: c.session as string | undefined, main: c.main as string | undefined, served: c.served as string[], start: c.start as string | undefined })
       return { model: r.model, from: r.from }
     }
-    if (c.kind === "buffer") return "read" in c ? { text: textFrom({ tracked: c.tracked === true, read: c.read as "text" | "fails" | "none" }) } : { write: writeTo({ tracked: c.tracked === true, write: c.write as "taken" | "refused" | "unknown" | "none" }) }
+    if (c.kind === "buffer") return "read" in c ? { text: textFrom({ tracked: c.tracked === true, read: c.read as "text" | "fails" | "none" }) } : { write: writeTo({ tracked: c.tracked === true, write: c.write as "taken" | "refused" | "unknown" | "none", unsaved: c.unsaved === true }) }
     if (c.kind === "diff") return { content: diffContent({ editor: c.editor === true, when: c.when as "ask" | "done", bytes: c.bytes as number, max: c.max as number }) }
     throw new Error(`editor: unknown kind ${String(c.kind)}`)
   },

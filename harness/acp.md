@@ -930,9 +930,16 @@ machine's files, so what it says of `fs` is not read at all. In a session an edi
   still apply it: the device does not write the disk as well — the call fails, saying the write
   is unconfirmed, and the model reads the file again. A file a patch deletes or moves is deleted
   or moved on disk by the device.
+- **A client that reads but does not write** (`readTextFile` without `writeTextFile`): the
+  device writes the disk. For a file the session read through the client it first asks for the
+  file's text once more: when that is what the disk holds, nothing is unsaved and the disk is
+  written; when the editor holds text that is not saved, the call is refused with a plain
+  sentence (*… has changes in the editor that are not saved … save it in the editor first*) —
+  the disk's new content and the buffer would part ways.
 - **Text the session read from the editor is never replaced from the disk.** Once the `read`
   tool was given a file's text by the client, a tool that changes the file needs the client's
-  text again: if the client does not give it, or refuses the write, the call is refused in words
+  text again: if the client does not give it, or refuses the write, or cannot write and holds unsaved text
+  for it, the call is refused in words
   (*… is open in the editor … Read it again before changing it*) and nothing is written. Without
   this, a slow client at edit time would have the edit worked out from the disk's text and
   written over what the person had not saved.

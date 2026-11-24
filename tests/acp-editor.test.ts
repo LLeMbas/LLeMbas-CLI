@@ -788,3 +788,76 @@ test("a typed message that begins like the editor's block is shown as typed", as
   // What was typed is there; the block the client added is not.
   expect(h.turns[0].text).toBe(typed)
 })
+
+test("a client that reads but does not write: a saved file is edited on the disk; one with unsaved text is refused until it is saved", async () => {
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "r1", "read", JSON.stringify({ path: "saved.txt" }))] },
+    { chunks: [toolCall(0, "e1", "edit", JSON.stringify({ path: "saved.txt", old: "one", new: "two" }))] },
+    { chunks: [toolCall(0, "e2", "edit", JSON.stringify({ path: "saved.txt", old: "two", new: "three" }))] },
+    { chunks: [toolCall(0, "r2", "read", JSON.stringify({ path: "dirty.txt" }))] },
+    { chunks: [toolCall(0, "e3", "edit", JSON.stringify({ path: "dirty.txt", old: "draft", new: "final" }))] },
+    { chunks: [delta({ content: "done" })] },
+  ])
+  config(fake.url)
+  const root = project({ "saved.txt": "one\n", "dirty.txt": "on disk\n" })
+  const saved = join(root, "saved.txt")
+  const dirty = join(root, "dirty.txt")
+  const { c, init } = await editor({
+    // Both plugins' first versions: buffers are read, nothing is written through them.
+    fs: { readTextFile: true },
+    handlers: {
+      // saved.txt is open with nothing unsaved (the editor shows what the disk holds, reloading
+      // it when it changes); dirty.txt has a line the person has not saved.
+      "fs/read_text_file": (p) => ({ content: p.path === dirty ? "on disk\na draft line\n" : readFileSync(p.path, "utf8") }),
+    },
+  })
+  expect(init.protocolVersion).toBe(1)
+  const s: any = await c.request("session/new", { cwd: root, _meta: { mode: "auto" } })
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "go" }] })
+  const tools = fake.requests.at(-1).messages.filter((m: any) => m.role === "tool").map((m: any) => m.content)
+  // Open in the editor, nothing unsaved: edited on the disk, twice in a row.
+  expect(tools[1]).toContain("-one\n+two")
+  expect(tools[2]).toContain("-two\n+three")
+  expect(readFileSync(saved, "utf8")).toBe("three\n")
+  // Unsaved text there: refused in plain words, and the disk is not touched.
+  expect(tools[3]).toContain("2: a draft line")
+  expect(tools[4]).toContain("has changes in the editor that are not saved")
+  expect(tools[4]).toContain("save")
+  expect(readFileSync(dirty, "utf8")).toBe("on disk\n")
+})
+
+test("a client that writes puts the text into its buffer and saves before answering: edits go through it, one after another", async () => {
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "r1", "read", JSON.stringify({ path: "a.txt" }))] },
+    { chunks: [toolCall(0, "e1", "edit", JSON.stringify({ path: "a.txt", old: "draft", new: "second" }))] },
+    { chunks: [toolCall(0, "e2", "edit", JSON.stringify({ path: "a.txt", old: "second", new: "third" }))] },
+    { chunks: [toolCall(0, "n1", "write", JSON.stringify({ path: "b.txt", content: "new\n" }))] },
+    { chunks: [delta({ content: "done" })] },
+  ])
+  config(fake.url)
+  const root = project({ "a.txt": "on disk\n" })
+  const file = join(root, "a.txt")
+  const buffers: Record<string, string> = { [file]: "a draft\n" }
+  const writes: string[] = []
+  const { c } = await editor({
+    fs: { readTextFile: true, writeTextFile: true },
+    handlers: {
+      "fs/read_text_file": (p) => {
+        if (!(p.path in buffers)) throw new Error("not open")
+        return { content: buffers[p.path] }
+      },
+      // As the spec asks of a client: the buffer takes the text and is saved, then the answer.
+      "fs/write_text_file": (p) => (writes.push(p.path), (buffers[p.path] = p.content), writeFileSync(p.path, p.content), null),
+    },
+  })
+  const s: any = await c.request("session/new", { cwd: root, _meta: { mode: "auto" } })
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "go" }] })
+  const tools = fake.requests.at(-1).messages.filter((m: any) => m.role === "tool").map((m: any) => m.content)
+  // The unsaved buffer was the starting point, and both edits and the new file went through the client.
+  expect(tools[0]).toContain("1: a draft")
+  expect(tools.slice(1).some((t: string) => /Read it again|not saved|refused/.test(t))).toBe(false)
+  expect(writes).toEqual([file, file, join(root, "b.txt")])
+  expect(buffers[file]).toBe("a third\n")
+  expect(readFileSync(file, "utf8")).toBe("a third\n")
+  expect(readFileSync(join(root, "b.txt"), "utf8")).toBe("new\n")
+})

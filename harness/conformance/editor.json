@@ -1,5 +1,5 @@
 {
-  "about": "Spec 3.11.0 (acp.md, *An editor as the client*). `kind: trim` — `_lembas/complete`: `prefix` and `suffix` cut to `max` UTF-8 bytes each, the prefix keeping its end and the suffix its start, at a character boundary. `kind: context` — the block a prompt's `_meta.lembas.editor` becomes in the user message (`block: null`: none); `root` is the session's project, `limits` override `loop.json` `editor.context` for the case. `kind: message` — the user message of a rewrite (`_lembas/edit`) from its params; `limits` override `editor.rewrite`'s context limits. `kind: output` — what a rewrite answers from what the model streamed in `chunks`, for a selection `selection`: a fence around the whole answer taken off, and the end made the selection's; the pieces sent as `_lembas/edit/delta` joined are that text. `kind: model` — the model a rewrite runs on: `asked` (its `model`), `session` (the model of the session it names), `main` (the person's main model on the server), `served` (the login's models), `start` (what a new session in the directory would start on). `kind: diff` — what the content of an approval card (`when: ask`) or of a finished edit's update (`when: done`) is made of, for a client that said `editor: true` or not, the texts being `bytes` together against `max`. `kind: buffer` — unsaved text: where a tool that changes a file takes its text from (`read`: the client gave `text`, `fails`, or offers `none`; `tracked`: the session read the file through the client before), and where a write goes (`write`: `taken`, `refused`, `unknown` — no answer — or `none`). CLI: src/acp/editor.ts, src/tool/buffers.ts.",
+  "about": "Spec 3.11.0 (acp.md, *An editor as the client*). `kind: trim` — `_lembas/complete`: `prefix` and `suffix` cut to `max` UTF-8 bytes each, the prefix keeping its end and the suffix its start, at a character boundary. `kind: context` — the block a prompt's `_meta.lembas.editor` becomes in the user message (`block: null`: none); `root` is the session's project, `limits` override `loop.json` `editor.context` for the case. `kind: message` — the user message of a rewrite (`_lembas/edit`) from its params; `limits` override `editor.rewrite`'s context limits. `kind: output` — what a rewrite answers from what the model streamed in `chunks`, for a selection `selection`: a fence around the whole answer taken off, and the end made the selection's; the pieces sent as `_lembas/edit/delta` joined are that text. `kind: model` — the model a rewrite runs on: `asked` (its `model`), `session` (the model of the session it names), `main` (the person's main model on the server), `served` (the login's models), `start` (what a new session in the directory would start on). `kind: diff` — what the content of an approval card (`when: ask`) or of a finished edit's update (`when: done`) is made of, for a client that said `editor: true` or not, the texts being `bytes` together against `max`. `kind: buffer` — unsaved text: where a tool that changes a file takes its text from (`read`: the client gave `text`, `fails`, or offers `none`; `tracked`: the session read the file through the client before), and where a write goes (`write`: `taken`, `refused`, `unknown` — no answer — or `none`: the client does not write; `unsaved`: the editor's text for the file, asked once more, is not the disk's). CLI: src/acp/editor.ts, src/tool/buffers.ts.",
   "cases": [
     {
       "about": "Both short: sent as they are.",
@@ -643,6 +643,26 @@
       "write": "none",
       "expect": {
         "write": "disk"
+      }
+    },
+    {
+      "about": "A client that reads but does not write, a file the session read there, and the editor's text is what is on disk: nothing is unsaved — the device writes the disk.",
+      "kind": "buffer",
+      "tracked": true,
+      "write": "none",
+      "unsaved": false,
+      "expect": {
+        "write": "disk"
+      }
+    },
+    {
+      "about": "…and the editor holds text that is not saved: refused, with a sentence asking for the file to be saved first.",
+      "kind": "buffer",
+      "tracked": true,
+      "write": "none",
+      "unsaved": true,
+      "expect": {
+        "write": "refuse"
       }
     }
   ]

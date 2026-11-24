@@ -87,7 +87,7 @@ file manager, and files that are not text shown in a chat. Three capabilities, o
 one tool's description; no new tool, and nothing about permissions or the hardline changes.
 
 - **An editor as the client** (`acp.md`, section of that name; capability `editor`;
-  `conformance/editor.json`, 49 cases; `loop.json` `editor`). A client says
+  `conformance/editor.json`, 51 cases; `loop.json` `editor`). A client says
   `clientCapabilities._meta.lembas.editor: true`.
   - **`_lembas/complete`** — autocomplete: `prefix` and `suffix` in, the insertion out, through
     the server's new `POST /v1/lembas/complete`. No session and nothing read per request; a newer

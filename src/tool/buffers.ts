@@ -30,11 +30,14 @@ export function textFrom(o: { tracked: boolean; read: "text" | "fails" | "none" 
 }
 
 /** What becomes of a write (`kind: buffer`): `taken` by the client; `refused` by it — the disk,
- *  unless the session read the file in the editor; `unknown` — no answer: never the disk as well. */
-export function writeTo(o: { tracked: boolean; write: "taken" | "refused" | "unknown" | "none" }): "editor" | "disk" | "refuse" {
+ *  unless the session read the file in the editor; `unknown` — no answer: never the disk as well;
+ *  `none` — the client reads but does not write: the disk, unless the session read the file in
+ *  the editor and the editor holds text for it that is not saved (`unsaved`). */
+export function writeTo(o: { tracked: boolean; write: "taken" | "refused" | "unknown" | "none"; unsaved?: boolean }): "editor" | "disk" | "refuse" {
   if (o.write === "taken") return "editor"
   if (o.write === "unknown") return "refuse"
-  return o.tracked && o.write === "refused" ? "refuse" : "disk"
+  if (o.write === "none") return o.tracked && o.unsaved === true ? "refuse" : "disk"
+  return o.tracked ? "refuse" : "disk"
 }
 
 /** Note what a call that ran changed, where a client wants to draw it (ToolContext.changed). */
@@ -82,17 +85,36 @@ export async function changedInEditor(abs: string, ctx: Ctx): Promise<boolean> {
  *  A write the client neither took nor refused (no answer in time) is not repeated on the disk:
  *  the client may still apply it, and two writers would cross. */
 export async function putText(abs: string, content: string, ctx: Ctx): Promise<boolean> {
-  const outcome = ctx.editor?.write ? await ctx.editor.write(abs, content).catch(() => false as const) : false
+  const isTracked = tracked(abs, ctx)
+  if (!ctx.editor?.write) {
+    // A client that reads but does not write: the device writes the disk — unless the editor
+    // holds text for the file that is not saved, which the disk's new content would part from.
+    let unsaved = false
+    if (isTracked) {
+      const now = await ctx.editor?.read?.(abs).catch(() => undefined)
+      if (now === undefined) throw readAgain(abs)
+      const disk = await readText(abs).catch(() => undefined)
+      unsaved = disk !== now
+    }
+    if (writeTo({ tracked: isTracked, write: "none", unsaved }) === "refuse") throw new ToolError(`${abs} has changes in the editor that are not saved. Nothing was written: ask the user to save ${abs} in the editor first, then do this again.`)
+    await mkdir(dirname(abs), { recursive: true })
+    await Bun.write(abs, content)
+    // What the editor shows once it has taken the file from the disk again.
+    if (isTracked) ctx.editorSeen?.set(abs, sha256(content))
+    return false
+  }
+  const outcome = await ctx.editor.write(abs, content).catch(() => false as const)
+  const to = writeTo({ tracked: isTracked, write: outcome === true ? "taken" : outcome === "unknown" ? "unknown" : "refused" })
   if (outcome === "unknown") {
     ctx.editorSeen?.set(abs, UNKNOWN)
     throw new ToolError(`The editor did not confirm writing ${abs}; it may or may not have been written. Read it again to see what is there before going on.`)
   }
-  if (outcome === true) {
+  if (to === "editor") {
     ctx.editorSeen?.set(abs, sha256(content))
     return true
   }
   // The client would not take it. Text it holds unsaved is not written over behind its back.
-  if (tracked(abs, ctx)) throw new ToolError(`${abs} is open in the editor, which refused the write. Nothing was written; tell the user, or read it again.`)
+  if (to === "refuse") throw new ToolError(`${abs} is open in the editor, which refused the write. Nothing was written; tell the user, or read it again.`)
   await mkdir(dirname(abs), { recursive: true })
   await Bun.write(abs, content)
   return false
