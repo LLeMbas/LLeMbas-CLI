@@ -4,6 +4,46 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Harness spec 3.11.0: an editor as the client, the files of a linked computer, and files that are
+not text shown in a chat.
+
+### Added
+
+- **An editor as the client of `lembas serve --stdio`** (`harness/acp.md`, capability `editor`).
+  An editor plugin that says `editor: true` gets, beyond plain ACP:
+  - **Autocomplete** (`_lembas/complete`): the text before and after the cursor in, the insertion
+    out, from the autocomplete model chosen on the server. No session is opened and nothing is
+    read for a request; a newer request cancels the one before it.
+  - **Rewrite a selection** (`_lembas/edit`): the selection and an instruction in, the replacement
+    out, streamed while it is written. One request with no tools; nothing is written — the editor
+    shows the result as a diff to accept or reject.
+  - **What you are looking at, in a prompt**: the open file, the cursor, the selection, the
+    diagnostics and the other open files travel with the prompt and are said to the model in one
+    block, so a plugin does not write that sentence itself.
+  - **Unsaved text**: where the editor offers ACP's `fs/read_text_file` and
+    `fs/write_text_file`, the agent reads the editor's buffers and writes through them. A file
+    you changed in the editor after the agent read it is not overwritten: the agent is told to
+    read it again.
+  - **Edits as diffs**: when an edit is asked about (always in manual mode) the approval carries
+    each file's text before and after, so the editor shows the diff itself; every finished edit
+    carries the same, for a list of changed files. Edit and auto mode write as before.
+  - **Models and settings**: `_lembas/models` for a picker, and `_lembas/editor/settings` for your
+    two model settings — autocomplete, and generate / edit / chat — kept in your account.
+- **The files of a linked computer** (`_lembas/fs/*`, capability `fs`, on the link): list, read,
+  write, make a folder, move, copy, delete and search, for a file manager and an editor in the
+  web UI and the apps. Only inside the folders the computer shares (`remote.roots`), with symbolic
+  links followed before a path is judged; never LLeMbas CLI's own files or a protected path;
+  read-only where the computer allows plan mode only. A write is checked against what you last
+  saw, so a file changed meanwhile is not overwritten; a delete goes to the system's trash, or is
+  refused until you confirm it cannot be undone.
+- **The `show` tool also shows files that are not text** (capability `media`): a screenshot the
+  agent took, a chart, a recording, a PDF or a 3D model appears in the chat of a client that can
+  show one, whether or not the model can read that kind of file itself.
+
+The server uses these from the version that carries spec 3.11.0.
+
 ## [2.0.0-beta.13] — 2026-11-24
 
 Harness spec 3.10.0: a turn the harness starts by itself is a turn like any other over the link.
