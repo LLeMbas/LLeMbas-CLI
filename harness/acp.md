@@ -815,8 +815,10 @@ The device passes it to the server's `POST /v1/lembas/complete` (*The HTTP API*)
   request is cancelled by the next one only.
 - **Refusals** are `-32602` with the server's own sentence where it gave one, and `data.reason`:
   `not_logged_in`; `no_model` (nobody has chosen an autocomplete model — the sentence says where);
-  `not_allowed` (the model is not one allowed for autocomplete); `unsupported` (a server before
-  spec 3.11.0). A server that fails otherwise is `-32603`.
+  `not_allowed` (the model is not one allowed for autocomplete); `unknown_model` (not a model of
+  this account); `busy` (too many completions at once, or the token's rate: the next keystroke
+  tries again); `invalid`; `unsupported` (a server before spec 3.11.0). A server that fails
+  otherwise is `-32603`.
 
 ### `_lembas/edit` — client → agent → result (capability `editor`)
 
@@ -969,8 +971,8 @@ The person's two model settings, kept in their account so they follow them into 
 (`/v1/lembas/editor`). Params `{}` reads; `{ set: { autocomplete_model?: string | null, main_model?: string | null } }`
 writes first (`null`: back to the instance's) and then reads. Result
 `{ autocomplete: { model, source: "person" | "instance" | null, allowed: string[] | null }, main: { model } }`,
-the server's answer as it is. The server's refusal is `-32602` with its sentence; a server
-before spec 3.11.0 is `data.reason: "unsupported"`. The editor's own quick switch is the `model`
+the server's answer as it is. The server's refusal is `-32602` with its sentence (`data.reason`:
+`unknown_model`, `not_allowed`, `invalid`); a server before spec 3.11.0 is `unsupported`. The editor's own quick switch is the `model`
 of `_lembas/complete` and is saved nowhere.
 
 ## Device files (spec 3.11.0)
@@ -990,8 +992,9 @@ session, no approval card. What bounds them is the device (`conformance/device_f
 - **Never the CLI's own files** — its configuration, data and state directories, wherever the
   roots are (`own`) — **and never a protected path** (`permission/hardline.json`
   `protected_paths`, judged on the spelling given and on the real one: `protected`). Not read,
-  not listed into, not written, not the source or target of a move or a copy. A listing names
-  such an entry with `protected: true` and no more.
+  not listed into, not written, not the source or target of a move or a copy — and a folder that holds
+  them is not deleted, moved or copied whole either. A listing names such an entry with
+  `protected: true` and no more.
 - **A device whose `remote.max_mode` is `plan` is read-only** to these methods too: `write`,
   `mkdir`, `move`, `copy` and `delete` are refused (`read_only`).
 - The hardline is about commands and runs none here; nothing in these methods runs a program
@@ -1546,13 +1549,19 @@ Besides `/v1/models`, the chat completions, `/api/v1/instance` and `/mcp`:
   there is none, **403** with a sentence for a model not allowed for autocomplete. The device
   sends `stream: false` and closes the request to cancel it; the server stops the model's
   request when the client goes. Counted and priced like any reply; never stored as a chat.
-  `detail` in an error answer is the sentence the device passes on.
+  Errors are in OpenAI's shape, `{ "error": { message, type, code } }`, and `message` is the
+  sentence the device passes on unchanged: 400 malformed or nothing to complete, 403, 404 a model
+  that is not this account's, 409, 413, 429 more than the server takes at once or the token's
+  rate, and the upstream's status or 502 (`type: "upstream_error"`) when the model's server fails.
 - **The editor's model settings** (spec 3.11.0): **`GET /v1/lembas/editor`** →
   `{ autocomplete: { model: string | null, source: "person" | "instance" | null, allowed: string[] | null }, main: { model: string | null } }`
   and **`PUT /v1/lembas/editor`** with `{ autocomplete_model?: string | null, main_model?: string | null }`
   (only the fields sent change; `null`: back to the instance's), answering the same object.
   `allowed`: the served ids an administrator marked for autocomplete, `null` when none is marked
-  — then all are. A 404 is a server before spec 3.11.0.
+  — then all are. `PUT` refuses a model that is not the account's (404), one not allowed for
+  autocomplete (403) and an embedding model (400), each with its sentence. A 404 with no
+  sentence is a server before spec 3.11.0. `/v1/models` carries no autocomplete flag: what a
+  model may be picked for is read from `allowed`.
 
 - **Schedules** (spec 3.5.0): the schedule routes of `/api/v2` — `GET`/`POST /api/v2/schedules`,
   `GET`/`PATCH`/`DELETE /api/v2/schedules/{id}`, `POST …/{id}/pause`, `/resume`, `/run`,

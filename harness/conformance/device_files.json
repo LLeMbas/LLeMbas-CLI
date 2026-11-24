@@ -1,5 +1,5 @@
 {
-  "about": "Spec 3.11.0 (acp.md, *Device files*). `kind: path` — whether a `_lembas/fs/*` method may touch `path`, and where it really is: `op` is `read` (list, stat, read, search, a copy's source), `write` (write, mkdir, a move's or a copy's target) or `remove` (delete, a move's source: the name itself, a link not followed); `roots` the device's `remote.roots`, `links` the symlinks on the way (path → target), `own` the CLI's own directories, `protected` the protected paths, `enabled` and `shared_only` the link's state, `max_mode` the device's. Answers `{ok: true, real}` or `{refused: reason}`, the first that applies of `off`, `invalid`, `outside`, `own`, `protected`, `read_only`. `kind: base` — whether `_lembas/fs/write` writes: `base` as sent (absent, null or a hash), `overwrite`, and `current`, the file's hash now (null: no file). LLeMbas: what it may expect of a device with `fs`; CLI: src/acp/files.ts.",
+  "about": "Spec 3.11.0 (acp.md, *Device files*). `kind: path` — whether a `_lembas/fs/*` method may touch `path`, and where it really is: `op` is `read` (list, stat, read, search, a copy's source), `write` (write, mkdir, a move's or a copy's target) or `remove` (delete, a move's source: the name itself, a link not followed); `roots` the device's `remote.roots`, `links` the symlinks on the way (path → target), `own` the CLI's own directories, `protected` the protected paths, `enabled` and `shared_only` the link's state, `max_mode` the device's; `deep`: the method works on everything under the path (a copy's source; `remove` always does), so a folder holding the CLI's own files is refused as they are. Answers `{ok: true, real}` or `{refused: reason}`, the first that applies of `off`, `invalid`, `outside`, `own`, `protected`, `read_only`. `kind: base` — whether `_lembas/fs/write` writes: `base` as sent (absent, null or a hash), `overwrite`, and `current`, the file's hash now (null: no file). LLeMbas: what it may expect of a device with `fs`; CLI: src/acp/files.ts.",
   "cases": [
     {
       "about": "A file inside a root.",
@@ -541,6 +541,100 @@
       "links": {},
       "expect": {
         "refused": "outside"
+      }
+    },
+    {
+      "about": "A folder that holds the CLI's own files is not deleted or moved: what is inside goes with it.",
+      "kind": "path",
+      "op": "remove",
+      "path": "/home/user/.config",
+      "roots": [
+        "/home/user"
+      ],
+      "own": [
+        "/home/user/.config/lembas",
+        "/home/user/.local/share/lembas",
+        "/home/user/.local/state/lembas"
+      ],
+      "protected": [
+        "/home/user/.ssh",
+        "/home/user/.gnupg"
+      ],
+      "enabled": true,
+      "max_mode": "edit",
+      "links": {},
+      "expect": {
+        "refused": "own"
+      }
+    },
+    {
+      "about": "…nor copied whole (`deep`: the method works on everything under the path).",
+      "kind": "path",
+      "op": "read",
+      "deep": true,
+      "path": "/home/user/.config",
+      "roots": [
+        "/home/user"
+      ],
+      "own": [
+        "/home/user/.config/lembas",
+        "/home/user/.local/share/lembas",
+        "/home/user/.local/state/lembas"
+      ],
+      "protected": [
+        "/home/user/.ssh",
+        "/home/user/.gnupg"
+      ],
+      "enabled": true,
+      "max_mode": "edit",
+      "links": {},
+      "expect": {
+        "refused": "own"
+      }
+    },
+    {
+      "about": "…but it may be listed: the entry is named, marked protected, and not opened.",
+      "kind": "path",
+      "op": "read",
+      "path": "/home/user/.config",
+      "roots": [
+        "/home/user"
+      ],
+      "own": [
+        "/home/user/.config/lembas",
+        "/home/user/.local/share/lembas",
+        "/home/user/.local/state/lembas"
+      ],
+      "protected": [
+        "/home/user/.ssh",
+        "/home/user/.gnupg"
+      ],
+      "enabled": true,
+      "max_mode": "edit",
+      "links": {},
+      "expect": {
+        "ok": true,
+        "real": "/home/user/.config"
+      }
+    },
+    {
+      "about": "A folder that holds a protected path is not deleted, moved or copied whole.",
+      "kind": "path",
+      "op": "remove",
+      "path": "/home/user",
+      "roots": [
+        "/home"
+      ],
+      "own": [],
+      "protected": [
+        "/home/user/.ssh",
+        "/home/user/.gnupg"
+      ],
+      "enabled": true,
+      "max_mode": "edit",
+      "links": {},
+      "expect": {
+        "refused": "protected"
       }
     },
     {

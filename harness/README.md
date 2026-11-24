@@ -107,7 +107,7 @@ one tool's description; no new tool, and nothing about permissions or the hardli
     person's two model settings (autocomplete; main) kept in their account
     (`GET`/`PUT /v1/lembas/editor`).
 - **Device files** (`acp.md`, section of that name; capability `fs`, on the link only;
-  `conformance/device_files.json`, 31 cases; `loop.json` `files`): `_lembas/fs/list`, `stat`,
+  `conformance/device_files.json`, 35 cases; `loop.json` `files`): `_lembas/fs/list`, `stat`,
   `read`, `write`, `mkdir`, `move`, `copy`, `delete`, `search` — the person's own hands on the
   files inside `remote.roots`. Symlinks followed before a path is judged; never the CLI's own
   files or a protected path; read-only where the device allows plan mode only; a write checked
