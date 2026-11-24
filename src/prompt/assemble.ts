@@ -33,6 +33,7 @@ import taskReview from "../../harness/prompts/tasks/review.md" with { type: "tex
 import taskChangelog from "../../harness/prompts/tasks/changelog.md" with { type: "text" }
 import taskContinue from "../../harness/prompts/tasks/continue.md" with { type: "text" }
 import taskInit from "../../harness/prompts/tasks/init.md" with { type: "text" }
+import taskRewrite from "../../harness/prompts/tasks/rewrite.md" with { type: "text" }
 import familyAnthropic from "../../harness/prompts/family/anthropic.md" with { type: "text" }
 import familyGpt from "../../harness/prompts/family/gpt.md" with { type: "text" }
 import familyGemini from "../../harness/prompts/family/gemini.md" with { type: "text" }
@@ -77,6 +78,7 @@ const BUILTIN: Record<string, string> = {
   "tasks/continue.md": taskContinue,
   "tasks/changelog.md": taskChangelog,
   "tasks/init.md": taskInit,
+  "tasks/rewrite.md": taskRewrite,
   "family/anthropic.md": familyAnthropic,
   "family/gpt.md": familyGpt,
   "family/gemini.md": familyGemini,

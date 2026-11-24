@@ -1008,5 +1008,44 @@
         "webp"
       ]
     }
+  },
+  "editor": {
+    "about": "Spec 3.11.0 (acp.md, *An editor as the client*): autocomplete — the most of `prefix` and of `suffix` sent on (UTF-8 bytes; the prefix keeps its end, the suffix its start) and the tokens asked for; a rewrite — the most of the selection and the instruction (refused beyond) and of the context around it (trimmed); the editor block of a prompt; when edits travel as ACP diff items; how long a client's buffer is waited for. conformance/editor.json.",
+    "complete": {
+      "max_bytes": 65536,
+      "max_tokens_default": 128,
+      "max_tokens_cap": 512
+    },
+    "rewrite": {
+      "selection_max_bytes": 262144,
+      "context_max_lines": 200,
+      "context_max_bytes": 16384,
+      "instruction_max_chars": 8000
+    },
+    "context": {
+      "selection_max_chars": 20000,
+      "diagnostics_max": 20,
+      "diagnostic_max_chars": 300,
+      "open_max": 30
+    },
+    "diff": {
+      "max_bytes": 2097152
+    },
+    "buffers": {
+      "timeout_seconds": 10
+    }
+  },
+  "files": {
+    "about": "Spec 3.11.0 (acp.md, *Device files* and `_lembas/show`): the most one answer or one part carries, decoded; entries a listing names; uploads open on a link and how long one waits for its next part; content matches a search answers. `show`: the most a text file and a file that is not text may be to be shown, and how long the client has to fetch one. conformance/device_files.json, show.json.",
+    "chunk_max_bytes": 1048576,
+    "list_max": 2000,
+    "uploads_max": 4,
+    "upload_idle_seconds": 300,
+    "search_max": 200,
+    "show": {
+      "text_max_bytes": 1048576,
+      "media_max_bytes": 67108864,
+      "media_wait_seconds": 300
+    }
   }
 }
