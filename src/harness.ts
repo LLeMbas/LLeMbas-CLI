@@ -294,6 +294,24 @@ export const LOOP: {
     /** How long a session waits for its configured MCP servers before its first request. */
     mcp_wait_ms: number
   }
+  /** Spec 3.11.0 (acp.md, *An editor as the client*): the limits of autocomplete, a rewrite, the
+   *  editor block of a prompt, diff items and a client's buffers. */
+  editor: {
+    complete: { max_bytes: number; max_tokens_default: number; max_tokens_cap: number }
+    rewrite: { selection_max_bytes: number; context_max_lines: number; context_max_bytes: number; instruction_max_chars: number }
+    context: { selection_max_chars: number; diagnostics_max: number; diagnostic_max_chars: number; open_max: number }
+    diff: { max_bytes: number }
+    buffers: { timeout_seconds: number }
+  }
+  /** Spec 3.11.0 (acp.md, *Device files*, `_lembas/show`): chunk, listing, upload and size limits. */
+  files: {
+    chunk_max_bytes: number
+    list_max: number
+    uploads_max: number
+    upload_idle_seconds: number
+    search_max: number
+    show: { text_max_bytes: number; media_max_bytes: number; media_wait_seconds: number }
+  }
 } = LOOP_JSON
 
 /** The `purpose` argument (harness/purpose.json). */

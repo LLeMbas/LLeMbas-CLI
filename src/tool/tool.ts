@@ -74,6 +74,20 @@ export interface ToolContext {
   /** Open a file in the user's viewer (the show tool): set only where a client over the link said
    *  it can show files (harness/acp.md, capability `show`). Absent: no display, and show is not offered. */
   show?: (req: import("./show.ts").ShowRequest, callId?: string) => Promise<import("./show.ts").ShowReply>
+  /** The client also shows files that are not text (spec 3.11.0, capability `media`): a picture,
+   *  sound, video, a PDF — handed over by a handle it fetches. Absent: text files only, as before. */
+  showsMedia?: boolean
+  /** The client's editor (acp.md *Unsaved text*): the text of a file as the client has it — its
+   *  buffer when open there — and a write through it. Each answers undefined / false when the
+   *  client did not take it, and the disk is used. Absent: the disk alone. */
+  editor?: { read?(abs: string): Promise<string | undefined>; write?(abs: string, content: string): Promise<boolean> }
+  /** The hash of each file's text as last read through the client's editor, by absolute path: an
+   *  overwrite of one whose text there changed since is refused, as a changed file on disk is. */
+  editorSeen?: Map<string, string>
+  /** What each edit that ran changed, by call id — each file's text before and after — for a
+   *  client that draws its own diffs (acp.md *Edits as diffs*). Absent: nobody wants them, and
+   *  none are kept. */
+  changed?: Map<string, FileChange[]>
   /** A scheduled run's report (harness reports.md): set only in a session a schedule opened for
    *  its run that notifies at all. `active`: the turn running now is the schedule's (not a person
    *  writing into the run's session); `file` keeps the report — the last one written is the
@@ -90,6 +104,20 @@ export interface ToolContext {
     bases?: string[]
     embedder?: import("../library/store.ts").Embedder
   }
+}
+
+/** One file an edit changes: its text before (null: the call creates it) and after (null: the
+ *  call deletes it). `path` is absolute. */
+export interface FileChange {
+  path: string
+  oldText: string | null
+  newText: string | null
+}
+
+/** A call's change, before it is made. */
+export interface Preview {
+  diff: string
+  files?: FileChange[]
 }
 
 export interface SpawnOptions {
@@ -152,8 +180,9 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
    *  (team_add's name); undefined: the generic answer. */
   invalid?(raw: unknown, ctx: ToolContext): string | undefined
   permission(args: z.infer<S>, ctx: ToolContext): PermissionRequest
-  /** What the call would change, as a unified diff, shown when the user is asked. Writes nothing. */
-  preview?(args: z.infer<S>, ctx: ToolContext): Promise<string>
+  /** What the call would change, shown when the user is asked: a unified diff, and — for a client
+   *  that draws its own (acp.md *Edits as diffs*) — each file's text before and after. Writes nothing. */
+  preview?(args: z.infer<S>, ctx: ToolContext): Promise<Preview>
   run(args: z.infer<S>, ctx: ToolContext): Promise<ToolResult>
 }
 

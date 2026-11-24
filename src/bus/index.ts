@@ -128,7 +128,7 @@ export interface Asker {
     args: unknown
     request: PermissionRequest
     decision: Decision
-    preview?: { diff?: string; error?: string }
+    preview?: { diff?: string; error?: string; files?: import("../tool/tool.ts").FileChange[] }
     /** What the model says the call is for. */
     purpose?: string
     /** Set when a subagent running as a background job asks, so the card can say which — it may

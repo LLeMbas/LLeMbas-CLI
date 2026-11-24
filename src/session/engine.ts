@@ -1313,10 +1313,10 @@ export class Engine {
     if (decision.action === "deny") return { result: { output: `Denied: ${decision.reason}`, isError: true }, denied: true }
     if (decision.action === "ask") {
       // The change itself, so the user sees what they are allowing — not just the file's name.
-      let preview: { diff?: string; error?: string } | undefined
+      let preview: { diff?: string; error?: string; files?: import("../tool/tool.ts").FileChange[] } | undefined
       if (tool.preview)
         preview = await tool.preview(args, toolCtx).then(
-          (diff) => ({ diff }),
+          (p) => p,
           (e) => ({ error: (e as Error).message }),
         )
       const reply = await this.waiting(this.o.asker.ask({ tool: tool.name, args, request, decision, preview, purpose }), "approval", tool.name)

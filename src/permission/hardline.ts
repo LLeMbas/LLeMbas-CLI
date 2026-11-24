@@ -162,6 +162,14 @@ export function substitutions(line: string): string[] {
   return out
 }
 
+/** The protected paths themselves, absolute: what a method that works on a whole folder checks
+ *  the folder against (acp/files.ts) — a folder holding one is not deleted, moved or copied whole. */
+export function protectedRoots(): string[] {
+  const home = homedir()
+  const configs = [...new Set([paths.config, globalPaths.config])]
+  return SPEC.protected_paths.flatMap((g) => (g.path.startsWith("<config>/") ? configs.map((c) => resolve(c, g.path.slice("<config>/".length))) : [g.path.startsWith("~/") ? resolve(home, g.path.slice(2)) : g.path]))
+}
+
 /** Paths no tool may write, whatever the mode (the spec's, plus LLeMbas CLI's own connections.yaml).
  *  `<config>/` is guarded in the user's config directory and, in local mode, in the local one too. */
 export function protectedPath(abs: string): string | undefined {

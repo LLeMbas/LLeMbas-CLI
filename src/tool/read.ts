@@ -7,6 +7,7 @@ import { absPath, defineTool, showPath, ToolError } from "./tool.ts"
 import { described } from "../harness.ts"
 import { byListing } from "./search.ts"
 import { sha256 } from "../session/results.ts"
+import { editorText } from "./buffers.ts"
 
 const MAX_LINES = 2000
 const MAX_LINE = 2000
@@ -39,8 +40,10 @@ export const readTool = defineTool({
     if (bytes.includes(0)) throw new ToolError(`${a.path} is a binary file (${st.size} bytes)`)
     // Read whole, so only up to a size that fits in memory comfortably; past it, grep or bash.
     if (st.size > 50_000_000) throw new ToolError(`${a.path} is ${Math.round(st.size / 1e6)} MB — too large to read whole; search it with grep, or look at a part with bash (head, tail, sed -n)`)
-    const raw = await file.bytes()
-    const text = new TextDecoder().decode(raw)
+    // The client's buffer where it has the file open (acp.md *Unsaved text*), else the disk.
+    const buffer = await editorText(abs, ctx)
+    const raw = buffer !== undefined ? new TextEncoder().encode(buffer) : await file.bytes()
+    const text = buffer ?? new TextDecoder().decode(raw)
     const { body, from, to, of } = readBody(text, a.offset, a.limit)
     ctx.readFiles.add(abs)
     ctx.fileStamps.set(abs, st.mtimeMs)

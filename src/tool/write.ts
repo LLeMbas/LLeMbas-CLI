@@ -1,11 +1,11 @@
-import { mkdir, stat } from "node:fs/promises"
-import { dirname } from "node:path"
+import { stat } from "node:fs/promises"
 import { createTwoFilesPatch } from "diff"
 import { z } from "zod"
 import { straySkillNote } from "../skill/index.ts"
 import { absPath, defineTool, showPath, ToolError, type ToolContext } from "./tool.ts"
 import { described } from "../harness.ts"
 import { hunks, lineCount, sha256 } from "../session/results.ts"
+import { changedInEditor, fileText, noteChanges, putText } from "./buffers.ts"
 
 /** Refuse to overwrite a file the model has not read, or one changed on disk since it was read. The
  *  texts are the spec's (filesystem.md, *Errors*), with the absolute path. */
@@ -17,7 +17,15 @@ export async function guardExisting(abs: string, ctx: ToolContext): Promise<bool
   if (!ctx.readFiles.has(abs)) throw new ToolError(`${abs} exists and has not been read in this session. Read it first.`)
   const seen = ctx.fileStamps.get(abs)
   if (seen !== undefined && st.mtimeMs > seen + 1) throw new ToolError(`${abs} changed since you last read it. Read it again before changing it.`)
+  // The same for text the client's editor holds unsaved: "read it first" follows the text.
+  if (await changedInEditor(abs, ctx)) throw new ToolError(`${abs} changed since you last read it. Read it again before changing it.`)
   return true
+}
+
+/** A file's change time now — or this moment, for one a client's editor holds and has not put on
+ *  disk yet. */
+export async function stampOf(abs: string): Promise<number> {
+  return (await stat(abs).catch(() => undefined))?.mtimeMs ?? Date.now()
 }
 
 export function diffStat(patch: string): { added: number; removed: number } {
@@ -44,21 +52,21 @@ export const writeTool = defineTool({
   async preview(a, ctx) {
     const abs = absPath(a.path, ctx)
     const display = showPath(abs, ctx)
-    const before = (await guardExisting(abs, ctx)) ? await Bun.file(abs).text() : ""
-    return createTwoFilesPatch(display, display, before, a.content, "", "", { context: 3 })
+    const existed = await guardExisting(abs, ctx)
+    const before = existed ? await fileText(abs, ctx) : ""
+    return { diff: createTwoFilesPatch(display, display, before, a.content, "", "", { context: 3 }), files: [{ path: abs, oldText: existed ? before : null, newText: a.content }] }
   },
   async run(a, ctx) {
     const abs = absPath(a.path, ctx)
     const display = showPath(abs, ctx)
     const existed = await guardExisting(abs, ctx)
-    const before = existed ? await Bun.file(abs).text() : ""
-    await mkdir(dirname(abs), { recursive: true })
-    await Bun.write(abs, a.content)
-    const st = await stat(abs)
+    const before = existed ? await fileText(abs, ctx) : ""
+    await putText(abs, a.content, ctx)
     ctx.readFiles.add(abs)
-    ctx.fileStamps.set(abs, st.mtimeMs)
+    ctx.fileStamps.set(abs, await stampOf(abs))
     const patch = createTwoFilesPatch(display, display, before, a.content, "", "", { context: 3 })
     const { added, removed } = diffStat(patch)
+    noteChanges(ctx, [{ path: abs, oldText: existed ? before : null, newText: a.content }])
     const note = straySkillNote([abs], ctx)
     const sha = sha256(a.content)
     return {

@@ -43,7 +43,20 @@ import { cancelOf, reattach } from "../src/acp/turns.ts"
 import { outstanding, type OutstandingInput } from "../src/session/outstanding.ts"
 import { background, scheduledRefusal, twin, type BackgroundCall, type Listed } from "../src/provider/interactive.ts"
 
+import { diffContent, editorBlock, rewriteMessage, rewriteModel, RewriteOutput, trimWindow } from "../src/acp/editor.ts"
+import { baseCheck, judgePath, type FsOp } from "../src/acp/files.ts"
+import { showPlan } from "../src/tool/show.ts"
+
 type Case = Record<string, unknown>
+
+/** A path with the symlinks of a case followed (`links`: path → target), as realPath would. */
+function followLinks(links: Record<string, string>, path: string, depth = 0): string {
+  if (depth > 40) return path
+  const hit = Object.keys(links)
+    .filter((l) => path === l || path.startsWith(l + "/"))
+    .sort((a, b) => b.length - a.length)[0]
+  return hit === undefined ? path : followLinks(links, links[hit]! + path.slice(hit.length), depth + 1)
+}
 
 /** Whether a path is at `ro` or above under `grants` (fs_access's rule: the most specific grant on
  *  the path or above it wins; none where nothing is granted). No grants at all: everything readable. */
@@ -58,6 +71,46 @@ function readableUnder(grants: Record<string, string> | undefined, path: string)
 }
 
 export const AREAS: Record<string, (c: Case) => unknown> = {
+  // Spec 3.11.0: an editor as the client (src/acp/editor.ts).
+  editor: (c) => {
+    if (c.kind === "trim") return trimWindow(c.prefix as string, c.suffix as string, c.max as number)
+    if (c.kind === "context") return { block: editorBlock(c.editor, c.root as string, (c.limits ?? {}) as Record<string, number>) ?? null }
+    if (c.kind === "message") return { message: rewriteMessage(c as unknown as Parameters<typeof rewriteMessage>[0], (c.limits ?? {}) as Record<string, number>) }
+    if (c.kind === "output") {
+      const out = new RewriteOutput(c.selection as string)
+      const pieces = [...(c.chunks as string[]).map((x) => out.feed(x)), out.end()]
+      // The pieces sent as deltas, joined, are the result's text.
+      if (pieces.join("") !== out.text) throw new Error(`editor output: the pieces ${JSON.stringify(pieces)} are not the text ${JSON.stringify(out.text)}`)
+      return { text: out.text }
+    }
+    if (c.kind === "model") {
+      const r = rewriteModel({ asked: c.asked as string | undefined, session: c.session as string | undefined, main: c.main as string | undefined, served: c.served as string[], start: c.start as string | undefined })
+      return { model: r.model, from: r.from }
+    }
+    if (c.kind === "diff") return { content: diffContent({ editor: c.editor === true, when: c.when as "ask" | "done", bytes: c.bytes as number, max: c.max as number }) }
+    throw new Error(`editor: unknown kind ${String(c.kind)}`)
+  },
+  // Spec 3.11.0: device files (src/acp/files.ts).
+  device_files: (c) => {
+    if (c.kind === "base") return baseCheck({ ...("base" in c ? { base: c.base } : {}), overwrite: c.overwrite, current: (c.current ?? null) as string | null })
+    const guardedRoots = c.protected as string[]
+    const links = (c.links ?? {}) as Record<string, string>
+    return judgePath({
+      op: c.op as FsOp,
+      path: c.path as string,
+      roots: c.roots as string[],
+      own: c.own as string[],
+      guarded: (p) => guardedRoots.some((g) => p === g || p.startsWith(g + "/")),
+      guardedRoots,
+      enabled: c.enabled === true,
+      sharedOnly: c.shared_only === true,
+      maxMode: c.max_mode as Mode,
+      real: (p) => followLinks(links, p),
+      deep: c.deep === true,
+    })
+  },
+  // Spec 3.11.0: what the show tool sends for a file (src/tool/show.ts).
+  show: (c) => showPlan({ name: c.name as string, media: c.media === true, text: c.text === true, size: c.size as number }),
   // Spec 3.10.0: which turn a `session/cancel` touches (src/acp/turns.ts).
   cancel: (c) => cancelOf({ turn: c.turn as string | undefined, running: c.running as string | undefined, queued: c.queued as string[] | undefined }),
   // Spec 3.10.0: what a session still has out when no turn of it runs (src/session/outstanding.ts).

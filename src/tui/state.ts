@@ -144,7 +144,7 @@ export interface ViewState {
 
 // What the model was given beside the words typed — attachments, and a session note
 // (session/prefix.ts) — is not shown as typed.
-const ATTACHMENT = { test: (t: string) => /^<(file|directory|shell|image) /.test(t) || isNote(t) }
+const ATTACHMENT = { test: (t: string) => /^<(file|directory|shell|image) /.test(t) || t.startsWith("<editor>\n") || isNote(t) }
 /** Running first, then by start — the registry's order. */
 const byRunning = (a: JobInfo, b: JobInfo) => Number(b.state === "running") - Number(a.state === "running") || a.started - b.started
 let seq = 0

@@ -13,7 +13,7 @@
 // block: a directory outside `roots` is refused, a mode beyond `max_mode` is lowered to it, an
 // untrusted project is refused, and an approval nobody answers in time is a denial. The hardline
 // applies in every mode, as everywhere.
-import { existsSync, readdirSync, statSync } from "node:fs"
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { createApp, InteractiveOnlyError, type App, type SessionContext } from "../app.ts"
 import { INTERACTIVE_REASON } from "../provider/interactive.ts"
@@ -48,6 +48,14 @@ import { INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, type Peer } from "./rpc.ts"
 import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs, teamFindings, teamStop, teamTranscript, teamView, treeOf } from "./jobs.ts"
 import { isNote } from "../session/prefix.ts"
 import { outstandingReason } from "../session/outstanding.ts"
+import { CANCELLED, changeBytes, completeBody, completeOnServer, currentLogin, diffContent, diffItems, editorBlock, editorSettings, loginOrRefuse, modelsForPicker, rewriteModel, rewriteParams, runRewrite, settingsToSet, type Login } from "./editor.ts"
+import { DeviceFiles, hashFile } from "./files.ts"
+import { clientFor, ModelError, resolveModel } from "../provider/index.ts"
+import { ProviderError, type ResolvedModel } from "../provider/types.ts"
+import { lastModel, startModel } from "../session/lastmodel.ts"
+import { readRaw } from "../config/settings.ts"
+import { LOOP } from "../harness.ts"
+import type { ShowRequest } from "../tool/show.ts"
 import { deniedText, finalReply, judgeMonitor, monitorTimeout, notifyOf, permissionFor, refusalText, runMonitor, runOutcome, SCHEDULED, scheduledMode, type Report, type ScheduledTurn } from "./scheduled.ts"
 
 export const ACP_VERSION = 1
@@ -355,6 +363,13 @@ export const CAPABILITIES = [
   // turn in `status`, takes a steer, makes a prompt wait, hands back `unsent` on its `task` end
   // and is in `history` with `machine`.
   "harness_turns",
+  // Harness spec 3.11.0 (acp.md, *An editor as the client*): autocomplete, the rewrite of a
+  // selection, the editor block of a prompt, the models for a picker and the person's two model
+  // settings — and, for a client that said `editor: true`, edits as ACP diff items.
+  "editor",
+  // Harness spec 3.11.0: for a client that said `media: true`, the show tool also hands over a file
+  // that is not text, fetched with `_lembas/show/read`.
+  "media",
 ] as const
 export const STOP: Record<string, string> = { stop: "end_turn", steps: "max_turn_requests", budget: "max_tokens", cancelled: "cancelled", error: "end_turn" }
 
@@ -363,8 +378,13 @@ type AskRequest = Parameters<Asker["ask"]>[0]
 /** `session/request_permission`'s params for an approval — the same card whichever process asks
  *  (the hub for a session a terminal runs). `patient`: a person may answer at the terminal
  *  too, so the instance waits rather than timing the card out. */
-export function permissionParams(sessionId: string, req: AskRequest, o: { patient?: boolean; toolCallId?: string; scheduled?: ScheduledTurn } = {}) {
+export function permissionParams(sessionId: string, req: AskRequest, o: { patient?: boolean; toolCallId?: string; scheduled?: ScheduledTurn; editor?: boolean } = {}) {
   const offerAlways = !req.request.alwaysAsk
+  // Spec 3.11.0 (acp.md *Edits as diffs*): to a client that said it is an editor the change travels
+  // as ACP diff items — each file's text now and after — while the texts fit; to any other, and
+  // beyond that, as the unified diff in one text item.
+  const files = req.preview?.files
+  const items = files?.length && diffContent({ editor: o.editor === true, when: "ask", bytes: changeBytes(files) })[0] === "diff" ? diffItems(files) : undefined
   return {
     sessionId,
     toolCall: {
@@ -375,7 +395,7 @@ export function permissionParams(sessionId: string, req: AskRequest, o: { patien
       kind: toolKind(req.tool),
       status: "pending",
       rawInput: req.args,
-      ...(req.preview?.diff ? { content: [{ type: "content", content: { type: "text", text: req.preview.diff } }] } : {}),
+      ...(items ? { content: items } : req.preview?.diff ? { content: [{ type: "content", content: { type: "text", text: req.preview.diff } }] } : {}),
     },
     options: [
       { optionId: "once", kind: "allow_once", name: "Allow once" },
@@ -463,7 +483,8 @@ export function planReplyFrom(answer: any, maxMode?: Mode): PlanReply {
 /** Text the expander added to a user message (an @file, an image, a listing, a `!` command's output). */
 // What the model was given beside the words typed — attachments, and a session note
 // (session/prefix.ts) — is not shown as typed.
-const ATTACHMENT = { test: (t: string) => /^<(file|directory|shell|image) /.test(t) || isNote(t) }
+// The editor's block (acp.md *Editor context in a prompt*) is the client's word, not the person's.
+const ATTACHMENT = { test: (t: string) => /^<(file|directory|shell|image) /.test(t) || t.startsWith("<editor>\n") || isNote(t) }
 
 /** A stored session as turns the web UI can draw: each person's message, then what the
  *  model said, thought and ran in answer, up to the next one. A message's attachments are chips,
@@ -524,6 +545,22 @@ export class AcpAgent {
   private shows = false
   /** initialize has been answered: notifications about sessions may go out from now on. */
   private ready = false
+  /** Spec 3.11.0: the client said it is an editor (`editor: true`) — edits travel as diff items. */
+  private editorClient = false
+  /** The client shows files that are not text (`media: true`). */
+  private media = false
+  /** ACP's `clientCapabilities.fs`: the client reads and writes text files for the agent. */
+  private clientFs = { read: false, write: false }
+  /** The login autocomplete is sent with, held between requests: nothing is read per keystroke. */
+  private login?: Login
+  /** The one autocomplete request under way: a newer one stops it. */
+  private completion?: { id?: string; abort: AbortController }
+  /** The rewrites under way that carried an id, by it. */
+  private rewrites = new Map<string, AbortController>()
+  /** Files handed to the client by the show tool, for `_lembas/show/read`, while their request is open. */
+  private handles = new Map<string, { abs: string; size: number; mtimeMs: number }>()
+  /** `_lembas/fs/*`: the device's files, on the link only. */
+  private files = new DeviceFiles(() => (this.limits ? { roots: this.limits.roots, maxMode: this.limits.maxMode, enabled: this.limits.enabled, sharedOnly: this.limits.sharedOnly } : undefined))
 
   constructor(
     private peer: Peer,
@@ -564,6 +601,23 @@ export class AcpAgent {
     peer.handle("_lembas/team/findings", (p) => this.tree("team_findings", p))
     peer.handle("_lembas/team/stop", (p) => this.tree("team_stop", p))
     peer.handle("_lembas/monitor", (p) => this.monitor(p))
+    // Spec 3.11.0: an editor as the client, files that are not text shown, and device files.
+    peer.handle("_lembas/complete", (p) => this.complete(p))
+    peer.on("_lembas/complete/cancel", (p) => this.completeCancel(p))
+    peer.handle("_lembas/edit", (p) => this.edit(p))
+    peer.on("_lembas/edit/cancel", (p) => this.rewrites.get(String(p?.id ?? ""))?.abort())
+    peer.handle("_lembas/models", async () => modelsForPicker(loginOrRefuse(currentLogin())))
+    peer.handle("_lembas/editor/settings", (p) => this.editorSettings(p))
+    peer.handle("_lembas/show/read", (p) => this.showRead(p))
+    peer.handle("_lembas/fs/list", (p) => this.files.list(p))
+    peer.handle("_lembas/fs/stat", (p) => this.files.stat(p))
+    peer.handle("_lembas/fs/read", (p) => this.files.read(p))
+    peer.handle("_lembas/fs/write", (p) => this.files.write(p))
+    peer.handle("_lembas/fs/mkdir", (p) => this.files.mkdir(p))
+    peer.handle("_lembas/fs/move", (p) => this.files.move(p))
+    peer.handle("_lembas/fs/copy", (p) => this.files.copy(p))
+    peer.handle("_lembas/fs/delete", (p) => this.files.delete(p))
+    peer.handle("_lembas/fs/search", (p) => this.files.search(p))
     peer.on("_lembas/terminal/input", (p) => this.terminalInput(p))
     peer.on("_lembas/terminal/resize", (p) => this.terminalResize(p))
     peer.on("_lembas/terminal/close", (p) => this.terminalClose(String(p?.terminalId ?? "")))
@@ -582,6 +636,11 @@ export class AcpAgent {
       hub?.detach(this)
       if (!hub) for (const s of this.sessions.values()) s.app.cancel()
       for (const id of [...this.terminals.keys()]) this.terminalClose(id)
+      // What this client had under way goes with it: its autocomplete, its rewrites, its uploads.
+      this.completion?.abort.abort()
+      for (const a of this.rewrites.values()) a.abort()
+      this.handles.clear()
+      this.files.close()
     })
   }
 
@@ -590,6 +649,10 @@ export class AcpAgent {
     this.lembas = Boolean(said)
     this.clientProtocol = typeof said?.protocol === "number" ? said.protocol : 1
     this.shows = said?.show === true
+    this.editorClient = said?.editor === true
+    this.media = said?.media === true
+    const fs = p?.clientCapabilities?.fs
+    this.clientFs = { read: fs?.readTextFile === true, write: fs?.writeTextFile === true }
     for (const s of this.sessions.values()) if (s.agent === this) this.equipShow(s)
     // The sessions this link took over (the hub's) get their command set once the client
     // knows the agent — after this answer, not before it.
@@ -621,7 +684,8 @@ export class AcpAgent {
           connection: this.instanceConnection ?? null,
           // "terminal" and "shell" (a terminal says its shell and whether its prompts
           // are marked) only where remote.terminal allows a terminal at all.
-          capabilities: [...CAPABILITIES, ...(this.limits?.terminal ? ["terminal", "shell"] : [])],
+          // "fs" (the device's files) on the link only: an editor on stdio has the disk itself.
+          capabilities: [...CAPABILITIES, ...(this.limits ? ["fs"] : []), ...(this.limits?.terminal ? ["terminal", "shell"] : [])],
         },
       },
     }
@@ -899,12 +963,198 @@ export class AcpAgent {
   private equipShow(s: Session) {
     const ctx = s.app.engine.o.toolCtx
     this.equipReport(s)
+    this.equipEditor(s)
     // Nobody is looking at a scheduled run (spec 3.5.0): show is not offered there.
-    if (!this.shows || s.scheduled) return void delete ctx.show
+    if (!this.shows || s.scheduled) return void (delete ctx.show, delete ctx.showsMedia)
+    ctx.showsMedia = this.media
     ctx.show = async (req, callId) => {
       if (s.agent !== this || this.peer.isClosed) return { shown: false, reason: "the client is not connected" }
-      const r = (await this.peer.request("_lembas/show", { sessionId: s.id, toolCallId: callId ?? "", ...req }, 30_000)) as { shown?: unknown; reason?: unknown } | undefined
-      return r?.shown === true ? { shown: true } : { shown: false, reason: typeof r?.reason === "string" && r.reason ? r.reason : "the client did not show it" }
+      const answer = (r: { shown?: unknown; reason?: unknown } | undefined) =>
+        r?.shown === true ? ({ shown: true } as const) : ({ shown: false, reason: typeof r?.reason === "string" && r.reason ? r.reason : "the client did not show it" } as const)
+      if (!("file" in req)) return answer(await this.peer.request("_lembas/show", { sessionId: s.id, toolCallId: callId ?? "", ...req }, 30_000))
+      return answer(await this.showMedia(s, req, callId))
+    }
+  }
+
+  /** A file that is not text (spec 3.11.0, capability `media`): the client is told what it is and
+   *  given a handle to fetch it by, good while this request is open and for that one file as it
+   *  is now. On `serve --stdio` the client is on this machine, and is told where the file is too. */
+  private async showMedia(s: Session, req: Extract<ShowRequest, { file: string }>, callId?: string) {
+    const { file, ...said } = req
+    const st = statSync(file)
+    const handle = `h_${crypto.randomUUID()}`
+    this.handles.set(handle, { abs: file, size: st.size, mtimeMs: st.mtimeMs })
+    try {
+      const hash = await hashFile(file)
+      return (await this.peer.request(
+        "_lembas/show",
+        { sessionId: s.id, toolCallId: callId ?? "", ...said, hash, handle, ...(this.limits ? {} : { uri: `file://${file.split("/").map(encodeURIComponent).join("/")}` }) },
+        LOOP.files.show.media_wait_seconds * 1000,
+      )) as { shown?: unknown; reason?: unknown } | undefined
+    } finally {
+      this.handles.delete(handle)
+    }
+  }
+
+  /** `_lembas/show/read`: a part of a file the show tool handed over — that file and no other,
+   *  only while its `_lembas/show` is unanswered, and only as it was when the tool ran. */
+  private showRead(p: any) {
+    const h = this.handles.get(String(p?.handle ?? ""))
+    if (!h) throw new RpcError(INVALID_PARAMS, "that file is not being handed over any more — a handle is good until its _lembas/show is answered", { reason: "invalid" })
+    let st: ReturnType<typeof statSync>
+    try {
+      st = statSync(h.abs)
+    } catch {
+      throw new RpcError(INVALID_PARAMS, "the file is gone from this computer", { reason: "changed" })
+    }
+    if (st.size !== h.size || st.mtimeMs !== h.mtimeMs) throw new RpcError(INVALID_PARAMS, "the file changed on this computer while it was being fetched", { reason: "changed" })
+    const max = LOOP.files.chunk_max_bytes
+    const offset = Number.isInteger(p?.offset) && p.offset > 0 ? (p.offset as number) : 0
+    const length = Math.min(max, Number.isInteger(p?.length) && p.length >= 0 ? (p.length as number) : max)
+    const buf = Buffer.alloc(Math.max(0, Math.min(length, h.size - offset)))
+    const fd = openSync(h.abs, "r")
+    let n = 0
+    try {
+      if (buf.length) n = readSync(fd, buf, 0, buf.length, offset)
+    } finally {
+      closeSync(fd)
+    }
+    return { data: buf.subarray(0, n).toString("base64"), offset, eof: offset + n >= h.size }
+  }
+
+  /** The client's editor for the file tools of a session it opened (acp.md *Unsaved text*): where
+   *  it offers ACP's fs/read_text_file and fs/write_text_file, a tool starts from its buffer and
+   *  writes through it. Whatever goes wrong there — an error, no answer in time — the tool uses
+   *  the disk, as before. The call was judged before the tool ran: nothing is asked of the client
+   *  that the tool would not have opened itself. */
+  private equipEditor(s: Session) {
+    const ctx = s.app.engine.o.toolCtx
+    // An editor is told what each edit changed (acp.md *Edits as diffs*): the file tools note it
+    // here by call. Kept for no other client — the texts of every edit are not carried for nothing.
+    if (this.editorClient) ctx.changed ??= new Map()
+    else delete ctx.changed
+    if (!this.clientFs.read && !this.clientFs.write) return void (delete ctx.editor, delete ctx.editorSeen)
+    const wait = LOOP.editor.buffers.timeout_seconds * 1000
+    const live = () => s.agent === this && !this.peer.isClosed
+    ctx.editorSeen ??= new Map()
+    ctx.editor = {
+      ...(this.clientFs.read
+        ? {
+            read: async (abs: string) => {
+              if (!live()) return undefined
+              const r = (await this.peer.request("fs/read_text_file", { sessionId: s.id, path: abs }, wait).catch(() => undefined)) as { content?: unknown } | undefined
+              return typeof r?.content === "string" ? r.content : undefined
+            },
+          }
+        : {}),
+      ...(this.clientFs.write
+        ? {
+            write: async (abs: string, content: string) => {
+              if (!live()) return false
+              return this.peer.request("fs/write_text_file", { sessionId: s.id, path: abs, content }, wait).then(
+                () => true,
+                () => false,
+              )
+            },
+          }
+        : {}),
+    }
+  }
+
+  /** `_lembas/complete`: autocomplete. One HTTP request to the server with the login this agent
+   *  holds — no session, no project, nothing read — and a newer request stops the older, which is
+   *  answered as cancelled: a result, since nothing went wrong. */
+  private async complete(p: any) {
+    const body = completeBody(p)
+    const login = loginOrRefuse((this.login ??= currentLogin()))
+    this.completion?.abort.abort()
+    const mine = { ...(typeof p?.id === "string" && p.id ? { id: p.id } : {}), abort: new AbortController() }
+    this.completion = mine
+    try {
+      return await completeOnServer(login, body, mine.abort.signal)
+    } catch (e) {
+      if (mine.abort.signal.aborted) return CANCELLED
+      // A sign-in the server no longer takes: read again next time, it may have been made anew.
+      if (e instanceof RpcError && (e.data as { reason?: string } | undefined)?.reason === "not_logged_in") this.login = undefined
+      throw e
+    } finally {
+      if (this.completion === mine) this.completion = undefined
+    }
+  }
+
+  private completeCancel(p: any) {
+    const id = typeof p?.id === "string" ? p.id : ""
+    const running = this.completion
+    if (id && running && running.id === id) running.abort.abort()
+  }
+
+  /** `_lembas/editor/settings`: the person's two model settings on the server — read, or with
+   *  `set` written first. */
+  private async editorSettings(p: any) {
+    const set = settingsToSet(p)
+    const settings = await editorSettings(loginOrRefuse(currentLogin()), set)
+    if (!settings) throw new RpcError(INVALID_PARAMS, "the LLeMbas server this computer is logged in to has no editor settings yet (it needs a newer LLeMbas server)", { reason: "unsupported" })
+    return settings
+  }
+
+  /** `_lembas/edit`: the rewrite of a selection — one model request with no tools, on the main
+   *  model; nothing is read from the disk and nothing written. The client shows the result as a
+   *  diff. Not a turn of any session. */
+  private async edit(p: any) {
+    const params = rewriteParams(p)
+    const id = typeof p?.id === "string" && p.id ? p.id.slice(0, 100) : undefined
+    const asked = typeof p?.model === "string" && p.model.trim() ? p.model.trim() : undefined
+    const sessionId = typeof p?.sessionId === "string" ? p.sessionId : ""
+    const s = sessionId ? this.sessions.get(sessionId) : undefined
+    if (sessionId && !s) throw new RpcError(INVALID_PARAMS, "no such session", { reason: "invalid" })
+    let model: ResolvedModel
+    let client: ReturnType<typeof clientFor>
+    try {
+      let loaded = s?.app.loaded
+      let start: string | undefined
+      if (!loaded) {
+        // No session: as a new one in `cwd` would start (acp.md, *How a session of the device's own starts*).
+        let cwd: string | undefined
+        if (typeof p?.cwd === "string" && p.cwd.trim()) {
+          cwd = resolve(expandHome(p.cwd.trim()))
+          if (!isAbsolute(expandHome(p.cwd.trim())) || !existsSync(cwd) || !statSync(cwd).isDirectory()) throw new RpcError(INVALID_PARAMS, `${p.cwd} is not a directory on this machine`, { reason: "invalid" })
+          const refused = this.refusal(cwd)
+          if (refused) throw new RpcError(INVALID_PARAMS, refused, { reason: "outside" })
+        }
+        const project = cwd ? findProject(cwd) : undefined
+        const trusted = project ? trustOf(project.root) === "trusted" : false
+        loaded = loadConfig(project ? { projectConfigDir: project.dir, trusted } : {})
+        const projectModel = project && trusted && typeof readRaw(join(project.dir, "config.yaml")).model === "string" ? loaded.config.model : undefined
+        start = startModel({ project: projectModel, directory: cwd && !projectModel ? lastModel(cwd) : undefined, global: projectModel ? undefined : loaded.config.model, served: loaded.refs.map((r) => r.ref) }).model
+      }
+      // The person's main model, as the server keeps it — asked only when nothing nearer decides.
+      const login = asked || s ? undefined : currentLogin()
+      const main = login ? await editorSettings(login).then((x) => x?.main.model, () => undefined) : undefined
+      const chosen = rewriteModel({ asked, session: s?.app.engine.model.ref, main, served: loaded.refs.map((r) => r.ref), start })
+      model = resolveModel(loaded, chosen.model)
+      client = clientFor(model)
+    } catch (e) {
+      if (e instanceof ModelError) throw new RpcError(INVALID_PARAMS, e.message, { reason: "not_logged_in" })
+      throw e
+    }
+    const abort = new AbortController()
+    if (id) this.rewrites.get(id)?.abort(), this.rewrites.set(id, abort)
+    try {
+      const text = await runRewrite({
+        client,
+        params,
+        // A session's rewrite thinks as the session does; without one, as the model does by itself.
+        effort: s && s.app.engine.model.ref === model.ref ? s.app.engine.effort : null,
+        signal: abort.signal,
+        ...(id ? { onDelta: (delta: string) => this.peer.notify("_lembas/edit/delta", { id, delta }) } : {}),
+      })
+      return { text, model: model.ref }
+    } catch (e) {
+      if (abort.signal.aborted) return CANCELLED
+      if (e instanceof ProviderError) throw new RpcError(-32603, e.message)
+      throw e
+    } finally {
+      if (id && this.rewrites.get(id) === abort) this.rewrites.delete(id)
     }
   }
 
@@ -1133,6 +1383,10 @@ export class AcpAgent {
     const scheduled = this.judgeScheduled(p?._meta?.lembas?.scheduled)
     this.takeContext(s, p)
     const prepared = preparePrompt(s.app, s.id, p.prompt, { roots: this.limits?.roots })
+    // Spec 3.11.0 (capability editor): what the person is looking at, as the client says it — one
+    // block after their text, an attachment of the message. Nothing is read because of it.
+    const editor = prepared.kind === "run" ? editorBlock(p?._meta?.lembas?.editor, s.app.project.root) : undefined
+    if (editor && prepared.kind === "run") prepared.extra.push(editor)
     // Working already: the prompt waits for the turn to end and runs next. It used to be
     // refused, and a web UI that had misjudged the session as idle lost its message to an error.
     const run = async (started: () => void): Promise<PromptResult> => {
@@ -1649,7 +1903,7 @@ export class AcpAgent {
           sessionUpdate: "tool_call_update",
           toolCallId: e.id,
           status: e.result.isError ? "failed" : "completed",
-          content: [{ type: "content", content: { type: "text", text: e.result.output.slice(0, 20_000) } }],
+          content: [{ type: "content", content: { type: "text", text: e.result.output.slice(0, 20_000) } }, ...this.changed(s, e.id, e.result.isError === true)],
         })
       case "tool_denied":
         // Refused, not run: `failed` to a plain ACP client, `denied` to one that reads _meta.lembas.
@@ -1671,6 +1925,16 @@ export class AcpAgent {
       case "mode":
         return this.update(s, { sessionUpdate: "current_mode_update", currentModeId: e.mode })
     }
+  }
+
+  /** The files an edit that ran changed, as ACP diff items (acp.md *Edits as diffs*): to a client
+   *  that said it is an editor, after the tool's text, while the texts fit. */
+  private changed(s: Session, callId: string, failed: boolean) {
+    const kept = s.app?.engine.o.toolCtx.changed
+    const files = kept?.get(callId)
+    kept?.delete(callId)
+    if (failed || !files?.length) return []
+    return diffContent({ editor: this.editorClient, when: "done", bytes: changeBytes(files) }).includes("diff") ? diffItems(files) : []
   }
 
   /** Approvals go to the client; nobody answering in time is a denial. ask_user and plan_submit
@@ -1695,7 +1959,7 @@ export class AcpAgent {
         // A scheduled turn's approval waits the schedule's wait (spec 3.5.0), and says so.
         const turn = s.scheduled
         const timeout = turn ? turn.waitMs : (agent.limits?.approvalTimeoutMs ?? 0)
-        const params = permissionParams(s.id, req, turn ? { scheduled: turn } : {})
+        const params = permissionParams(s.id, req, { ...(turn ? { scheduled: turn } : {}), editor: agent.editorClient })
         try {
           if (agent.peer.isClosed) throw new Error("not linked")
           const answer = await agent.peer.request("session/request_permission", params, timeout || undefined)

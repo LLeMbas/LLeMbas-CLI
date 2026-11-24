@@ -101,10 +101,12 @@ function untrusted(e: unknown): boolean {
   return /CERT|SIGNATURE|SELF_SIGNED|UNABLE_TO_GET_ISSUER/.test(code)
 }
 
-async function call(url: string, init: RequestInit, tls: Tls | undefined, timeoutMs = 15_000): Promise<Response> {
+async function call(url: string, init: RequestInit, tls: Tls | undefined, timeoutMs = 15_000, signal?: AbortSignal): Promise<Response> {
   try {
-    return await fetch(url, { ...init, ...tlsInit(tls), signal: AbortSignal.timeout(timeoutMs) } as RequestInit)
+    return await fetch(url, { ...init, ...tlsInit(tls), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) } as RequestInit)
   } catch (e) {
+    // Stopped by whoever asked (a newer autocomplete request): theirs to handle, not a failure to reach.
+    if (signal?.aborted) throw e
     if (untrusted(e)) throw new LembasError(`the TLS certificate of ${new URL(url).host} is not trusted. Pass --ca <file> with the CA that signed it.`)
     if ((e as Error).name === "TimeoutError") throw new LembasError(`${new URL(url).host} did not answer in time`)
     throw new LembasError(`cannot reach ${new URL(url).host}: ${(e as Error).message}`)
@@ -113,10 +115,10 @@ async function call(url: string, init: RequestInit, tls: Tls | undefined, timeou
 
 /** One request to the instance with the device's token, its JSON answer and status (spec 3.5.0:
  *  the schedule routes of /api/v2). A body that is not JSON is null. */
-export async function apiCall(base: string, token: string, tls: Tls | undefined, method: string, path: string, body?: unknown, timeoutMs = 30_000): Promise<{ status: number; json: any }> {
+export async function apiCall(base: string, token: string, tls: Tls | undefined, method: string, path: string, body?: unknown, timeoutMs = 30_000, signal?: AbortSignal): Promise<{ status: number; json: any }> {
   const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: "application/json" }
   if (body !== undefined) headers["content-type"] = "application/json"
-  const res = await call(`${base}${path}`, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }, tls, timeoutMs)
+  const res = await call(`${base}${path}`, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }, tls, timeoutMs, signal)
   const json = res.status === 204 ? null : await res.json().catch(() => null)
   return { status: res.status, json }
 }

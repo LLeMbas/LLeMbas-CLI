@@ -646,6 +646,8 @@ export function createApp(o: AppOptions): App {
       perm: childPerm,
       toolCtx: {
         ...baseToolCtx(),
+        // A subagent reads and writes through the client's editor as its session does (acp.md *Unsaved text*).
+        ...(engine.o.toolCtx.editor ? { editor: engine.o.toolCtx.editor, editorSeen: engine.o.toolCtx.editorSeen } : {}),
         ...(at ? { root: at.root, cwd: at.cwd, projectDir: undefined } : {}),
         jobs: { registry, owner: () => ({ sessionId: childSessionId, job }) },
         ...(member ? { team: { runtime: teamRt, as: member.name } } : {}),

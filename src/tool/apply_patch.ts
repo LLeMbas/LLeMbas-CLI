@@ -2,15 +2,15 @@
 // which GPT-family models are trained on, or a unified diff (unidiff.ts, from LLeMbas's file_edit),
 // which every model has seen. Context lines locate each change, so unlike edit it does not demand
 // the file was read first — a wrong context is refused instead.
-import { mkdir, rm, stat } from "node:fs/promises"
-import { dirname } from "node:path"
+import { rm, stat } from "node:fs/promises"
 import { createTwoFilesPatch } from "diff"
 import { z } from "zod"
 import { derive, joinBom, parse, type Hunk } from "./patch.ts"
 import { applyUnified, isUnified, parseUnified, UnidiffError, type UniFile } from "./unidiff.ts"
 import { straySkillNote } from "../skill/index.ts"
-import { absPath, defineTool, readText, showPath, ToolError, type ToolContext } from "./tool.ts"
-import { diffStat } from "./write.ts"
+import { absPath, defineTool, showPath, ToolError, type FileChange, type ToolContext } from "./tool.ts"
+import { diffStat, stampOf } from "./write.ts"
+import { fileText, noteChanges, putText } from "./buffers.ts"
 import { described } from "../harness.ts"
 import { hunks, lineCount, sha256, type EditedFile } from "../session/results.ts"
 
@@ -64,7 +64,7 @@ async function planUnified(a: { patch: string; path?: string }, ctx: ToolContext
     if (!path) throw new ToolError("The diff names no file: give `path`, or start it with --- a/<file> and +++ b/<file> lines. Nothing was applied.")
     const abs = absPath(path, ctx)
     if (!current.has(abs)) {
-      const text = await stat(abs).then(() => readText(abs), () => null)
+      const text = await stat(abs).then(() => fileText(abs, ctx), () => null)
       original.set(abs, text)
       current.set(abs, text)
     }
@@ -102,7 +102,7 @@ async function planPatch(a: { patch: string; path?: string }, ctx: ToolContext):
   const current = new Map<string, string | null>()
   const load = async (abs: string) => {
     if (!current.has(abs)) {
-      const text = await stat(abs).then(() => readText(abs), () => null)
+      const text = await stat(abs).then(() => fileText(abs, ctx), () => null)
       original.set(abs, text)
       current.set(abs, text)
     }
@@ -136,6 +136,11 @@ async function planPatch(a: { patch: string; path?: string }, ctx: ToolContext):
   return opsOf(original, current)
 }
 
+/** Each file a patch changes, with its text before and after (acp.md *Edits as diffs*). */
+function changesOf(ops: Op[]): FileChange[] {
+  return ops.map((op) => (op.kind === "delete" ? { path: op.path, oldText: op.before, newText: null } : { path: op.path, oldText: op.created ? null : op.before, newText: op.content }))
+}
+
 export const applyPatchTool = defineTool({
   ...described("apply_patch"),
   access: "edit",
@@ -145,12 +150,14 @@ export const applyPatchTool = defineTool({
     return { permission: "edit", class: "write", patterns: files.length ? files.map((f) => showPath(f, ctx)) : ["*"], paths: files }
   },
   async preview(a, ctx) {
-    return (await planPatch(a, ctx))
+    const ops = await planPatch(a, ctx)
+    const diff = ops
       .map((op) => {
         const shown = showPath(op.path, ctx)
         return createTwoFilesPatch(shown, op.kind === "delete" ? "/dev/null" : shown, op.before, op.kind === "delete" ? "" : op.content, "", "", { context: 3 })
       })
       .join("\n")
+    return { diff, files: changesOf(ops) }
   },
   async run(a, ctx) {
     const ops = await planPatch(a, ctx)
@@ -162,13 +169,13 @@ export const applyPatchTool = defineTool({
         patches.push(createTwoFilesPatch(shown, "/dev/null", op.before, "", "", "", { context: 3 }))
         continue
       }
-      await mkdir(dirname(op.path), { recursive: true })
-      await Bun.write(op.path, op.content)
+      await putText(op.path, op.content, ctx)
       ctx.readFiles.add(op.path)
-      ctx.fileStamps.set(op.path, (await stat(op.path)).mtimeMs)
+      ctx.fileStamps.set(op.path, await stampOf(op.path))
       patches.push(createTwoFilesPatch(shown, shown, op.before, op.content, "", "", { context: 3 }))
     }
     const all = patches.join("\n")
+    noteChanges(ctx, changesOf(ops))
     const { added, removed } = diffStat(all)
     const names = ops.map((o) => showPath(o.path, ctx)).join(", ")
     const note = straySkillNote(ops.filter((o) => o.kind === "write").map((o) => o.path), ctx)
