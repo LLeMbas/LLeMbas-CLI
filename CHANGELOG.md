@@ -4,6 +4,29 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0-beta.15] — 2026-11-26
+
+### Added
+
+- **Live LiNA-style side displays in the TUI** (`displays: true` on wide terminals,
+  `Alt+D` or `/display [on|off|live|files|changes|bash]`):
+  - **Live** tab showing real-time agent phase/progress, waiting banners
+    (approvals, questions, plan reviews), currently running tools with arguments
+    and live subagent tool steps, live streaming thinking tail, active plan
+    checklist, background jobs/team status, recent activity, and latest output
+    or diff preview.
+  - **Files**, **Changes** (auto-jumping to proposed diffs awaiting approval),
+    and **Bash** (auto-scrolled to tail) tabs with `Alt+↑/↓` tab switching,
+    `Alt+←/→` entry stepping, and `Alt+PgUp/PgDn` (or `Alt+[`/`Alt+]`) scrolling.
+- **Session-aware, situation-aware prefilled autocomplete** (`_lembas/complete`,
+  `_lembas/complete/warm`): analyzes the cursor situation before gathering context
+  (skips external files in comments, sends compact workspace paths on import
+  lines, gathers compact declarations from direct imports and unsaved editor
+  buffers in deterministic session order for KV-cache prefill reuse).
+- **IDE session listing and resume** (`_lembas/sessions/list`,
+  `_lembas/sessions/resume`): lists recent project sessions and replays stored
+  turns for editor clients.
+
 ## [2.0.0-beta.14] — 2026-11-24
 
 Harness spec 3.11.0: an editor as the client, the files of a linked computer, and files that are
