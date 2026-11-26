@@ -74,6 +74,11 @@ export function currentLogin(): Login | undefined {
   return soleInstance()
 }
 
+export interface CompleteContextChunk {
+  path: string
+  text: string
+}
+
 export interface CompleteParams {
   prefix: string
   suffix: string
@@ -81,6 +86,7 @@ export interface CompleteParams {
   language?: string
   model?: string
   max_tokens?: number
+  context?: CompleteContextChunk[]
 }
 
 /** What `_lembas/complete` sends on from its params: the window trimmed, the tokens capped. */
@@ -92,7 +98,27 @@ export function completeBody(p: any): CompleteParams {
   const path = str(p.path, 1000)
   const language = str(p.language, 100)
   const model = str(p.model, 300)
-  return { ...w, ...(path ? { path } : {}), ...(language ? { language } : {}), ...(model ? { model } : {}), ...(tokens ? { max_tokens: tokens } : {}) }
+  const rawCtx = Array.isArray(p.context) ? p.context : []
+  const context: CompleteContextChunk[] = []
+  let ctxBytes = 0
+  for (const item of rawCtx) {
+    if (context.length >= 8) break
+    if (!item || typeof item !== "object" || typeof item.path !== "string" || typeof item.text !== "string") continue
+    const cPath = item.path.replace(/[\r\n]/g, "").trim().slice(0, 500)
+    if (!cPath || !item.text) continue
+    const size = bytes(item.text)
+    if (ctxBytes + size > 32 * 1024) continue
+    ctxBytes += size
+    context.push({ path: cPath, text: item.text })
+  }
+  return {
+    ...w,
+    ...(path ? { path } : {}),
+    ...(language ? { language } : {}),
+    ...(model ? { model } : {}),
+    ...(tokens ? { max_tokens: tokens } : {}),
+    ...(context.length ? { context } : {}),
+  }
 }
 
 /** One autocomplete request to the server (`POST /v1/lembas/complete`, acp.md *The HTTP API*).

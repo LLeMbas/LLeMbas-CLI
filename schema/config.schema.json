@@ -80,6 +80,10 @@
         "plain"
       ]
     },
+    "displays": {
+      "description": "Side display pane showing live agent activity, files read, diffs, and bash output on wide terminals. Default true; Alt+D or /display toggles it.",
+      "type": "boolean"
+    },
     "personality": {
       "description": "How the agent talks: concise, pragmatic, optimistic, funny, formal, socratic, custom (personality_custom's text), or empty for none (the default). The same presets as the LLeMbas web UI; appended last to the system prompt, under \"## Personality\".",
       "anyOf": [

@@ -49,6 +49,7 @@ import { jobList, jobOutput, jobSend, jobStop, jobTranscript, storedJobs, teamFi
 import { isNote } from "../session/prefix.ts"
 import { outstandingReason } from "../session/outstanding.ts"
 import { CANCELLED, changeBytes, completeBody, completeOnServer, currentLogin, diffContent, diffItems, editorBlock, editorSettings, loginOrRefuse, modelsForPicker, rewriteModel, rewriteParams, runRewrite, settingsToSet, type Login } from "./editor.ts"
+import { CompletionContext } from "./complete_context.ts"
 import { DeviceFiles, hashFd } from "./files.ts"
 import { clientFor, ModelError, resolveModel } from "../provider/index.ts"
 import { ProviderError, type ResolvedModel } from "../provider/types.ts"
@@ -615,6 +616,9 @@ export class AcpAgent {
     // Spec 3.11.0: an editor as the client, files that are not text shown, and device files.
     peer.handle("_lembas/complete", (p) => this.complete(p))
     peer.on("_lembas/complete/cancel", (p) => this.completeCancel(p))
+    peer.on("_lembas/complete/warm", (p) => this.completeWarm(p))
+    peer.handle("_lembas/sessions/list", (p) => this.listSessions(p))
+    peer.handle("_lembas/sessions/resume", (p) => this.resumeSession(p))
     peer.handle("_lembas/edit", (p) => this.edit(p))
     peer.on("_lembas/edit/cancel", (p) => this.rewriteIds.get(requestId(p?.id) ?? "")?.abort())
     peer.handle("_lembas/models", async () => modelsForPicker(loginOrRefuse(currentLogin())))
@@ -813,7 +817,11 @@ export class AcpAgent {
     this.adopt(session)
     // After the answer that names the session, so the client knows whose commands they are
     // (and whose plan, where the session has one).
-    setTimeout(() => (this.sendCommands(session, true), this.sendPlan(session)), 0)
+    setTimeout(() => {
+      this.sendCommands(session, true)
+      this.sendPlan(session)
+      if (this.editorClient) this.completionCtx.warm(cwd)
+    }, 0)
     return {
       sessionId: id,
       modes: { currentModeId: session.app.engine.mode, availableModes: this.modes().map((m) => ({ id: m, name: m })) },
@@ -1068,10 +1076,28 @@ export class AcpAgent {
   }
 
   /** `_lembas/complete`: autocomplete. One HTTP request to the server with the login this agent
-   *  holds — no session, no project, nothing read — and a newer request stops the older, which is
-   *  answered as cancelled: a result, since nothing went wrong. */
+   *  holds; when a session or workspace `cwd` is given, gathers only the related context needed
+   *  for the cursor's current situation in a stable session order so KV-cache prefill hits stay
+   *  warm across keystrokes. A newer request stops the older, which is answered as cancelled. */
   private async complete(p: any) {
     const body = completeBody(p)
+    const root = this.completionRoot(p)
+    const open = Array.isArray(p?.open)
+      ? p.open
+          .filter((x: any) => x && typeof x.path === "string" && typeof x.text === "string")
+          .slice(0, 12)
+          .map((x: any) => ({ path: x.path, text: x.text }))
+      : undefined
+    const gathered = this.completionCtx.gather({
+      root,
+      path: body.path,
+      language: body.language,
+      prefix: body.prefix,
+      suffix: body.suffix,
+      open,
+      clientContext: body.context,
+    })
+    if (gathered.length) body.context = gathered
     const login = loginOrRefuse((this.login ??= currentLogin()))
     this.completion?.abort.abort()
     const id = requestId(p?.id)
@@ -1086,6 +1112,76 @@ export class AcpAgent {
       throw e
     } finally {
       if (this.completion === mine) this.completion = undefined
+    }
+  }
+
+  private completionRoot(p: any): string | undefined {
+    const sid = typeof p?.sessionId === "string" ? p.sessionId : ""
+    if (sid) {
+      const held = this.sessions.get(sid)
+      if (held) return held.cwd
+    }
+    const raw = typeof p?.cwd === "string" ? p.cwd.trim() : ""
+    if (raw && isAbsolute(expandHome(raw))) {
+      const dir = resolve(expandHome(raw))
+      if (existsSync(dir) && statSync(dir).isDirectory() && !this.refusal(dir)) return dir
+    }
+    return undefined
+  }
+
+  /** `_lembas/complete/warm`: pre-warm the workspace FileIndex and direct imports for a file so
+   *  the first completion request is already prefilled. */
+  private completeWarm(p: any) {
+    try {
+      const root = this.completionRoot(p)
+      if (!root) return
+      const path = typeof p?.path === "string" ? p.path : undefined
+      const text = typeof p?.text === "string" ? p.text : undefined
+      this.completionCtx.warm(root, path, text)
+    } catch {}
+  }
+
+  /** `_lembas/sessions/list`: list recent sessions for a project directory (for IDE resume). */
+  private listSessions(p: any) {
+    const raw = typeof p?.cwd === "string" ? p.cwd.trim() : ""
+    let root: string | undefined
+    if (raw && isAbsolute(expandHome(raw))) {
+      const dir = resolve(expandHome(raw))
+      const refused = this.refusal(dir)
+      if (refused) throw new RpcError(INVALID_PARAMS, refused)
+      root = findProject(dir).root
+    }
+    const limit = Math.max(1, Math.min(50, Number(p?.limit) || 25))
+    const rows = (this.store ??= new Store()).sessions(limit, root, true)
+    return {
+      sessions: rows.map((r) => ({
+        id: r.id,
+        title: r.title || "Untitled session",
+        root: r.root,
+        model: r.model,
+        updated: r.updated,
+        created: r.created,
+      })),
+    }
+  }
+
+  /** `_lembas/sessions/resume`: load an existing session from the store into memory and return
+   *  its state + history turns so an editor can pick up where it left off. */
+  private resumeSession(p: any) {
+    const id = String(p?.sessionId ?? "").trim()
+    if (!id) throw new RpcError(INVALID_PARAMS, "sessionId is required")
+    const s = this.sessions.get(id) ?? this.load(id)
+    if (!s) throw new RpcError(INVALID_PARAMS, "no such session")
+    const store = (this.store ??= new Store())
+    const row = store.session(id)
+    const turns = row ? historyTurns(store.messages(id), s.cwd) : []
+    return {
+      sessionId: s.id,
+      title: row?.title || "",
+      cwd: s.cwd,
+      modes: { currentModeId: s.app.engine.mode, availableModes: this.modes().map((m) => ({ id: m, name: m })) },
+      _meta: { lembas: { model: s.app.engine.model.ref, mode: s.app.engine.mode, effort: s.app.engine.effort, instance: this.isInstance(s.app.engine.model.connectionName) } },
+      turns,
     }
   }
 
@@ -1284,6 +1380,7 @@ export class AcpAgent {
   }
 
   private indexes = new Map<string, FileIndex>()
+  private completionCtx = new CompletionContext((root) => this.indexFor(root))
   private indexFor(root: string): FileIndex {
     let i = this.indexes.get(root)
     if (!i) {

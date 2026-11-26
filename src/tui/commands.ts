@@ -73,6 +73,8 @@ export interface CommandCtx extends Ctx {
   openJob(id: string): void
   /** Enter a subagent job: its transcript in place of the session's, the prompt box sends to it. */
   enterJob(id: string): void
+  /** Control the side display pane (on/off/toggle or select a tab). */
+  setDisplays?(action: "toggle" | "on" | "off" | "live" | "files" | "changes" | "bash"): string
 }
 
 export interface Command {
@@ -88,6 +90,7 @@ const HELP_KEYS = [
   "esc stop the model · ctrl+g continue (after a stop, or to keep going) · ctrl+c clear, twice to quit · ctrl+d (empty box) quit",
   "/jobs background jobs: enter opens one (a subagent: esc back, type to message it), k stops it · ctrl+b moves the running command to the background",
   "shift+tab cycle mode (manual → edit → plan) · ctrl+r show reasoning · ctrl+o expand tool output",
+  "alt+d toggle side display · alt+↑/↓ switch display tab (live/files/changes/bash) · alt+←/→ entry · alt+pgup/pgdn scroll display",
   "pgup/pgdn scroll half a screen · ctrl+↑/↓ three lines · the mouse wheel · ↑ in an empty box takes back a message waiting to go in",
 ]
 
@@ -193,6 +196,21 @@ export const COMMANDS: Command[] = [
     name: "continue",
     description: "carry on — after esc stopped it, or when it should keep going (ctrl+g)",
     run: (c) => c.continueTask(),
+  },
+  {
+    name: "display",
+    aliases: ["displays"],
+    args: "[on|off|live|files|changes|bash]",
+    description: "toggle or switch the side display pane (live activity, files, changes, bash)",
+    run(c, arg) {
+      if (!c.setDisplays) return c.view.info("side displays are not available here", "warn")
+      const a = arg.trim().toLowerCase()
+      if (!a) return c.view.info(c.setDisplays("toggle"))
+      if (a === "on" || a === "off" || a === "live" || a === "files" || a === "changes" || a === "bash") {
+        return c.view.info(c.setDisplays(a))
+      }
+      c.view.info("usage: /display [on|off|live|files|changes|bash]", "warn")
+    },
   },
   {
     name: "help",

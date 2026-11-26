@@ -813,6 +813,14 @@ The device passes it to the server's `POST /v1/lembas/complete` (*The HTTP API*)
   carried that `id`, answered the same way. `id` is **the client's own string for the request, in
   its params** — not the JSON-RPC id, which a relay between the two rewrites. Without an `id` a
   request is cancelled by the next one only.
+- **`_lembas/complete/warm`** — client → agent, a notification `{ cwd?, sessionId?, path?, text? }`:
+  pre-warms the project's `FileIndex` and direct import summaries for `path` so subsequent
+  `_lembas/complete` requests send only situation-appropriate context in a stable session order.
+- **`_lembas/sessions/list`** — client → agent → result `{ sessions }`: lists recent non-empty
+  sessions for a project `cwd` (optional `limit`, default 30) for editor session pickers.
+- **`_lembas/sessions/resume`** — client → agent → result `{ sessionId, modes, turns, _meta }`:
+  opens an existing stored session by `sessionId` and returns its replayable `turns` along with
+  the active modes and model metadata.
 - **Refusals** are `-32602` with the server's own sentence where it gave one, and `data.reason`:
   `not_logged_in`; `no_model` (nobody has chosen an autocomplete model — the sentence says where);
   `not_allowed` (the model is not one allowed for autocomplete); `unknown_model` (not a model of

@@ -62,6 +62,7 @@ export const SETTINGS: SettingDef[] = [
   { key: "paste", kind: "enum", values: ["placeholder", "full"], agent: true, scopes: USER, fallback: "placeholder", hint: "a long paste or a pasted image in the prompt box: a placeholder, or shown in full" },
   { key: "kitty_clipboard", kind: "boolean", agent: false, scopes: USER, fallback: "false", hint: "over SSH in kitty, ctrl+v asks the terminal for the image on its clipboard" },
   { key: "icons", kind: "enum", values: ["emoji", "plain"], agent: true, scopes: USER, fallback: "emoji" },
+  { key: "displays", kind: "boolean", agent: true, scopes: USER, fallback: "true", hint: "side display pane on wide terminals (Alt+D or /display toggles)" },
   { key: "notify", kind: "boolean", agent: true, scopes: USER, fallback: "true", hint: "bell and desktop notification when a reply finishes or the agent waits for you while the terminal is not focused" },
   { key: "mouse", kind: "boolean", agent: true, scopes: ["global"], reload: true, fallback: "true" },
   { key: "compaction.auto_at", kind: "number", agent: true, scopes: ALL, fallback: "0.85" },

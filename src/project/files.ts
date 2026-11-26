@@ -42,6 +42,12 @@ export class FileIndex {
     this.dirs = [...dirs].sort()
   }
 
+  /** All indexed relative file paths (refreshes at most every few seconds). */
+  allFiles(): readonly string[] {
+    this.refresh()
+    return this.files
+  }
+
   /** Best matches for what was typed after @. A trailing / lists that directory's children. */
   search(query: string, limit = 8): string[] {
     this.refresh()

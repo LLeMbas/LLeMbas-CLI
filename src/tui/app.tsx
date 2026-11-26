@@ -8,7 +8,9 @@ import { levelLabel, type Level } from "../provider/effort.ts"
 import { teamLabel } from "../session/commands.ts"
 import { COMMANDS, findCommand, type CommandCtx } from "./commands.ts"
 import { Dialog, type DialogSpec } from "./components/dialog.tsx"
+import { DisplayPane } from "./components/display_pane.tsx"
 import { Messages } from "./components/messages.tsx"
+import { cycleTab, DISPLAY_MIN_WIDTH, effectiveTab, extractBash, extractChanges, extractFiles, initialNav, resetFollow, stepEntry, type DisplayNavState } from "./displays.ts"
 import { PermissionPrompt } from "./components/permission.tsx"
 import { copiedMessage, copyText, isRemote } from "./clipboard.ts"
 import { QuestionCard } from "./components/question.tsx"
@@ -112,20 +114,26 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
       icons = e.value as IconSet
       setThemeSignal(loadTheme(theme().name, icons).theme)
     }
+    if (e.key === "displays") setDisplaysEnabled(e.value !== false)
     refresh()
   })
   app.settings.checks.set("theme", (v) => {
     if (!themeNames().includes(String(v))) throw new Error(`no theme "${v}" — ${themeNames().join(", ")}`)
   })
   let scroll: ScrollBoxRenderable | undefined
+  let displayScroll: ScrollBoxRenderable | undefined
   let input: TextareaRenderable | undefined
   let box: PromptHandle | undefined
+  const [displaysEnabled, setDisplaysEnabled] = createSignal(app.loaded.config.displays !== false)
+  const [displayNav, setDisplayNav] = createSignal<DisplayNavState>(initialNav())
   /** What is selected, as it is copied: a selection in the prompt box in full (a paste placeholder
    *  as what it stands for), anything else as it reads. */
   const selectedText = (visible: string) => (visible && input?.hasSelection() && input.getSelectedText() === visible ? (box?.expandedSelection() ?? visible) : visible)
   let quitArmed = 0
 
   const dims = useTerminalDimensions()
+  const showDisplays = () => displaysEnabled() && !entered() && dims().width >= DISPLAY_MIN_WIDTH
+  const displayWidth = () => Math.max(42, Math.min(84, Math.floor(dims().width * 0.44)))
   const ctx: Ctx = { app, view, theme, md, thought, dims }
 
   // Background jobs: the view's list is the registry's at the start and on every session change
@@ -295,6 +303,31 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     },
     openJob: (id) => setJobPanel(id),
     enterJob,
+    setDisplays(action) {
+      if (action === "toggle") {
+        const next = !displaysEnabled()
+        setDisplaysEnabled(next)
+        return next
+          ? dims().width < DISPLAY_MIN_WIDTH
+            ? `side display enabled (widen terminal to ${DISPLAY_MIN_WIDTH}+ cols to show it; now ${dims().width})`
+            : "side display shown (Alt+↑↓ tabs · Alt+←→ entry · Alt+PgUp/Dn scroll · Alt+D hide)"
+          : "side display hidden (Alt+D or /display on to show)"
+      }
+      if (action === "off") {
+        setDisplaysEnabled(false)
+        return "side display hidden"
+      }
+      setDisplaysEnabled(true)
+      if (action !== "on") {
+        setDisplayNav((n) => ({ ...n, tab: action, pinned: action !== "live" }))
+        return dims().width < DISPLAY_MIN_WIDTH
+          ? `side display tab: ${action} (widen terminal to ${DISPLAY_MIN_WIDTH}+ cols to show it)`
+          : `side display: ${action}`
+      }
+      return dims().width < DISPLAY_MIN_WIDTH
+        ? `side display enabled (widen terminal to ${DISPLAY_MIN_WIDTH}+ cols to show it)`
+        : "side display shown"
+    },
     copy: (text: string) => copy(text),
     renderer,
     send: (text: string) => void send(text),
@@ -340,6 +373,7 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
     // its text. Only here: the session's title, the `prompt` event and everything a server
     // mirrors get `shown`, which holds the words themselves.
     view.user(drawn)
+    setDisplayNav((n) => resetFollow(n))
     if (atts.length) view.info(`attached ${atts.map((a) => (a.image ? `${a.path} (image)` : a.text.includes("not attached") ? `${a.path} (not attached: ${/not attached: ([^)]*)/.exec(a.text)?.[1]})` : a.path)).join(", ")}`)
     if (given?.attachments.length) view.info(`attached ${given.attachments.map((a) => a.name).join(", ")}`)
     scroll?.scrollTo(scroll.scrollHeight)
@@ -549,6 +583,42 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
         if (holdToTalk && voice.state === "recording" && recordKey.released(key)) void voice.toggle()
         return
       }
+      // Side display navigation works even while a permission/question/plan card is open so the
+      // person can scroll diffs or inspect files/bash output before answering.
+      const alt = Boolean(key.meta || (key as { option?: boolean }).option)
+      if (alt && !key.ctrl && !dialog() && !jobPanel()) {
+        if (key.name === "d") {
+          const next = !displaysEnabled()
+          setDisplaysEnabled(next)
+          flash(next ? (dims().width < DISPLAY_MIN_WIDTH ? `display on (needs ${DISPLAY_MIN_WIDTH}+ cols)` : "side display shown") : "side display hidden")
+          return key.preventDefault()
+        }
+        if (showDisplays()) {
+          if (key.name === "up" || key.name === "down") {
+            setDisplayNav((n) => cycleTab(n, key.name === "up" ? -1 : 1))
+            return key.preventDefault()
+          }
+          if (key.name === "left" || key.name === "right") {
+            const tab = effectiveTab(displayNav(), Boolean(view.state.pending?.preview?.diff))
+            if (tab !== "live") {
+              const count =
+                tab === "files"
+                  ? extractFiles(view.state.items).length
+                  : tab === "changes"
+                    ? extractChanges(view.state.items, view.state.pending).length
+                    : extractBash(view.state.items).length
+              setDisplayNav((n) => stepEntry(n, tab, key.name === "left" ? -1 : 1, count))
+            }
+            return key.preventDefault()
+          }
+          if (key.name === "pageup" || key.name === "pagedown" || key.name === "[" || key.name === "]") {
+            const up = key.name === "pageup" || key.name === "["
+            const step = Math.max(1, Math.floor((displayScroll?.height || 10) / 2))
+            displayScroll?.scrollBy(up ? -step : step)
+            return key.preventDefault()
+          }
+        }
+      }
       // A card or dialog owns the keyboard: esc there means that card's own thing.
       const overlay = dialog() || jobPanel() || view.state.pending || view.state.question || view.state.plan
       if (!overlay && recordKey.matches(key) && (voice.canListen || voiceCfg)) {
@@ -655,17 +725,27 @@ export function Root(p: { app: Runtime; view: View; theme: Theme; onQuit: () => 
           when={entered()}
           keyed
           fallback={
-            <scrollbox
-              ref={(r: ScrollBoxRenderable) => (scroll = r)}
-              flexGrow={1}
-              stickyScroll
-              stickyStart="bottom"
-              viewportOptions={{ paddingRight: 1 }}
-              verticalScrollbarOptions={{ trackOptions: { backgroundColor: theme().colors.panel, foregroundColor: theme().colors.dim } }}
-            >
-              <Welcome />
-              <Messages />
-            </scrollbox>
+            <box flexDirection="row" flexGrow={1}>
+              <scrollbox
+                ref={(r: ScrollBoxRenderable) => (scroll = r)}
+                flexGrow={1}
+                stickyScroll
+                stickyStart="bottom"
+                viewportOptions={{ paddingRight: 1 }}
+                verticalScrollbarOptions={{ trackOptions: { backgroundColor: theme().colors.panel, foregroundColor: theme().colors.dim } }}
+              >
+                <Welcome />
+                <Messages />
+              </scrollbox>
+              <Show when={showDisplays()}>
+                <DisplayPane
+                  width={displayWidth()}
+                  nav={displayNav}
+                  onSelectTab={(tab) => setDisplayNav((n) => ({ ...n, tab, pinned: tab !== "live" }))}
+                  scrollRef={(r) => (displayScroll = r)}
+                />
+              </Show>
+            </box>
           }
         >
           {(id: string) => <SubagentView id={id} view={childViews.get(id)!} scrollRef={(r) => (scroll = r)} />}
