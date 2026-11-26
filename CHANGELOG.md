@@ -4,6 +4,15 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0-beta.16] — 2026-11-26
+
+### Fixed
+
+- **IDE model switching on `lembas serve --stdio`** (`_lembas/configure`): no
+  longer requires a linked server instance connection when changing the active
+  session's model from an editor client (VS Code / VSCodium / Neovim), resolving
+  against the device's signed-in server models instead.
+
 ## [2.0.0-beta.15] — 2026-11-26
 
 ### Added

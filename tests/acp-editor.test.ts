@@ -861,3 +861,18 @@ test("a client that writes puts the text into its buffer and saves before answer
   expect(readFileSync(file, "utf8")).toBe("a third\n")
   expect(readFileSync(join(root, "b.txt"), "utf8")).toBe("new\n")
 })
+
+test("_lembas/configure on serve --stdio switches the session model without an instance device link", async () => {
+  fake = fakeProvider([{ chunks: [delta({ content: "switched" })] }])
+  config(fake.url)
+  const root = project()
+  const { c } = await editor()
+  const s: any = await c.request("session/new", { cwd: root })
+  expect(s._meta.lembas.model).toBe("f/m")
+  const res: any = await c.request("_lembas/configure", { sessionId: s.sessionId, model: "f/deep" })
+  expect(res.model).toBe("f/deep")
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "hi" }] })
+  expect(fake.requests.at(-1).model).toBe("f/deep")
+  // Empty model string is rejected cleanly.
+  expect((await refusal(c.request("_lembas/configure", { sessionId: s.sessionId, model: "  " }))).message).toContain("non-empty")
+})

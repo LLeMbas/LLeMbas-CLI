@@ -870,15 +870,28 @@ export class AcpAgent {
     const t = this.terminalFor(p)
     if (t) return t.client.request("hub/configure", { sessionId: t.sessionId, model: this.refFor(p?.model), effort: p?.effort }, 30_000)
     const s = this.get(p)
-    const ref = p?.model !== undefined ? this.chatModel(p.model) : undefined
-    if (ref && s.app.canonicalRef(ref) !== s.app.engine.model.ref) {
-      const conn = s.app.loaded.connections[this.instanceConnection!]
-      const id = s.app.canonicalRef(ref)
-      if (!conn) throw new RpcError(INVALID_PARAMS, `this device is not logged in to ${this.instanceConnection}, so it cannot run ${p.model}`)
-      if (Object.keys(conn.models).length && !conn.models[id]) throw new RpcError(INVALID_PARAMS, `${conn.webui?.name ?? this.instanceConnection} does not serve ${p.model} to this device`)
-      // The person's change is the directory's model from now (spec 3.9.0) — a schedule's session
-      // apart, which the app was told never to remember.
-      s.app.chooseModel(ref)
+    if (p?.model !== undefined) {
+      if (this.instanceConnection || this.limits) {
+        const ref = this.chatModel(p.model)
+        if (s.app.canonicalRef(ref) !== s.app.engine.model.ref) {
+          const conn = s.app.loaded.connections[this.instanceConnection!]
+          const id = s.app.canonicalRef(ref)
+          if (!conn) throw new RpcError(INVALID_PARAMS, `this device is not logged in to ${this.instanceConnection}, so it cannot run ${p.model}`)
+          if (Object.keys(conn.models).length && !conn.models[id]) throw new RpcError(INVALID_PARAMS, `${conn.webui?.name ?? this.instanceConnection} does not serve ${p.model} to this device`)
+          // The person's change is the directory's model from now (spec 3.9.0) — a schedule's session
+          // apart, which the app was told never to remember.
+          s.app.chooseModel(ref)
+        }
+      } else {
+        // Local stdio editor client: resolve against the device's own signed-in models.
+        const raw = typeof p.model === "string" ? p.model.trim() : ""
+        if (!raw) throw new RpcError(INVALID_PARAMS, "model must be a non-empty string")
+        try {
+          if (s.app.canonicalRef(raw) !== s.app.engine.model.ref) s.app.chooseModel(raw)
+        } catch (e) {
+          throw new RpcError(INVALID_PARAMS, (e as Error).message)
+        }
+      }
     }
     const effort = effortOf(p?.effort)
     // A level the model does not offer is read as its start level; the answer says the one used.
