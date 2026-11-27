@@ -894,19 +894,30 @@ export function createApp(o: AppOptions): App {
     }
   })
   const mcpReady = mcp.start()
+  let mcpStarted = false
+  let memorySeq = 0
   /** The server's memory entries for the prompt (`lembas://memory`), read as a session starts, in
    *  the session's scope: in the prompt when it is made after this, else said in a note on the next
    *  user message — the prompt does not change under a session. */
   const readServerMemory = async () => {
     if (!lembasLibrary || !serverMemory) return
+    const seq = ++memorySeq
     try {
       const text = await mcp.readResource(LIBRARY_SERVER, MEMORY_RESOURCE, engine.o.toolCtx.libraryScope)
-      serverMemory = { text }
+      if (seq === memorySeq) serverMemory = { text }
     } catch (e) {
-      bus.emit({ type: "notice", level: "warn", message: `memory: the server's entries could not be read (${(e as Error).message}); none are in this session's prompt` })
+      if (seq === memorySeq) {
+        bus.emit({ type: "notice", level: "warn", message: `memory: the server's entries could not be read (${(e as Error).message}); none are in this session's prompt` })
+      }
     }
   }
-  void mcpReady.then(readServerMemory)
+  const refreshServerMemory = () => {
+    if (mcpStarted) void readServerMemory()
+  }
+  void mcpReady.then(() => {
+    mcpStarted = true
+    return readServerMemory()
+  })
 
   // small_model when it resolves; a broken one is said once and the session's model used instead.
   let smallWarned = false
@@ -1199,7 +1210,7 @@ export function createApp(o: AppOptions): App {
     },
     setScope(scope) {
       engine.o.toolCtx.libraryScope = scope
-      void readServerMemory()
+      refreshServerMemory()
     },
     rename(title) {
       const id = engine.sessionId
@@ -1209,7 +1220,7 @@ export function createApp(o: AppOptions): App {
     },
     newSession() {
       frozen = freeze()
-      void readServerMemory()
+      refreshServerMemory()
       named = "no"
       firstShown = ""
       const s = store?.createSession(project.root, engine.model.ref)
@@ -1230,7 +1241,7 @@ export function createApp(o: AppOptions): App {
       if (!store) return []
       const before = engine.sessionId
       frozen = freeze()
-      void readServerMemory()
+      refreshServerMemory()
       teamRt.reset(newTeam())
       // A session a schedule opened stays one wherever it is opened — in a terminal too
       // (/sessions, -c): nothing in it becomes its directory's model.

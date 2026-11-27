@@ -876,3 +876,98 @@ test("_lembas/configure on serve --stdio switches the session model without an i
   // Empty model string is rejected cleanly.
   expect((await refusal(c.request("_lembas/configure", { sessionId: s.sessionId, model: "  " }))).message).toContain("non-empty")
 })
+
+test("library: lembas on serve --stdio reads memory once with no scope, while a link session sends scope once", async () => {
+  const mcpCalls: { method: string; scope?: string; name?: string }[] = []
+  const linkSessions = new Set<string>()
+  const mcpServer = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const u = new URL(req.url)
+      if (u.pathname !== "/mcp") return new Response("no", { status: 404 })
+      if (req.method !== "POST") return new Response(null, { status: 405 })
+      const msg = (await req.json()) as any
+      if (msg.id === undefined) return new Response(null, { status: 202 })
+      const reply = (result: unknown) => Response.json({ jsonrpc: "2.0", id: msg.id, result })
+      if (msg.method === "initialize") return reply({ protocolVersion: msg.params.protocolVersion, capabilities: { tools: {}, resources: {} }, serverInfo: { name: "lembas", version: "2.0.0" } })
+      if (msg.method === "resources/list") return reply({ resources: [{ uri: "lembas://memory", name: "memory" }] })
+      if (msg.method === "tools/list")
+        return reply({
+          tools: [
+            { name: "memory", description: "The account's memory.", inputSchema: { type: "object", properties: { action: { type: "string" } }, required: ["action"] }, annotations: { readOnlyHint: true } },
+          ],
+        })
+      if (msg.method === "resources/read" || msg.method === "tools/call") {
+        const scope = msg.params?._meta?.lembas?.scope as string | undefined
+        mcpCalls.push({ method: msg.method, ...(scope ? { scope } : {}), ...(msg.params?.name ? { name: msg.params.name } : {}) })
+        if (scope && !linkSessions.has(scope)) {
+          return Response.json({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "not this device's session" } })
+        }
+        if (msg.method === "resources/read") {
+          return reply({ contents: [{ uri: msg.params.uri, mimeType: "text/plain", text: "MEMORY\nUses bun." }] })
+        }
+        return reply({ content: [{ type: "text", text: "ok" }], isError: false })
+      }
+      return Response.json({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "no" } })
+    },
+  })
+  const prevStop = stopServer
+  stopServer = () => {
+    mcpServer.stop(true)
+    prevStop?.()
+  }
+  mkdirSync(join(paths.config, "lembas"), { recursive: true })
+  writeFileSync(join(paths.config, "lembas", "example.key"), "lmb_key\n", { mode: 0o600 })
+  writeFileSync(join(paths.config, "lembas.json"), JSON.stringify({ instances: { example: { base_url: `http://127.0.0.1:${mcpServer.port}`, connection: "example", scope: "models memory link", logged_in_at: new Date().toISOString() } } }))
+
+  fake = fakeProvider([
+    { chunks: [toolCall(0, "m1", "memory", JSON.stringify({ action: "view" }))] },
+    { chunks: [delta({ content: "done" })] },
+  ])
+  config(fake.url, "library: lembas\n")
+  const root = project()
+
+  // 1. Local `serve --stdio` editor: no scope, single memory read, no -32602 warnings.
+  const notices: string[] = []
+  const [ta, tb] = pair()
+  new AcpAgent(new Peer(ta))
+  const c = new Peer(tb)
+  c.on("session/update", () => {})
+  c.on("_lembas/event", (p: any) => {
+    if (p?.event?.type === "notice") notices.push(String(p.event.message || ""))
+  })
+  c.handle("session/request_permission", () => ({ outcome: { outcome: "selected", optionId: "once" } }))
+  await c.request("initialize", { protocolVersion: 1, clientCapabilities: { _meta: { lembas: { editor: true, protocol: 2 } } } })
+  const s: any = await c.request("session/new", { cwd: root, _meta: { mode: "auto" } })
+  await until(() => mcpCalls.some((x) => x.method === "resources/read"), "stdio memory read")
+  await Bun.sleep(40)
+  expect(mcpCalls.filter((x) => x.method === "resources/read")).toEqual([{ method: "resources/read" }])
+  expect(notices.filter((m) => m.includes("not this device's session"))).toEqual([])
+  await c.request("session/prompt", { sessionId: s.sessionId, prompt: [{ type: "text", text: "check memory" }] })
+  expect(mcpCalls.filter((x) => x.method === "tools/call")).toEqual([{ method: "tools/call", name: "memory" }])
+  tb.close()
+
+  // 2. Resuming that session in a fresh `serve --stdio` editor also leaves scope unset and reads once.
+  mcpCalls.length = 0
+  const [ta2, tb2] = pair()
+  new AcpAgent(new Peer(ta2))
+  const c2 = new Peer(tb2)
+  c2.on("session/update", () => {})
+  c2.on("_lembas/event", () => {})
+  await c2.request("initialize", { protocolVersion: 1, clientCapabilities: { _meta: { lembas: { editor: true, protocol: 2 } } } })
+  await c2.request("_lembas/sessions/resume", { sessionId: s.sessionId })
+  await until(() => mcpCalls.some((x) => x.method === "resources/read"), "resumed stdio memory read")
+  await Bun.sleep(40)
+  expect(mcpCalls.filter((x) => x.method === "resources/read")).toEqual([{ method: "resources/read" }])
+  tb2.close()
+
+  // 3. Remote linked session (with limits): sends scope = sessionId, and still reads memory only once on startup.
+  mcpCalls.length = 0
+  const link = await editor({ limits: { roots: [root], maxMode: "auto", approvalTimeoutMs: 3000, requireTrust: true } })
+  const ls: any = await link.c.request("session/new", { cwd: root })
+  linkSessions.add(ls.sessionId)
+  await until(() => mcpCalls.some((x) => x.method === "resources/read"), "link memory read")
+  await Bun.sleep(40)
+  expect(mcpCalls.filter((x) => x.method === "resources/read")).toEqual([{ method: "resources/read", scope: ls.sessionId }])
+  link.close()
+})

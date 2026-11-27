@@ -4,6 +4,24 @@ All notable changes to LLeMbas CLI. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0-beta.17] — 2026-11-27
+
+### Fixed
+
+- **Server memory on `lembas serve --stdio` (VS Code / Neovim):** stopped setting
+  `_meta.lembas.scope` (and `markRemote`) on local stdio editor sessions in
+  `session/new` and `_lembas/sessions/resume`. Local editor sessions have no
+  server-side `Chat` row, so sending a session scope caused the server's `/mcp`
+  endpoint to reject `lembas://memory` and `memory` tool calls with
+  `MCP error -32602: not this device's session`.
+- **Duplicate `lembas://memory` reads on session start:** `setScope()`,
+  `resume()`, and `newSession()` now defer to the single initial `mcpReady`
+  memory read until MCP has connected, preventing duplicate memory reads and
+  duplicate notices.
+- **Autocomplete resilience:** guarded `CompletionContext.gather()` in
+  `_lembas/complete` so workspace index edge cases fall back to client context
+  instead of failing the completion request.
+
 ## [2.0.0-beta.16] — 2026-11-26
 
 ### Fixed

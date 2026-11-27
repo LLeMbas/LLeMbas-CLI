@@ -550,6 +550,10 @@ export class AcpAgent {
   private get cards() {
     return this.lembas && this.clientProtocol >= 2
   }
+  /** True when serving a remote LLeMbas web-UI link (not a local `serve --stdio` editor). */
+  private get isLink() {
+    return Boolean(this.instanceConnection || this.limits)
+  }
   /** The client shows files (`show: true` in `clientCapabilities._meta.lembas`, spec 3.0.0): the
    *  show tool is offered in the sessions it opens, and nowhere else. */
   private shows = false
@@ -783,7 +787,7 @@ export class AcpAgent {
     const effort = effortOf(p?._meta?.effort)
     try {
       // A schedule's session uses the directory's model and never becomes it (spec 3.9.0).
-      session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}), kind: scheduled ? "scheduled" : this.lembas ? "link" : "stdio", ...(scheduled ? { automated: true as const } : {}) })
+      session.app = createApp({ cwd, mode, asker: this.asker(session), modelTitles: false, model, ...(effort !== undefined ? { effort } : {}), kind: scheduled ? "scheduled" : this.isLink ? "link" : "stdio", ...(scheduled ? { automated: true as const } : {}) })
     } catch (e) {
       // Scheduled work never runs on an interactive-only model (interactive.md §2): the sentence, and why.
       throw new RpcError(INVALID_PARAMS, (e as Error).message, e instanceof InteractiveOnlyError ? { reason: INTERACTIVE_REASON } : undefined)
@@ -800,7 +804,7 @@ export class AcpAgent {
     const id = session.app.engine.sessionId ?? crypto.randomUUID()
     session.id = id
     session.turns = turnLog(id)
-    markRemote(session.app.store, id)
+    if (this.isLink) markRemote(session.app.store, id)
     if (scheduled) {
       try {
         // How it was opened, kept with the session: opened from the store again — after a restart
@@ -810,8 +814,9 @@ export class AcpAgent {
       // …and the model it is on, kept from here on.
       session.app.forgetful()
     }
-    // The client's chat: its memory calls land in that chat's data group (acp.md *Memory*).
-    session.app.setScope(id)
+    // The client's chat on a server link: its memory calls land in that chat's data group (acp.md *Memory*).
+    // Local `serve --stdio` editor sessions have no server Chat row, so leave scope unset (account default).
+    if (this.isLink) session.app.setScope(id)
     this.takeContext(session, p)
     this.sessions.set(id, session)
     this.adopt(session)
@@ -871,7 +876,7 @@ export class AcpAgent {
     if (t) return t.client.request("hub/configure", { sessionId: t.sessionId, model: this.refFor(p?.model), effort: p?.effort }, 30_000)
     const s = this.get(p)
     if (p?.model !== undefined) {
-      if (this.instanceConnection || this.limits) {
+      if (this.isLink) {
         const ref = this.chatModel(p.model)
         if (s.app.canonicalRef(ref) !== s.app.engine.model.ref) {
           const conn = s.app.loaded.connections[this.instanceConnection!]
@@ -932,9 +937,9 @@ export class AcpAgent {
     const L = this.limits
     const session: Session = { id, cwd: dir, prompting: false, app: undefined as unknown as App, turns: turnLog(id) }
     // `resume` reads what kind of session it is: a schedule's comes back as one, on its own model.
-    session.app = createApp({ cwd: dir, ...(L ? { mode: L.maxMode } : {}), asker: this.asker(session), modelTitles: false, resuming: id, kind: "link" })
+    session.app = createApp({ cwd: dir, ...(L ? { mode: L.maxMode } : {}), asker: this.asker(session), modelTitles: false, resuming: id, kind: this.isLink ? "link" : "stdio" })
     session.app.resume(id)
-    markRemote(session.app.store, id)
+    if (this.isLink) markRemote(session.app.store, id)
     // A schedule's session stays one: nothing in it becomes its directory's model, and its list
     // of tools is the one it was opened with — report_write for a schedule that notifies
     // (reports.md §2). `opened` used to live in memory only, so a continuing schedule's next run
@@ -943,7 +948,7 @@ export class AcpAgent {
       const kept = session.app.store?.meta<ScheduledTurn | true>(id, SCHEDULED_META)
       if (kept && typeof kept === "object") session.opened = kept
     } catch {}
-    session.app.setScope(id)
+    if (this.isLink) session.app.setScope(id)
     if (L) session.app.engine.mode = clampMode(session.app.engine.mode, L.maxMode)
     this.sessions.set(id, session)
     this.adopt(session)
@@ -1101,15 +1106,18 @@ export class AcpAgent {
           .slice(0, 12)
           .map((x: any) => ({ path: x.path, text: x.text }))
       : undefined
-    const gathered = this.completionCtx.gather({
-      root,
-      path: body.path,
-      language: body.language,
-      prefix: body.prefix,
-      suffix: body.suffix,
-      open,
-      clientContext: body.context,
-    })
+    let gathered = body.context ?? []
+    try {
+      gathered = this.completionCtx.gather({
+        root,
+        path: body.path,
+        language: body.language,
+        prefix: body.prefix,
+        suffix: body.suffix,
+        open,
+        clientContext: body.context,
+      })
+    } catch {}
     if (gathered.length) body.context = gathered
     const login = loginOrRefuse((this.login ??= currentLogin()))
     this.completion?.abort.abort()
